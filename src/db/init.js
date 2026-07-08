@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS applications (
   google_group_email TEXT UNIQUE,
   mails_recrutes INTEGER NOT NULL DEFAULT 0 CHECK (mails_recrutes BETWEEN 0 AND 12),
   statut TEXT NOT NULL DEFAULT 'En_Cours' CHECK (statut IN ('En_Cours', 'Complété', 'Terminé_Inactif')),
+  screenshots TEXT,
+  video_url TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -65,5 +67,15 @@ CREATE INDEX IF NOT EXISTS idx_historique_testeur ON historique_tests(testeur_id
 CREATE INDEX IF NOT EXISTS idx_historique_app ON historique_tests(application_id);
 CREATE INDEX IF NOT EXISTS idx_applications_dev ON applications(developpeur_id);
 `);
+
+// Migration idempotente pour les bases déjà créées avant l'ajout de ces
+// colonnes (CREATE TABLE IF NOT EXISTS ne les ajoute pas rétroactivement).
+const colonnesApplications = db.prepare('PRAGMA table_info(applications)').all().map((c) => c.name);
+if (!colonnesApplications.includes('screenshots')) {
+  db.exec('ALTER TABLE applications ADD COLUMN screenshots TEXT');
+}
+if (!colonnesApplications.includes('video_url')) {
+  db.exec('ALTER TABLE applications ADD COLUMN video_url TEXT');
+}
 
 module.exports = db;

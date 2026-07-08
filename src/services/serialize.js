@@ -26,6 +26,15 @@ function publicUser(user) {
 }
 
 function publicApplication(app) {
+  let screenshots = [];
+  if (app.screenshots) {
+    try {
+      screenshots = JSON.parse(app.screenshots);
+    } catch (_) {
+      screenshots = [];
+    }
+  }
+
   return {
     id: app.id,
     developpeur_id: app.developpeur_id,
@@ -36,6 +45,8 @@ function publicApplication(app) {
     mails_recrutes: app.mails_recrutes,
     mails_max: 12,
     statut: app.statut,
+    screenshots,
+    video_url: app.video_url,
     created_at: app.created_at,
   };
 }

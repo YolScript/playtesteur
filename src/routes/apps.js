@@ -9,8 +9,8 @@ const { applyDailyTestGain } = require('../services/scoring');
 const router = express.Router();
 
 const insertApp = db.prepare(`
-  INSERT INTO applications (developpeur_id, nom_application, description, logo_url, package_name, google_group_email)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO applications (developpeur_id, nom_application, description, logo_url, package_name, google_group_email, screenshots, video_url)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const findAppById = db.prepare('SELECT * FROM applications WHERE id = ?');
 const findUserById = db.prepare('SELECT * FROM users WHERE id = ?');
@@ -79,6 +79,21 @@ router.get('/:id', requireAuth, (req, res) => {
   });
 });
 
+// Aperçu des derniers avis publics Play Store de l'application (indépendant
+// du pseudo d'un testeur particulier), pour donner envie de la tester.
+router.get('/:id/avis', requireAuth, async (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+
+  try {
+    const avis = await playReviews.listerAvis(app.package_name, 10);
+    res.json({ avis });
+  } catch (err) {
+    console.error('[apps.avis]', err);
+    res.status(500).json({ erreur: 'Impossible de récupérer les avis pour le moment.' });
+  }
+});
+
 // Pré-remplit le formulaire de soumission depuis la fiche Play Console
 // (titre, description, icône) sans créer l'application.
 router.post('/import', requireAuth, async (req, res) => {
@@ -92,7 +107,7 @@ router.post('/import', requireAuth, async (req, res) => {
 });
 
 router.post('/', requireAuth, async (req, res) => {
-  const { nom_application, description, logo_url, package_name } = req.body || {};
+  const { nom_application, description, logo_url, package_name, screenshots, video_url } = req.body || {};
   if (!nom_application || !nom_application.trim()) {
     return res.status(400).json({ erreur: "Le nom de l'application est requis." });
   }
@@ -104,7 +119,9 @@ router.post('/', requireAuth, async (req, res) => {
       description || null,
       logo_url || null,
       package_name || null,
-      null
+      null,
+      Array.isArray(screenshots) && screenshots.length ? JSON.stringify(screenshots) : null,
+      video_url || null
     );
     const appId = info.lastInsertRowid;
 
@@ -128,14 +145,22 @@ router.put('/:id', requireAuth, (req, res) => {
     return res.status(403).json({ erreur: "Vous n'êtes pas le créateur de cette application." });
   }
 
-  const { nom_application, description, logo_url, package_name } = req.body || {};
+  const { nom_application, description, logo_url, package_name, screenshots, video_url } = req.body || {};
   if (!nom_application || !nom_application.trim()) {
     return res.status(400).json({ erreur: "Le nom de l'application est requis." });
   }
 
   db.prepare(
-    'UPDATE applications SET nom_application = ?, description = ?, logo_url = ?, package_name = ? WHERE id = ?'
-  ).run(nom_application.trim(), description || null, logo_url || null, package_name || null, app.id);
+    'UPDATE applications SET nom_application = ?, description = ?, logo_url = ?, package_name = ?, screenshots = ?, video_url = ? WHERE id = ?'
+  ).run(
+    nom_application.trim(),
+    description || null,
+    logo_url || null,
+    package_name || null,
+    Array.isArray(screenshots) && screenshots.length ? JSON.stringify(screenshots) : null,
+    video_url || null,
+    app.id
+  );
 
   res.json({ application: publicApplication(findAppById.get(app.id)) });
 });

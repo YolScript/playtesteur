@@ -71,6 +71,8 @@ async function importerFicheApp(packageName) {
       nom_application: packageName,
       description: `Fiche importée (mode dev simulé) pour le package ${packageName}.`,
       logo_url: null,
+      screenshots: [],
+      video_url: null,
     };
   }
 
@@ -105,10 +107,25 @@ async function importerFicheApp(packageName) {
       // Icône indisponible : on continue sans logo.
     }
 
+    let screenshots = [];
+    try {
+      const { data: screenshotsData } = await androidpublisher.edits.images.list({
+        editId,
+        packageName: pkg,
+        language: listing.language,
+        imageType: 'phoneScreenshots',
+      });
+      screenshots = (screenshotsData.images || []).slice(0, 8).map((img) => img.url);
+    } catch (_) {
+      // Captures indisponibles : on continue sans galerie.
+    }
+
     return {
       nom_application: listing.title || pkg,
       description: listing.shortDescription || listing.fullDescription || '',
       logo_url,
+      screenshots,
+      video_url: listing.video || null,
     };
   } catch (err) {
     if (err.code === 404 || err.code === 403) {
@@ -124,4 +141,33 @@ async function importerFicheApp(packageName) {
   }
 }
 
-module.exports = { devMode, trouverAvisDuTesteur, importerFicheApp };
+const AVIS_SIMULES = [
+  { author: 'Léa M.', rating: 5, text: "Super application, exactement ce qu'il me fallait !", date: null },
+  { author: 'Karim B.', rating: 4, text: 'Bonne app, quelques bugs mineurs mais rien de bloquant.', date: null },
+  { author: 'Sophie T.', rating: 5, text: 'Interface claire, je recommande.', date: null },
+];
+
+// Liste les derniers avis publics de l'application (aperçu pour les
+// testeurs potentiels), indépendamment du pseudo d'un testeur particulier.
+async function listerAvis(packageName, maxResults = 10) {
+  if (!packageName) return [];
+
+  if (devMode) {
+    return AVIS_SIMULES;
+  }
+
+  const res = await androidpublisher.reviews.list({ packageName, maxResults });
+  const reviews = res.data.reviews || [];
+
+  return reviews.map((r) => {
+    const comment = r.comments?.[0]?.userComment;
+    return {
+      author: r.authorName || 'Utilisateur Google',
+      rating: comment?.starRating || null,
+      text: comment?.text || '',
+      date: comment?.lastModified?.seconds ? Number(comment.lastModified.seconds) * 1000 : null,
+    };
+  });
+}
+
+module.exports = { devMode, trouverAvisDuTesteur, importerFicheApp, listerAvis };

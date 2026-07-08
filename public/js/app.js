@@ -380,16 +380,23 @@ async function viewAppDetail(id) {
       </div>
       <p class="page-subtitle">${escapeHtml(app.description || 'Pas de description fournie.')}</p>
 
+      ${renderVideoPromo(app.video_url)}
+      ${renderGalerieScreenshots(app.screenshots)}
+
       <div class="gauge-row"><span class="gauge-label">Testeurs actifs</span><span class="gauge-value">${app.mails_recrutes} / ${app.mails_max}</span></div>
       <div class="gauge-bar-bg"><div class="gauge-bar-fill" style="width:${Math.round((app.mails_recrutes / app.mails_max) * 100)}%"></div></div>
 
       <div id="detail-msg" style="margin-top:20px;"></div>
 
       ${estMonApp ? renderProprietaireBloc() : renderTesteurBloc(app, dejaRejoint, dejaValide)}
+
+      <div class="section-title">Avis Play Store</div>
+      <div id="app-avis"><p class="form-hint">Chargement des avis...</p></div>
     </div>
   `;
 
   document.getElementById('btn-back').addEventListener('click', () => history.back());
+  chargerAvisApp(app.id);
 
   if (!estMonApp) {
     const joinBtn = document.getElementById('btn-join');
@@ -448,6 +455,70 @@ function renderProprietaireBloc() {
   return `<p class="form-hint">C'est votre application. Rendez-vous sur "Mes applications" pour suivre son recrutement.</p>`;
 }
 
+function youtubeEmbedUrl(url) {
+  if (!url) return null;
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/))([\w-]{6,})/);
+  return match ? `https://www.youtube.com/embed/${match[1]}` : null;
+}
+
+function renderVideoPromo(videoUrl) {
+  if (!videoUrl) return '';
+  const embedUrl = youtubeEmbedUrl(videoUrl);
+  if (!embedUrl) {
+    return `<p class="form-hint" style="margin:16px 0;"><a href="${escapeHtml(videoUrl)}" target="_blank" rel="noopener">🎬 Voir la vidéo de présentation</a></p>`;
+  }
+  return `
+    <div style="margin:16px 0; position:relative; padding-top:56.25%; border-radius:var(--radius-md); overflow:hidden; border:1px solid var(--border-color);">
+      <iframe src="${escapeHtml(embedUrl)}" style="position:absolute; inset:0; width:100%; height:100%; border:0;" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+    </div>
+  `;
+}
+
+function renderGalerieScreenshots(screenshots) {
+  if (!screenshots || screenshots.length === 0) return '';
+  return `
+    <div style="display:flex; gap:10px; overflow-x:auto; padding:4px 0 16px;">
+      ${screenshots
+        .map(
+          (url) =>
+            `<img src="${escapeHtml(url)}" alt="" style="height:220px; border-radius:var(--radius-md); border:1px solid var(--border-color); flex-shrink:0;">`
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function etoiles(note) {
+  if (!note) return '';
+  return '★'.repeat(note) + '☆'.repeat(5 - note);
+}
+
+async function chargerAvisApp(appId) {
+  const container = document.getElementById('app-avis');
+  try {
+    const { avis } = await Api.get(`/api/apps/${appId}/avis`);
+    if (!avis || avis.length === 0) {
+      container.innerHTML = `<p class="form-hint">Aucun avis Play Store pour le moment.</p>`;
+      return;
+    }
+    container.innerHTML = avis
+      .map(
+        (a) => `
+        <div style="padding:12px 0; border-bottom:1px solid var(--border-color);">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <strong style="font-size:13px;">${escapeHtml(a.author)}</strong>
+            <span style="color:var(--color-warning); font-size:13px;">${etoiles(a.rating)}</span>
+          </div>
+          ${a.text ? `<p style="font-size:13px; color:var(--text-muted); margin-top:4px;">${escapeHtml(a.text)}</p>` : ''}
+        </div>
+      `
+      )
+      .join('');
+  } catch (err) {
+    container.innerHTML = `<p class="form-hint">Avis indisponibles pour le moment.</p>`;
+  }
+}
+
 /* ==========================================================================
    MES APPLICATIONS
    ========================================================================== */
@@ -472,7 +543,8 @@ async function viewMesApps() {
             <input type="text" name="package_name" placeholder="com.exemple.app" style="flex:1;" />
             <button type="button" class="btn-secondary" id="btn-import-playconsole">Importer depuis Play Console</button>
           </div>
-          <p class="form-hint" style="margin-top:6px;">Récupère automatiquement le titre, la description et l'icône depuis votre fiche Play Console.</p>
+          <p class="form-hint" style="margin-top:6px;">Récupère automatiquement le titre, la description, l'icône, les captures d'écran et la vidéo promo depuis votre fiche Play Console.</p>
+          <div id="import-preview"></div>
         </div>
         <div class="form-group">
           <label>Nom de l'application</label>
@@ -499,12 +571,30 @@ async function viewMesApps() {
   const submitCardTitle = document.getElementById('submit-card-title');
   const submitFormBtn = document.getElementById('submit-form-btn');
 
+  function renderImportPreview(screenshots, videoUrl) {
+    const preview = document.getElementById('import-preview');
+    const vignettes = (screenshots || [])
+      .slice(0, 6)
+      .map((url) => `<img src="${escapeHtml(url)}" alt="" style="width:56px;height:100px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);">`)
+      .join('');
+    preview.innerHTML =
+      vignettes || videoUrl
+        ? `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; align-items:center;">
+            ${vignettes}
+            ${videoUrl ? `<span class="badge badge-en-cours">🎬 Vidéo promo importée</span>` : ''}
+          </div>`
+        : '';
+  }
+
   function ouvrirFormulaireCreation() {
     submitForm.reset();
     delete submitForm.dataset.editingId;
+    submitForm.dataset.screenshots = '[]';
+    submitForm.dataset.videoUrl = '';
     submitCardTitle.textContent = 'Soumettre une nouvelle application';
     submitFormBtn.textContent = 'Créer le groupe de test';
     document.getElementById('submit-msg').innerHTML = '';
+    renderImportPreview([], '');
     submitCard.classList.remove('hidden');
     submitCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -512,6 +602,8 @@ async function viewMesApps() {
   function ouvrirFormulaireEdition(app) {
     submitForm.reset();
     submitForm.dataset.editingId = app.id;
+    submitForm.dataset.screenshots = JSON.stringify(app.screenshots || []);
+    submitForm.dataset.videoUrl = app.video_url || '';
     submitForm.package_name.value = app.package_name || '';
     submitForm.nom_application.value = app.nom_application || '';
     submitForm.logo_url.value = app.logo_url || '';
@@ -519,6 +611,7 @@ async function viewMesApps() {
     submitCardTitle.textContent = `Modifier "${app.nom_application}"`;
     submitFormBtn.textContent = 'Enregistrer les modifications';
     document.getElementById('submit-msg').innerHTML = '';
+    renderImportPreview(app.screenshots || [], app.video_url || '');
     submitCard.classList.remove('hidden');
     submitCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -549,6 +642,9 @@ async function viewMesApps() {
       submitForm.nom_application.value = fiche.nom_application || '';
       submitForm.description.value = fiche.description || '';
       submitForm.logo_url.value = fiche.logo_url || '';
+      submitForm.dataset.screenshots = JSON.stringify(fiche.screenshots || []);
+      submitForm.dataset.videoUrl = fiche.video_url || '';
+      renderImportPreview(fiche.screenshots, fiche.video_url);
       document.getElementById('submit-msg').innerHTML = '';
       toast('Fiche importée depuis Play Console.', 'success');
     } catch (err) {
@@ -567,6 +663,8 @@ async function viewMesApps() {
       package_name: fd.get('package_name'),
       logo_url: fd.get('logo_url'),
       description: fd.get('description'),
+      screenshots: JSON.parse(submitForm.dataset.screenshots || '[]'),
+      video_url: submitForm.dataset.videoUrl || '',
     };
     const editingId = submitForm.dataset.editingId;
     try {
