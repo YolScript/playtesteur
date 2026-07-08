@@ -1,0 +1,21 @@
+{
+  "name": "playtesteur",
+  "version": "1.0.0",
+  "description": "Plateforme de tests croisés automatisée pour développeurs Android (12 testeurs Play Store).",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "googleapis": "^140.0.1",
+    "node-cron": "^3.0.3"
+  }
+}
