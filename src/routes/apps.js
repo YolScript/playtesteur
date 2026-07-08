@@ -45,19 +45,32 @@ const marquerDateTestSansGain = db.prepare(
 // Catalogue public : toutes les apps en recrutement, hors mes propres apps et
 // hors apps déjà testées ou rejointes (anti-doublon : une fois testée, une
 // app est définitivement masquée pour ce testeur).
+// Les administrateurs peuvent voir toutes les applications (y compris les leurs,
+// les déjà testées/rejointes et les complétées).
 router.get('/', requireAuth, (req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT a.* FROM applications a
-       WHERE a.statut = 'En_Cours'
-         AND a.developpeur_id != ?
-         AND NOT EXISTS (
-           SELECT 1 FROM historique_tests h
-           WHERE h.application_id = a.id AND h.testeur_id = ?
-         )
-       ORDER BY a.mails_recrutes ASC, a.created_at ASC`
-    )
-    .all(req.session.userId, req.session.userId);
+  const isAdmin = req.session.role === 'administrator';
+  let rows;
+  if (isAdmin) {
+    rows = db
+      .prepare(
+        `SELECT a.* FROM applications a
+         ORDER BY a.mails_recrutes ASC, a.created_at ASC`
+      )
+      .all();
+  } else {
+    rows = db
+      .prepare(
+        `SELECT a.* FROM applications a
+         WHERE a.statut = 'En_Cours'
+           AND a.developpeur_id != ?
+           AND NOT EXISTS (
+             SELECT 1 FROM historique_tests h
+             WHERE h.application_id = a.id AND h.testeur_id = ?
+           )
+         ORDER BY a.mails_recrutes ASC, a.created_at ASC`
+      )
+      .all(req.session.userId, req.session.userId);
+  }
   res.json({ applications: rows.map(publicApplication) });
 });
 
