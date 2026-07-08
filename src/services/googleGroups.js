@@ -5,20 +5,20 @@
 // configuration n'est pas présente dans .env, le service bascule en MODE DEV :
 // les groupes/membres sont simulés en mémoire, ce qui permet de tester tout
 // le parcours (inscription, ajout au groupe, éjection) sans compte Workspace.
-const fs = require('fs');
-const path = require('path');
+const { resoudreCredentials } = require('./googleCredentials');
 
-const KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH;
 const IMPERSONATE = process.env.GOOGLE_ADMIN_IMPERSONATE_EMAIL;
 const DOMAIN = process.env.GOOGLE_GROUPS_DOMAIN;
+const credentials = resoudreCredentials('GOOGLE_SERVICE_ACCOUNT_KEY_PATH', 'GOOGLE_SERVICE_ACCOUNT_KEY_JSON');
 
-const devMode = !KEY_PATH || !IMPERSONATE || !DOMAIN || !fs.existsSync(path.resolve(KEY_PATH));
+const devMode = !credentials || !IMPERSONATE || !DOMAIN;
 
 let directory = null;
 if (!devMode) {
   const { google } = require('googleapis');
   const auth = new google.auth.JWT({
-    keyFile: path.resolve(KEY_PATH),
+    email: credentials.client_email,
+    key: credentials.private_key,
     scopes: [
       'https://www.googleapis.com/auth/admin.directory.group',
       'https://www.googleapis.com/auth/admin.directory.group.member',

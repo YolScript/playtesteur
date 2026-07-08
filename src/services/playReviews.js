@@ -5,18 +5,20 @@
 // de service ait accès dans Play Console. Sans configuration, bascule en
 // MODE DEV : la validation d'un avis est simulée (acceptée immédiatement)
 // pour permettre de tester tout le parcours de gamification sans Play Console.
-const fs = require('fs');
-const path = require('path');
+const { resoudreCredentials } = require('./googleCredentials');
 
-const KEY_PATH = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_PATH;
-const devMode = !KEY_PATH || !fs.existsSync(path.resolve(KEY_PATH));
+const credentials = resoudreCredentials(
+  'GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_PATH',
+  'GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_JSON'
+);
+const devMode = !credentials;
 
 let androidpublisher = null;
-let authClient = null;
 if (!devMode) {
   const { google } = require('googleapis');
-  authClient = new google.auth.JWT({
-    keyFile: path.resolve(KEY_PATH),
+  const authClient = new google.auth.JWT({
+    email: credentials.client_email,
+    key: credentials.private_key,
     scopes: ['https://www.googleapis.com/auth/androidpublisher'],
   });
   androidpublisher = google.androidpublisher({ version: 'v3', auth: authClient });
