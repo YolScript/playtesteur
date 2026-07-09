@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PlayTesteurAPI — Documentation</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --bg-card: #12151c;
+    --border: #232838;
+    --green: #00e676;
+    --text: #e8ecf3;
+    --text-dim: #9aa4b8;
+    --code-bg: #0a0c11;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .layout { display: flex; min-height: 100vh; }
+  nav {
+    width: 260px;
+    flex-shrink: 0;
+    padding: 24px 16px;
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  nav a {
+    display: block;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  nav a:hover { background: var(--bg-card); color: var(--text); }
+  main { flex: 1; padding: 40px 48px; max-width: 900px; }
+  h1 { font-size: 30px; margin-bottom: 4px; }
+  h1 span { color: var(--green); }
+  .sub { color: var(--text-dim); margin-bottom: 32px; }
+  h2 {
+    margin-top: 48px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 22px;
+  }
+  h3 { color: var(--green); font-size: 17px; margin-top: 28px; font-family: monospace; }
+  p { color: var(--text-dim); }
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.9em;
+    color: var(--green);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-size: 13.5px;
+  }
+  pre code { background: none; border: none; padding: 0; color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; }
+  .badge {
+    display: inline-block;
+    background: rgba(0,230,118,0.12);
+    color: var(--green);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-family: monospace;
+    margin-left: 8px;
+  }
+  .callout {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <a href="#intro">Introduction</a>
+    <a href="#connexion">Se connecter</a>
+    <a href="#etat">État</a>
+    <a href="#fond">Fond &amp; musique</a>
+    <a href="#intro-outro">Intro / Outro</a>
+    <a href="#photos">Calques photo</a>
+    <a href="#textes">Blocs de texte</a>
+    <a href="#effets">Effets &amp; transition</a>
+    <a href="#lecture">Lecture / timeline</a>
+    <a href="#historique">Historique</a>
+    <a href="#export">Export</a>
+    <a href="#mode-ia">Mode IA (contours)</a>
+    <a href="#exemple">Exemple complet</a>
+  </nav>
+  <main>
+    <h1 id="intro">PlayTesteur<span>API</span></h1>
+    <p class="sub">API de pilotage et de visualisation de l'éditeur vidéo/photo, conçue pour être utilisée par une IA (ou tout script d'automatisation navigateur).</p>
+
+    <div class="callout">
+      L'éditeur PlayTesteur fonctionne <strong>100% dans le navigateur</strong> — rien n'est envoyé au serveur. Il n'y a donc pas d'API HTTP : <code>window.PlayTesteurAPI</code> est un objet JavaScript exposé directement dans la page <code>/#/editeur</code>, piloté via CDP (Chrome DevTools Protocol) par des outils comme Playwright, Puppeteer, ou tout client compatible.
+    </div>
+
+    <h2 id="connexion">Se connecter</h2>
+    <p>Depuis un script Playwright (ou équivalent) déjà attaché à la page de l'éditeur :</p>
+    <pre><code>const etat = await page.evaluate(() => window.PlayTesteurAPI.getState());
+
+const id = await page.evaluate(
+  (url) => window.PlayTesteurAPI.addPhoto({ url, texte: 'Ma légende', duree: 3 }),
+  'https://exemple.com/capture.png'
+);</code></pre>
+    <p>Toutes les méthodes qui chargent un média (<code>addPhoto</code>, <code>setBackground</code>, <code>setMusic</code>...) acceptent une URL (téléchargée via <code>fetch</code> puis chargée comme le ferait un <code>&lt;input type="file"&gt;</code>) — <code>data:</code>, <code>blob:</code> et URLs same-origin fonctionnent toujours ; les URLs externes nécessitent que le serveur distant autorise CORS.</p>
+
+    <div class="callout">
+      Chaque appel modifie le même état que l'interface utilisateur et rafraîchit le panneau à l'écran : un humain gardant l'onglet ouvert voit l'éditeur se mettre à jour en direct et peut reprendre la main à tout moment (undo/redo compris). Piloter par API n'est pas un mode exclusif.
+    </div>
+
+    <h2 id="etat">État — <code>getState()</code></h2>
+    <p>Retourne un instantané JSON-sérialisable complet du projet (fond, musique, intro/outro, photos, blocs de texte, effets, format d'export, historique...). Les médias chargés ne sont jamais inclus directement (ce sont des objets DOM) — utilisez les champs <code>hasMedia</code> / <code>hasLogo</code> / <code>hasImg</code> / <code>hasAudio</code> pour savoir si un média est présent.</p>
+    <pre><code>window.PlayTesteurAPI.getState()
+// {
+//   bgType: 'video', hasBgMedia: true,
+//   audioVolume: 0.8, hasAudio: true,
+//   intro: { active: true, texte: 'PLAYTESTEUR', duree: 3, hasLogo: false, hasImg: false },
+//   photos: [{ id: 1, x: 0.5, y: 0.45, texte: '...', hasMedia: true, chromaKeyActive: false, ... }],
+//   textBlocks: [...],
+//   dureeTotale: 34.8,
+//   historique: { peutAnnuler: true, peutRefaire: false }
+// }</code></pre>
+
+    <h2 id="fond">Fond &amp; musique</h2>
+
+    <h3>setBackground({ type, url, color, gradient })</h3>
+    <table>
+      <tr><th>Champ</th><th>Type</th><th>Description</th></tr>
+      <tr><td><code>type</code></td><td>'media' | 'color' | 'gradient'</td><td>Type de fond. Déduit automatiquement de <code>url</code> si fourni (image/vidéo).</td></tr>
+      <tr><td><code>url</code></td><td>string</td><td>URL d'une image ou vidéo à utiliser comme fond.</td></tr>
+      <tr><td><code>color</code></td><td>string (hex)</td><td>Couleur unie si <code>type:'color'</code>.</td></tr>
+      <tr><td><code>gradient</code></td><td>{color1, color2, angle}</td><td>Dégradé si <code>type:'gradient'</code>.</td></tr>
+    </table>
+
+    <h3>setBackgroundAdjust({ brightness, blur })</h3>
+    <p>Luminosité (40-160%) et flou (0-15px) appliqués au fond.</p>
+
+    <h3>setOverlay({ type, strength })</h3>
+    <p><code>type</code>: <code>'none' | 'vignette' | 'grain'</code>, <code>strength</code>: 0..1.</p>
+
+    <h3>setBackgroundChromaKey({ active, color, tolerance })</h3>
+    <p>Clé chromatique (fond vert) appliquée au fond global. <code>tolerance</code>: 0..1.</p>
+
+    <h3>setMusic(url, { volume, fadeIn, fadeOut, trimStart })</h3>
+    <p>Musique de fond en boucle, avec fade in/out (secondes) et point de départ dans la piste (<code>trimStart</code>, secondes). Branche automatiquement l'analyseur audio (spectre réactif, bloom audio-réactif).</p>
+
+    <h3>setVoiceOver(url, { volume })</h3>
+    <p>Piste voix-off indépendante (pas de boucle, pas liée au spectre audio).</p>
+
+    <h2 id="intro-outro">Intro / Outro</h2>
+    <h3>setIntro({ active, texte, duree, logoUrl, imgUrl })</h3>
+    <h3>setOutro({ active, texte, duree, logoUrl, imgUrl })</h3>
+    <p>Segment de début/fin avec logo, image et texte de titre.</p>
+
+    <h2 id="photos">Calques photo</h2>
+    <p>Un calque "photo" accepte une image <strong>ou une vidéo</strong>. Tous les effets développés dans l'éditeur sont pilotables via le <code>patch</code> passé à <code>addPhoto</code>/<code>updatePhoto</code> — la liste exhaustive des champs :</p>
+    <table>
+      <tr><th>Catégorie</th><th>Champs</th></tr>
+      <tr><td>Position / 3D</td><td><code>x, y, z, rotX, rotY, rotZ, scale</code> (fractions 0..1 pour x/y, degrés pour les rotations)</td></tr>
+      <tr><td>Contenu</td><td><code>texte</code> (légende), <code>duree</code> (secondes), <code>texteX, texteY</code></td></tr>
+      <tr><td>Forme &amp; bordure</td><td><code>maskShape</code> ('rect'|'circle'|'hexagon'), <code>borderActive, borderColor, borderWidth</code></td></tr>
+      <tr><td>Filtres image</td><td><code>imgBrightness, imgContrast, imgSaturation, imgGrayscale, imgSepia, imgBlur, vignette, vignetteStrength</code></td></tr>
+      <tr><td>Clé chromatique</td><td><code>chromaKeyActive, chromaKeyColor, chromaKeyTolerance</code></td></tr>
+      <tr><td>Recadrage</td><td><code>cropX, cropY, cropW, cropH</code> (fractions 0..1)</td></tr>
+      <tr><td>Fond de ce calque</td><td><code>bgOverrideType</code> ('none'|'video'|'image'|'color'), <code>bgOverrideColor</code>, <code>bgOverrideUrl</code> (option de <code>updatePhoto</code>)</td></tr>
+      <tr><td>Contour énergétique (Saber)</td><td><code>saberActive, saberColor, saberCount, saberSize</code></td></tr>
+      <tr><td>Spectre audio</td><td><code>spectrumActive, spectrumColor, spectrumCount, spectrumSize</code></td></tr>
+      <tr><td>Particules</td><td><code>particlesActive</code></td></tr>
+    </table>
+
+    <h3>addPhoto({ url, ...patch }) → id</h3>
+    <pre><code>const id = await window.PlayTesteurAPI.addPhoto({
+  url: 'https://exemple.com/screenshot.png',
+  texte: 'Découvrez le catalogue',
+  duree: 3.2,
+  saberActive: true,
+  saberColor: '#00e5ff',
+  rotY: 12,
+});</code></pre>
+
+    <h3>updatePhoto(id, patch)</h3>
+    <p>Modifie un ou plusieurs champs d'un calque existant. <code>patch.url</code> remplace le média, <code>patch.bgOverrideUrl</code> définit le fond propre à ce calque.</p>
+
+    <h3>removePhoto(id)</h3>
+    <h3>reorderPhotos([id1, id2, ...])</h3>
+    <p>Réordonne les calques (donc l'ordre de passage dans la timeline) — doit contenir exactement tous les id existants.</p>
+
+    <h2 id="textes">Blocs de texte</h2>
+    <table>
+      <tr><th>Catégorie</th><th>Champs</th></tr>
+      <tr><td>Contenu &amp; position</td><td><code>texte, x, y, z</code></td></tr>
+      <tr><td>Style</td><td><code>fontFamily, size, color, bold, italic, align</code></td></tr>
+      <tr><td>Animation &amp; timing</td><td><code>anim</code> ('none'|'fade'|'slide'|'pop'|'typewriter'), <code>startTime, endTime</code> (secondes, <code>null</code> = tout le temps)</td></tr>
+      <tr><td>Fond</td><td><code>bgPanelActive</code> (panneau derrière le texte)</td></tr>
+      <tr><td>Rotation 3D</td><td><code>rotX, rotY, rotZ</code> (degrés)</td></tr>
+      <tr><td>Glow néon</td><td><code>glowActive, glowColor</code></td></tr>
+      <tr><td>Contour énergétique</td><td><code>saberActive, saberColor, saberCount, saberSize</code></td></tr>
+      <tr><td>Particules</td><td><code>particlesActive</code></td></tr>
+    </table>
+
+    <h3>addTextBlock(patch) → id</h3>
+    <h3>updateTextBlock(id, patch)</h3>
+    <h3>removeTextBlock(id)</h3>
+
+    <h2 id="effets">Effets &amp; transition</h2>
+    <h3>setEffects({ bloomActive, bloomStrength, bloomAudioReactive })</h3>
+    <h3>setTransition(type)</h3>
+    <p><code>'none' | 'fade' | 'slide' | 'zoom'</code> — transition entre les calques photo.</p>
+    <h3>setImageExportFormat(format)</h3>
+    <p><code>'playstore'</code> (1080×1920) ou <code>'square'</code> (1080×1080).</p>
+    <h3>setExportFps(fps)</h3>
+
+    <h2 id="lecture">Lecture / timeline</h2>
+    <h3>play()</h3>
+    <h3>pause()</h3>
+    <h3>seek(secondes)</h3>
+
+    <h2 id="historique">Historique</h2>
+    <h3>undo()</h3>
+    <h3>redo()</h3>
+    <p>Piloter par l'API alimente le même historique que l'UI (voir <code>getState().historique</code>).</p>
+
+    <h2 id="export">Export</h2>
+    <p>Chaque fonction retourne le <code>Blob</code> produit — <strong>aucun téléchargement automatique</strong> n'est déclenché, l'appelant décide quoi en faire (sauvegarde locale via Playwright, envoi réseau, inspection...).</p>
+
+    <h3>exportPng() → Promise&lt;Blob&gt;</h3>
+    <h3>exportMp4({ fps, onProgress }) → Promise&lt;Blob&gt;</h3>
+    <h3>exportGif({ fps, onProgress }) → Promise&lt;Blob&gt;</h3>
+    <p><code>onProgress(fraction, texte)</code> est rappelé pendant le rendu et la conversion.</p>
+    <h3>downloadBlob(blob, filename)</h3>
+    <p>Déclenche un vrai téléchargement navigateur pour un Blob déjà produit, si vous voulez malgré tout le proposer à un humain.</p>
+
+    <pre><code>const blob = await page.evaluate(() =>
+  window.PlayTesteurAPI.exportMp4({ fps: 30 })
+);
+// blob n'est pas transférable tel quel hors du navigateur : côté
+// Playwright, utilisez plutôt page.waitForEvent('download') après
+// window.PlayTesteurAPI.downloadBlob(blob, 'video.mp4'), ou lisez le
+// contenu du blob en base64 via page.evaluate avant de le renvoyer.</code></pre>
+
+    <h2 id="mode-ia">Mode IA — contours &amp; capture complète</h2>
+    <p>Pensé pour qu'une IA lise la <strong>disposition</strong> du projet (positions, tailles, chevauchements) sans avoir à interpréter une image détaillée, et pour repérer les calques placés <strong>hors du cadre d'export</strong> (invisibles dans la vidéo/image finale mais bien présents dans le projet).</p>
+
+    <h3>setModeContours(actif) <span class="badge">boolean</span></h3>
+    <p>Remplace le rendu visuel de chaque calque (photo et texte) par un simple cadre pointillé + label (id, dimensions).</p>
+
+    <h3>captureApercu() → dataURL</h3>
+    <p>Capture une frame au cadrage normal (ce qui sera dans l'export), reflète le mode contours si actif.</p>
+
+    <h3>captureVueComplete(zoomOut = 2.2) → dataURL</h3>
+    <p>Capture avec un champ de vision élargi (recul de caméra), révélant les calques positionnés hors du cadre normal (x/y en dehors de 0..1). Combiner avec <code>setModeContours(true)</code> pour un vrai "plan du montage".</p>
+
+    <h3>demarrerCaptureAuto(callback, intervalleMs = 2000) → fonction d'arrêt</h3>
+    <p>Envoi automatique et périodique de captures (aperçu + vue complète + état) au <code>callback</code> fourni — utile pour un pilotage IA qui surveille la disposition en continu.</p>
+    <pre><code>const arreter = window.PlayTesteurAPI.demarrerCaptureAuto(({ apercu, vueComplete, etat }) => {
+  console.log('nb photos:', etat.photos.length);
+}, 3000);
+// arreter() pour stopper</code></pre>
+
+    <h2 id="exemple">Exemple complet</h2>
+    <pre><code>await page.evaluate(async () => {
+  const API = window.PlayTesteurAPI;
+  await API.setBackground({ type: 'media', url: '/Media/background.mp4' });
+  await API.setMusic('/Media/musique.mp3', { fadeIn: 1, fadeOut: 2 });
+  await API.setIntro({ active: true, texte: 'PLAYTESTEUR', duree: 3 });
+
+  await API.addPhoto({
+    url: '/shots/dashboard.png',
+    texte: 'Suivez votre progression',
+    duree: 3.2,
+  });
+
+  const id = await API.addTextBlock({
+    texte: 'ÉDITEUR INTÉGRÉ',
+    startTime: 5, endTime: 10,
+    glowActive: true, glowColor: '#00e5ff',
+  });
+
+  await API.setOutro({ active: true, texte: 'REJOIGNEZ-NOUS', duree: 3 });
+});
+
+const blob = await page.evaluate(() => window.PlayTesteurAPI.exportMp4({ fps: 30 }));</code></pre>
+
+  </main>
+</div>
+</body>
+</html>

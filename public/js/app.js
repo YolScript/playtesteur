@@ -1257,11 +1257,19 @@ function renderFilePicker(inputId, accept, filenameId) {
 function viewEditeur() {
   viewRoot.innerHTML = `
     <h1 class="page-title">Éditeur</h1>
-    <p class="page-subtitle">Composez une vidéo ou une image promo : intro, photos (chacune avec sa durée et son texte), outro, musique et police perso. Tout se passe dans votre navigateur, rien n'est envoyé au serveur.</p>
+    <p class="page-subtitle">Composez une vidéo ou une image promo : intro, photos (chacune avec sa durée et son texte), outro, musique et police perso. Tout se passe dans votre navigateur, rien n'est envoyé au serveur.
+      <a href="/api-docs.html" target="_blank" rel="noopener" style="margin-left:10px; white-space:nowrap;">📄 Documentation API (pilotage IA)</a>
+    </p>
 
     <div class="editor-layout">
       <div class="editor-canvas-wrap">
-        <canvas id="editor-canvas" width="1920" height="1080"></canvas>
+        <div class="editor-canvas-stage">
+          <canvas id="editor-canvas" width="1920" height="1080"></canvas>
+          <div class="editor-crop-overlay hidden" id="editor-crop-overlay">
+            <div class="editor-crop-overlay-frame" id="editor-crop-overlay-frame"></div>
+            <span class="editor-crop-overlay-label" id="editor-crop-overlay-label"></span>
+          </div>
+        </div>
         <div class="editor-hint">Glissez le texte fixe, la photo active ou sa légende directement sur l'aperçu pour les repositionner.</div>
         <div class="editor-timeline">
           <button type="button" id="editor-play-btn" class="editor-play-btn" title="Lecture / Pause">▶</button>
@@ -1442,6 +1450,10 @@ function viewEditeur() {
                 <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="playstore" checked> Vertical Play Store (1080×1920)</label>
                 <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="square"> Carré (1080×1080)</label>
               </div>
+              <div class="editor-row">
+                <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" id="editor-crop-overlay-toggle"><span class="editor-toggle-switch"></span><span>Afficher la zone de capture (PNG/GIF) sur l'aperçu</span></label>
+              </div>
+              <span class="form-hint">Le PNG recadre selon le format choisi ci-dessus ; le GIF garde le cadre plein 1920×1080 (identique à la vidéo), sans recadrage.</span>
             </div>
             <div class="editor-section">
               <label class="editor-label">Nom du fichier</label>

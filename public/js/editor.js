@@ -55,6 +55,10 @@ const EditorState = {
   exportFps: 30,
   exportPlaybackRate: 1,
   _exportRafTs: null,
+  // Mode IA : remplace le rendu visuel de chaque calque par un simple
+  // cadre pointillé + label (id, dimensions) — pour qu'une IA pilotant
+  // l'éditeur lise la disposition sans avoir à interpréter une image.
+  modeContours: false,
   _scrubbing: false,
 
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
@@ -1132,6 +1136,50 @@ function cssFiltreImage(p) {
 // composés sur un canvas hors-écran (comme avant) puis texturés sur un
 // plan 3D. Flottement + tilt automatiques, plus rotation manuelle sur
 // les 3 axes (p.rotX/rotY/rotZ, en degrés, ajoutés à l'auto-tilt).
+// Teinte du contour dérivée de la profondeur z (au-delà de la simple
+// perspective 3D déjà appliquée par le placement du calque) : un calque
+// proche de la caméra (z élevé) tire vers le cyan, un calque en retrait
+// (z négatif) vers le jaune-vert, z=0 reste au rose de base — une IA
+// distingue ainsi l'empilement des calques d'un coup d'œil, sans avoir à
+// comparer des nombres.
+function couleurContourSelonZ(z, alpha) {
+  const hue = 330 - Math.max(-60, Math.min(60, z || 0)) * 2;
+  const hueNormalise = ((hue % 360) + 360) % 360;
+  return alpha != null ? `hsla(${hueNormalise}, 85%, 60%, ${alpha})` : `hsl(${hueNormalise}, 85%, 60%)`;
+}
+
+// Mode IA "contours" : dessine un simple cadre pointillé + label (id,
+// position x/y/z, dimensions) à la place du rendu visuel complet — une IA
+// qui pilote l'éditeur peut ainsi lire la disposition (position, taille,
+// profondeur, chevauchements) d'un coup d'œil sans avoir à interpréter une
+// image détaillée. posInfo = {x, y, z} en unités monde (fractions 0..1
+// pour x/y, pixels pour z) pour annoter le label et teinter le contour.
+function dessinerContourAsset(ctx, x, y, w, h, radius, shape, label, posInfo) {
+  const z = (posInfo && posInfo.z) || 0;
+  const couleur = couleurContourSelonZ(z);
+  ctx.save();
+  ctx.fillStyle = couleurContourSelonZ(z, 0.12);
+  maskShapePath(ctx, shape || 'rect', x, y, w, h, radius || 0);
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = couleur;
+  ctx.setLineDash([10, 6]);
+  maskShapePath(ctx, shape || 'rect', x, y, w, h, radius || 0);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = '600 20px monospace';
+  ctx.fillStyle = couleur;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(label, x + 8, y + 8);
+  const position = posInfo
+    ? `x:${posInfo.x.toFixed(2)} y:${posInfo.y.toFixed(2)} z:${Math.round(z)}`
+    : '';
+  ctx.fillText(position, x + 8, y + 32);
+  ctx.fillText(`${Math.round(w)}×${Math.round(h)}`, x + 8, y + 56);
+  ctx.restore();
+}
+
 function mettreAJourPhoto(p, tGlobal, layerName) {
   layerName = layerName || 'photo';
   if (!p.img) {
@@ -1158,6 +1206,9 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
   const shape = p.maskShape || 'rect';
   const radius = Math.min(w, h) * 0.06;
 
+  if (EditorState.modeContours) {
+    dessinerContourAsset(ctx, ox, oy, w, h, radius, shape, `#${p.id} photo`, { x: p.x, y: p.y, z: p.z || 0 });
+  } else {
   // Ombre portée qui déborde du masque, sans remplir l'intérieur en noir
   // opaque : sinon les PNG à fond transparent laissaient voir ce noir à
   // travers leurs zones transparentes au lieu du fond de la scène. On
@@ -1232,10 +1283,12 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
       p.spectrumCount, spectrumSizeMul
     );
   }
+  }
 
   const phase = (p.id % 7) * 0.9;
-  const floatY = Math.sin(tGlobal * 1.1 + phase) * h * 0.035;
-  const autoTilt = Math.sin(tGlobal * 0.66 + phase) * 0.045;
+  const floatActif = p.floatActive !== false;
+  const floatY = floatActif ? Math.sin(tGlobal * 1.1 + phase) * h * 0.035 : 0;
+  const autoTilt = floatActif ? Math.sin(tGlobal * 0.66 + phase) * 0.045 : 0;
 
   const baseX = p.x * width;
   const baseY = p.y * height + floatY;
@@ -1460,6 +1513,18 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   sizeLayerCanvas(layer, panelW, panelH);
   const ctx = layer.ctx;
   ctx.clearRect(0, 0, panelW, panelH);
+
+  const anim = b.anim || 'none';
+  const dureeAnim = 0.5;
+  const progress = progressionAnimation(b.startTime, b.endTime, now, dureeAnim);
+
+  if (EditorState.modeContours) {
+    dessinerContourAsset(ctx, 0, 0, panelW, panelH, 18, 'rect', `#${b.id} texte: "${(b.texte || '').slice(0, 20)}"`, {
+      x: b.x,
+      y: b.y,
+      z: b.z ?? 10,
+    });
+  } else {
   if (b.bgPanelActive !== false) {
     roundRectPath(ctx, 0, 0, panelW, panelH, 18);
     ctx.fillStyle = 'rgba(8,10,14,0.5)';
@@ -1471,10 +1536,6 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   ctx.textAlign = align;
   ctx.textBaseline = 'top';
   const textX = align === 'left' ? padX : align === 'right' ? panelW - padX : panelW / 2;
-
-  const anim = b.anim || 'none';
-  const dureeAnim = 0.5;
-  const progress = progressionAnimation(b.startTime, b.endTime, now, dureeAnim);
 
   if (b.glowActive) {
     ctx.save();
@@ -1498,6 +1559,7 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
       ctx, 0, 0, panelW, panelH, 18, b.saberColor || '#00e5ff', tGlobal || 0,
       b.saberCount, b.saberSize
     );
+  }
   }
 
   let cx = b.x * width;
@@ -1809,6 +1871,30 @@ async function chargerMediaPhoto(file) {
   return chargerImage(file);
 }
 
+// Charge un fichier (image ou vidéo) comme fond global, et met à jour
+// bgType/bgVideoEl/bgImageEl en conséquence. Factorisé pour être réutilisé
+// à la fois par l'input de fichier du panneau et par PlayTesteurAPI.
+async function chargerFondDepuisFichier(file) {
+  if (file.type.startsWith('video/')) {
+    const video = document.createElement('video');
+    video.src = URL.createObjectURL(file);
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.crossOrigin = 'anonymous';
+    try {
+      await video.play();
+    } catch (_) {
+      /* autoplay refusé, la boucle rAF affichera dès que possible */
+    }
+    EditorState.bgVideoEl = video;
+    EditorState.bgType = 'video';
+  } else {
+    EditorState.bgImageEl = await chargerImage(file);
+    EditorState.bgType = 'image';
+  }
+}
+
 function bindSegmentControls(seg, prefix, segType) {
   const toggle = document.getElementById(`editor-${prefix}-toggle`);
   const panel = document.getElementById(`editor-${prefix}-panel`);
@@ -1859,25 +1945,7 @@ function bindEditorInputs() {
     const file = e.target.files[0];
     if (!file) return;
     afficherNomFichier('editor-bg-filename', file);
-    const url = URL.createObjectURL(file);
-    if (file.type.startsWith('video/')) {
-      const video = document.createElement('video');
-      video.src = url;
-      video.muted = true;
-      video.loop = true;
-      video.playsInline = true;
-      video.crossOrigin = 'anonymous';
-      try {
-        await video.play();
-      } catch (_) {
-        /* autoplay refusé, la boucle rAF affichera dès que possible */
-      }
-      EditorState.bgVideoEl = video;
-      EditorState.bgType = 'video';
-    } else {
-      EditorState.bgImageEl = await chargerImage(file);
-      EditorState.bgType = 'image';
-    }
+    await chargerFondDepuisFichier(file);
   });
 
   const bgTypeSelect = document.getElementById('editor-bg-type');
@@ -2048,12 +2116,46 @@ function bindEditorInputs() {
   document.querySelectorAll('input[name="editor-img-format"]').forEach((radio) => {
     radio.addEventListener('change', (e) => {
       if (e.target.checked) EditorState.imageExportFormat = e.target.value;
+      mettreAJourOverlayZoneCapture();
     });
   });
+
+  const cropOverlayToggle = document.getElementById('editor-crop-overlay-toggle');
+  if (cropOverlayToggle) {
+    cropOverlayToggle.addEventListener('change', mettreAJourOverlayZoneCapture);
+  }
 
   exportPngBtn.addEventListener('click', exportEditeurPng);
   exportMp4Btn.addEventListener('click', exportEditeurMp4);
   if (exportGifBtn) exportGifBtn.addEventListener('click', exportEditeurGif);
+}
+
+// Superpose sur l'aperçu 16:9 un cadre indiquant la zone gardée par
+// l'export PNG (le PNG recalcule un cadrage à un autre ratio — 9:16 ou
+// 1:1 — plutôt que de simplement rogner le 16:9 actuel, ce cadre reste
+// donc une approximation centrée, mais elle indique fidèlement quelle
+// portion centrale rester "en sécurité" quel que soit le format choisi).
+// Le GIF garde le cadre plein (même ratio que la vidéo), donc rien à
+// superposer pour lui — seul un rappel textuel est affiché.
+function mettreAJourOverlayZoneCapture() {
+  const toggle = document.getElementById('editor-crop-overlay-toggle');
+  const overlay = document.getElementById('editor-crop-overlay');
+  const frame = document.getElementById('editor-crop-overlay-frame');
+  const label = document.getElementById('editor-crop-overlay-label');
+  if (!toggle || !overlay || !frame || !label) return;
+
+  const actif = toggle.checked;
+  overlay.classList.toggle('hidden', !actif);
+  if (!actif) return;
+
+  const ratioCadre = 16 / 9;
+  const estCarre = EditorState.imageExportFormat === 'square';
+  const ratioCible = estCarre ? 1 : 9 / 16;
+  const largeurPct = Math.min(100, (ratioCible / ratioCadre) * 100);
+  frame.style.width = `${largeurPct}%`;
+  label.textContent = estCarre
+    ? 'Zone PNG carré (1080×1080) — GIF = cadre plein'
+    : 'Zone PNG vertical (1080×1920) — GIF = cadre plein';
 }
 
 /* -------------------------------------------------------------------- */
@@ -2185,6 +2287,9 @@ function renderPhotoLayerHtml(p, index) {
             <label class="editor-mini-label">Rotation Y<input type="range" data-roty-for="${p.id}" min="-45" max="45" value="${p.rotY || 0}"></label>
             <label class="editor-mini-label">Rotation Z<input type="range" data-rotz-for="${p.id}" min="-45" max="45" value="${p.rotZ || 0}"></label>
           </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-float-for="${p.id}" ${p.floatActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Flottement automatique</span></label>
+          </div>
         </div>
       </details>
 
@@ -2263,6 +2368,12 @@ function bindPhotoLayerEvents() {
         jump();
       });
     });
+    const floatInput = document.querySelector(`[data-float-for="${p.id}"]`);
+    if (floatInput) {
+      floatInput.addEventListener('change', (e) => {
+        p.floatActive = e.target.checked;
+      });
+    }
     const saberInput = document.querySelector(`[data-saber-for="${p.id}"]`);
     if (saberInput) {
       saberInput.addEventListener('change', (e) => {
@@ -2461,9 +2572,8 @@ function rafraichirListePhotos() {
   bindPhotoLayerEvents();
 }
 
-function ajouterCalquePhoto() {
-  const id = ++elementIdCounter;
-  EditorState.photos.push({
+function creerPhotoParDefaut(id) {
+  return {
     id,
     img: null,
     x: 0.5,
@@ -2472,6 +2582,7 @@ function ajouterCalquePhoto() {
     rotX: 0,
     rotY: 0,
     rotZ: 0,
+    floatActive: true,
     scale: 0.3,
     texte: '',
     duree: 3,
@@ -2509,7 +2620,12 @@ function ajouterCalquePhoto() {
     chromaKeyActive: false,
     chromaKeyColor: '#00ff00',
     chromaKeyTolerance: 0.35,
-  });
+  };
+}
+
+function ajouterCalquePhoto() {
+  const id = ++elementIdCounter;
+  EditorState.photos.push(creerPhotoParDefaut(id));
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
   pousserHistorique();
@@ -2700,14 +2816,12 @@ function rafraichirListeTextBlocks() {
   bindTextBlockEvents();
 }
 
-function ajouterBlocTexte() {
-  const id = ++elementIdCounter;
-  const decalage = (EditorState.textBlocks.length % 5) * 0.06;
-  EditorState.textBlocks.push({
+function creerTextBlockParDefaut(id, decalage) {
+  return {
     id,
     texte: '',
     x: 0.5,
-    y: 0.2 + decalage,
+    y: 0.2 + (decalage || 0),
     z: 10, // au-dessus de tout le reste (particules à z=6 étaient le plus haut)
     fontFamily: "'Space Grotesk', sans-serif",
     size: 56,
@@ -2729,7 +2843,13 @@ function ajouterBlocTexte() {
     saberCount: 26,
     saberSize: 1,
     particlesActive: false,
-  });
+  };
+}
+
+function ajouterBlocTexte() {
+  const id = ++elementIdCounter;
+  const decalage = (EditorState.textBlocks.length % 5) * 0.06;
+  EditorState.textBlocks.push(creerTextBlockParDefaut(id, decalage));
   rafraichirListeTextBlocks();
   pousserHistorique();
 }
@@ -2854,7 +2974,10 @@ function calquePhotoActif() {
 /* -------------------------------------------------------------------- */
 /* Export PNG (formats verticaux Play Store)                             */
 /* -------------------------------------------------------------------- */
-function exportEditeurPng() {
+// Rend une image PNG au format d'export choisi (Play Store vertical ou
+// carré) et retourne une Promise<Blob> — séparé du déclenchement du
+// download pour être réutilisable tel quel par PlayTesteurAPI.
+function rendreImagePng() {
   const dims = EditorState.imageExportFormat === 'square' ? { w: 1080, h: 1080 } : { w: 1080, h: 1920 };
   const ts = EditorState.three;
   const canvas = ts.renderer.domElement;
@@ -2871,18 +2994,25 @@ function exportEditeurPng() {
 
   renderEditorFrame();
 
-  canvas.toBlob((blob) => {
-    // Restaure la taille d'aperçu normale.
-    ts.renderer.setSize(tailleOriginale.w, tailleOriginale.h, false);
-    ts.camera.aspect = tailleOriginale.w / tailleOriginale.h;
-    ts.camera.position.z = ts.distance;
-    ts.camera.updateProjectionMatrix();
-    ts.width = tailleOriginale.w;
-    ts.height = tailleOriginale.h;
-    ts.bgMesh.scale.set(tailleOriginale.w, tailleOriginale.h, 1);
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      // Restaure la taille d'aperçu normale.
+      ts.renderer.setSize(tailleOriginale.w, tailleOriginale.h, false);
+      ts.camera.aspect = tailleOriginale.w / tailleOriginale.h;
+      ts.camera.position.z = ts.distance;
+      ts.camera.updateProjectionMatrix();
+      ts.width = tailleOriginale.w;
+      ts.height = tailleOriginale.h;
+      ts.bgMesh.scale.set(tailleOriginale.w, tailleOriginale.h, 1);
+      resolve(blob);
+    }, 'image/png');
+  });
+}
 
+function exportEditeurPng() {
+  rendreImagePng().then((blob) => {
     if (blob) downloadBlob(blob, `${obtenirNomExport('playtesteur-visuel')}.png`);
-  }, 'image/png');
+  });
 }
 
 /* -------------------------------------------------------------------- */
@@ -3260,3 +3390,405 @@ async function exportEditeurGif() {
     basculerBoutonsExport(true);
   }
 }
+
+/* ==========================================================================
+   PlayTesteurAPI — pilotage programmatique complet de l'éditeur.
+
+   Conçue pour qu'une IA (ou tout script d'automatisation navigateur —
+   Playwright/Puppeteer/CDP) pilote l'éditeur via de vraies fonctions
+   plutôt qu'en cliquant sur des sélecteurs CSS fragiles. Chaque opération :
+     1. modifie EditorState directement (mêmes objets que l'UI manipule),
+     2. rafraîchit le panneau DOM correspondant (rafraichirListePhotos,
+        rafraichirListeTextBlocks, rafraichirPanneauApresRestauration),
+     3. pousse un instantané dans l'historique undo/redo,
+   de sorte qu'un humain gardant l'onglet ouvert voit l'éditeur se mettre
+   à jour normalement et reste libre d'intervenir à tout moment — piloter
+   par API n'est pas un mode exclusif, juste une autre façon d'agir sur le
+   même état que l'UI.
+   ========================================================================== */
+
+// Télécharge une URL et la restitue comme File (même type MIME que la
+// réponse HTTP), pour réutiliser telle quelle les mêmes chargeurs que les
+// <input type="file"> (chargerImage/chargerMediaPhoto/chargerFondDepuisFichier).
+async function chargerFichierDepuisUrl(url, nomSuggere) {
+  const reponse = await fetch(url);
+  if (!reponse.ok) throw new Error(`Téléchargement échoué (${reponse.status}) : ${url}`);
+  const blob = await reponse.blob();
+  return new File([blob], nomSuggere || 'asset', { type: blob.type });
+}
+
+function trouverPhoto(id) {
+  const p = EditorState.photos.find((x) => x.id === id);
+  if (!p) throw new Error(`Aucune photo avec l'id ${id}`);
+  return p;
+}
+
+function trouverTextBlock(id) {
+  const b = EditorState.textBlocks.find((x) => x.id === id);
+  if (!b) throw new Error(`Aucun bloc de texte avec l'id ${id}`);
+  return b;
+}
+
+// Rend une frame à un champ de vision élargi (recul de la caméra) pour
+// révéler les calques positionnés hors du cadre normal d'export (x/y en
+// dehors de 0..1) — invisibles dans l'export final mais bien présents dans
+// le projet. zoomOut=1 = cadre normal, 2.2 ≈ voit de -0.5 à 1.5 sur chaque
+// axe. Restaure la caméra normale immédiatement après capture.
+function rendreVueEtendue(zoomOut) {
+  const ts = EditorState.three;
+  if (!ts) return null;
+  const distanceNormale = ts.camera.position.z;
+  ts.camera.position.z = ts.distance * (zoomOut || 1);
+  ts.camera.updateProjectionMatrix();
+  renderEditorFrame();
+  const dataUrl = ts.renderer.domElement.toDataURL('image/png');
+  ts.camera.position.z = distanceNormale;
+  ts.camera.updateProjectionMatrix();
+  return dataUrl;
+}
+
+function serialiserPhoto(p) {
+  const { img, bgOverrideVideoEl, bgOverrideImageEl, ...donnees } = p;
+  return { ...donnees, hasMedia: !!img, bgOverrideHasMedia: !!(bgOverrideVideoEl || bgOverrideImageEl) };
+}
+
+function serialiserTextBlock(b) {
+  return { ...b };
+}
+
+function serialiserSegmentIntroOutro(seg) {
+  const { logoImg, img, ...donnees } = seg;
+  return { ...donnees, hasLogo: !!logoImg, hasImg: !!img };
+}
+
+window.PlayTesteurAPI = {
+  version: '1.0',
+
+  /* ---- État / lecture ------------------------------------------------ */
+
+  // Snapshot JSON-sérialisable complet de l'état du projet (aucun élément
+  // DOM/média — utiliser hasMedia/hasLogo/hasImg pour savoir si un média
+  // est chargé sans transmettre l'objet lui-même).
+  getState() {
+    const { dureeTotale } = calculerTimeline();
+    return {
+      bgType: EditorState.bgType,
+      bgColor: EditorState.bgColor,
+      bgGradient: { ...EditorState.bgGradient },
+      bgAdjust: { ...EditorState.bgAdjust },
+      overlay: { ...EditorState.overlay },
+      bgChromaKey: { ...EditorState.bgChromaKey },
+      hasBgMedia: !!(EditorState.bgVideoEl || EditorState.bgImageEl),
+      audioVolume: EditorState.audioVolume,
+      audioFadeIn: EditorState.audioFadeIn,
+      audioFadeOut: EditorState.audioFadeOut,
+      audioTrimStart: EditorState.audioTrimStart,
+      hasAudio: !!EditorState.audioEl,
+      voiceVolume: EditorState.voiceVolume,
+      hasVoice: !!EditorState.voiceEl,
+      hasCustomFont: !!EditorState.fontFamily,
+      intro: serialiserSegmentIntroOutro(EditorState.intro),
+      outro: serialiserSegmentIntroOutro(EditorState.outro),
+      photos: EditorState.photos.map(serialiserPhoto),
+      textBlocks: EditorState.textBlocks.map(serialiserTextBlock),
+      effects: { ...EditorState.effects },
+      transitionType: EditorState.transitionType,
+      imageExportFormat: EditorState.imageExportFormat,
+      exportFps: EditorState.exportFps,
+      modeContours: EditorState.modeContours,
+      dureeTotale,
+      playback: { currentTime: EditorState.playback.currentTime, playing: EditorState.playback.playing },
+      historique: { peutAnnuler: Historique.index > 0, peutRefaire: Historique.index < Historique.pile.length - 1 },
+    };
+  },
+
+  /* ---- Fond & musique -------------------------------------------------- */
+
+  async setBackground({ type, url, color, gradient } = {}) {
+    if (url) {
+      const file = await chargerFichierDepuisUrl(url, 'fond');
+      await chargerFondDepuisFichier(file);
+    } else if (type === 'color') {
+      EditorState.bgType = 'color';
+    } else if (type === 'gradient') {
+      EditorState.bgType = 'gradient';
+    }
+    if (color) EditorState.bgColor = color;
+    if (gradient) Object.assign(EditorState.bgGradient, gradient);
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  setBackgroundAdjust(patch) {
+    Object.assign(EditorState.bgAdjust, patch);
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  setOverlay(patch) {
+    Object.assign(EditorState.overlay, patch);
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  setBackgroundChromaKey(patch) {
+    Object.assign(EditorState.bgChromaKey, patch);
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  async setMusic(url, { volume, fadeIn, fadeOut, trimStart } = {}) {
+    const file = await chargerFichierDepuisUrl(url, 'musique.mp3');
+    const audio = new Audio();
+    audio.src = URL.createObjectURL(file);
+    audio.loop = true;
+    audio.crossOrigin = 'anonymous';
+    EditorState.audioEl = audio;
+    brancherAnalyseurAudio(audio);
+    calculerWaveform(file);
+    if (volume != null) EditorState.audioVolume = volume;
+    if (fadeIn != null) EditorState.audioFadeIn = fadeIn;
+    if (fadeOut != null) EditorState.audioFadeOut = fadeOut;
+    if (trimStart != null) EditorState.audioTrimStart = trimStart;
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  async setVoiceOver(url, { volume } = {}) {
+    const file = await chargerFichierDepuisUrl(url, 'voix.mp3');
+    const voice = new Audio();
+    voice.src = URL.createObjectURL(file);
+    voice.crossOrigin = 'anonymous';
+    EditorState.voiceEl = voice;
+    brancherVoixOff(voice);
+    if (volume != null) EditorState.voiceVolume = volume;
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  /* ---- Intro / outro ---------------------------------------------------- */
+
+  async setIntro({ active, texte, duree, logoUrl, imgUrl } = {}) {
+    if (active != null) EditorState.intro.active = active;
+    if (texte != null) EditorState.intro.texte = texte;
+    if (duree != null) EditorState.intro.duree = Math.max(0.5, Number(duree) || 3);
+    if (logoUrl) EditorState.intro.logoImg = await chargerImage(await chargerFichierDepuisUrl(logoUrl, 'logo'));
+    if (imgUrl) EditorState.intro.img = await chargerImage(await chargerFichierDepuisUrl(imgUrl, 'intro'));
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  async setOutro({ active, texte, duree, logoUrl, imgUrl } = {}) {
+    if (active != null) EditorState.outro.active = active;
+    if (texte != null) EditorState.outro.texte = texte;
+    if (duree != null) EditorState.outro.duree = Math.max(0.5, Number(duree) || 3);
+    if (logoUrl) EditorState.outro.logoImg = await chargerImage(await chargerFichierDepuisUrl(logoUrl, 'logo'));
+    if (imgUrl) EditorState.outro.img = await chargerImage(await chargerFichierDepuisUrl(imgUrl, 'outro'));
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  /* ---- Calques photo (couvre tous les champs : forme, filtres, crop,   */
+  /* fond par calque, clé chromatique, rotation 3D, Saber, spectre,       */
+  /* particules — voir creerPhotoParDefaut pour la liste exhaustive) ---- */
+
+  // options.url (requis) : image ou vidéo. Le reste des champs de
+  // creerPhotoParDefaut() peut être fourni directement (x, y, z, rotX,
+  // rotY, rotZ, scale, texte, duree, saberActive, spectrumActive,
+  // chromaKeyActive, maskShape, borderColor, imgBrightness, cropX...).
+  async addPhoto({ url, ...patch } = {}) {
+    if (!url) throw new Error('addPhoto requiert options.url');
+    const id = ++elementIdCounter;
+    const photo = creerPhotoParDefaut(id);
+    Object.assign(photo, patch);
+    photo.img = await chargerMediaPhoto(await chargerFichierDepuisUrl(url, 'photo'));
+    EditorState.photos.push(photo);
+    rafraichirListePhotos();
+    pousserHistorique();
+    return id;
+  },
+
+  async updatePhoto(id, patch = {}) {
+    const p = trouverPhoto(id);
+    if (patch.url) {
+      p.img = await chargerMediaPhoto(await chargerFichierDepuisUrl(patch.url, 'photo'));
+    }
+    if (patch.bgOverrideUrl) {
+      const file = await chargerFichierDepuisUrl(patch.bgOverrideUrl, 'fond-photo');
+      if (file.type.startsWith('video/')) {
+        const video = document.createElement('video');
+        video.src = URL.createObjectURL(file);
+        video.muted = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+        try { await video.play(); } catch (_) {}
+        p.bgOverrideVideoEl = video;
+      } else {
+        p.bgOverrideImageEl = await chargerImage(file);
+      }
+    }
+    const { url, bgOverrideUrl, id: _ignoreId, ...reste } = patch;
+    Object.assign(p, reste);
+    rafraichirListePhotos();
+    pousserHistorique();
+  },
+
+  removePhoto(id) {
+    trouverPhoto(id); // lève si absent
+    supprimerCalquePhoto(id);
+  },
+
+  reorderPhotos(idsDansLOrdre) {
+    const parId = new Map(EditorState.photos.map((p) => [p.id, p]));
+    const reordonnes = idsDansLOrdre.map((id) => parId.get(id)).filter(Boolean);
+    if (reordonnes.length !== EditorState.photos.length) {
+      throw new Error('reorderPhotos: la liste doit contenir exactement tous les id de photos existants');
+    }
+    EditorState.photos = reordonnes;
+    rafraichirListePhotos();
+    pousserHistorique();
+  },
+
+  /* ---- Blocs de texte (couvre tous les champs : police, style,        */
+  /* animation, fenêtre temporelle, rotation 3D, glow, Saber, particules) */
+
+  addTextBlock({ ...patch } = {}) {
+    const id = ++elementIdCounter;
+    const decalage = (EditorState.textBlocks.length % 5) * 0.06;
+    const bloc = creerTextBlockParDefaut(id, decalage);
+    Object.assign(bloc, patch);
+    EditorState.textBlocks.push(bloc);
+    rafraichirListeTextBlocks();
+    pousserHistorique();
+    return id;
+  },
+
+  updateTextBlock(id, patch = {}) {
+    const b = trouverTextBlock(id);
+    const { id: _ignoreId, ...reste } = patch;
+    Object.assign(b, reste);
+    rafraichirListeTextBlocks();
+    pousserHistorique();
+  },
+
+  removeTextBlock(id) {
+    trouverTextBlock(id);
+    supprimerBlocTexte(id);
+  },
+
+  /* ---- Effets globaux, transition, format --------------------------- */
+
+  setEffects(patch) {
+    Object.assign(EditorState.effects, patch);
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  setTransition(type) {
+    EditorState.transitionType = type;
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+  },
+
+  setImageExportFormat(format) {
+    EditorState.imageExportFormat = format;
+    rafraichirPanneauApresRestauration();
+  },
+
+  setExportFps(fps) {
+    EditorState.exportFps = fps;
+    const select = document.getElementById('editor-export-fps');
+    if (select) select.value = String(fps);
+  },
+
+  /* ---- Lecture / navigation timeline ---------------------------------- */
+
+  play() {
+    EditorState.playback.playing = true;
+  },
+  pause() {
+    EditorState.playback.playing = false;
+  },
+  seek(t) {
+    EditorState.playback.currentTime = Math.max(0, t);
+  },
+
+  /* ---- Historique ------------------------------------------------------ */
+
+  undo() {
+    annulerHistorique();
+  },
+  redo() {
+    refaireHistorique();
+  },
+
+  /* ---- Export : chaque fonction retourne le Blob produit (aucun       */
+  /* download automatique déclenché — laisse l'appelant décider quoi en   */
+  /* faire : sauvegarde, envoi réseau, inspection...). ------------------- */
+
+  async exportPng() {
+    return rendreImagePng();
+  },
+
+  async exportMp4({ fps, onProgress } = {}) {
+    const fpsFinal = fps || EditorState.exportFps || 30;
+    const webmBlob = await capturerFluxWebm({ fps: fpsFinal, setProgress: (f, t) => onProgress && onProgress(f * 0.5, t) });
+    return transcoderEnMp4(webmBlob, fpsFinal, (p) => onProgress && onProgress(0.5 + p * 0.5, `Conversion… ${Math.round(p * 100)}%`));
+  },
+
+  async exportGif({ fps, onProgress } = {}) {
+    const fpsFinal = Math.min(20, fps || EditorState.exportFps || 30);
+    const webmBlob = await capturerFluxWebm({ fps: fpsFinal, setProgress: (f, t) => onProgress && onProgress(f * 0.5, t) });
+    return transcoderEnGif(webmBlob, fpsFinal, (p) => onProgress && onProgress(0.5 + p * 0.5, `Conversion… ${Math.round(p * 100)}%`));
+  },
+
+  // Déclenche un vrai téléchargement navigateur pour un Blob déjà produit
+  // par exportMp4/exportGif/exportPng (utile si l'IA veut malgré tout
+  // proposer le fichier à l'utilisateur humain).
+  downloadBlob(blob, filename) {
+    downloadBlob(blob, filename);
+  },
+
+  /* ---- Mode IA : contours + capture complète (y compris hors-cadre) -- */
+
+  setModeContours(actif) {
+    EditorState.modeContours = !!actif;
+  },
+
+  // Capture une frame au cadrage normal (ce qui sera dans l'export),
+  // en PNG dataURL — reflète le mode contours si actif.
+  captureApercu() {
+    const ts = EditorState.three;
+    if (!ts) return null;
+    renderEditorFrame();
+    return ts.renderer.domElement.toDataURL('image/png');
+  },
+
+  // Capture avec un champ de vision élargi (zoomOut, défaut 2.2) pour
+  // révéler les calques positionnés hors du cadre normal d'export —
+  // invisibles dans la vidéo/image finale mais bien présents dans le
+  // projet (utile pour repérer un asset mal placé). N'affecte pas le
+  // mode contours : combiner avec setModeContours(true) pour une vue
+  // "plan du montage" complète, ou le laisser désactivé pour une vue
+  // visuelle complète (rendu normal, juste dézoomé).
+  captureVueComplete(zoomOut) {
+    return rendreVueEtendue(zoomOut || 2.2);
+  },
+
+  // Enregistre une fonction rappelée à intervalle régulier avec le
+  // résultat de captureVueComplete() — "envoi automatique" de captures
+  // pour un pilotage IA qui surveille la disposition en continu sans
+  // avoir à interroger explicitement à chaque étape. Retourne une
+  // fonction pour arrêter l'envoi.
+  demarrerCaptureAuto(callback, intervalleMs) {
+    const id = setInterval(() => {
+      try {
+        callback({ apercu: this.captureApercu(), vueComplete: this.captureVueComplete(), etat: this.getState() });
+      } catch (err) {
+        console.error('[PlayTesteurAPI] erreur capture auto', err);
+      }
+    }, intervalleMs || 2000);
+    return () => clearInterval(id);
+  },
+};
