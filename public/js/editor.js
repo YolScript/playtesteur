@@ -67,12 +67,56 @@ function arreterEditeur() {
   }
 }
 
+// Accordéon exclusif (un seul ouvert à la fois parmi les frères de même
+// niveau) + remplissage visuel des sliders (--range-progress). Écouteurs
+// en phase de capture sur le panneau entier : l'event 'toggle' de
+// <details> ne bubble pas de façon fiable, mais la capture descendante
+// fonctionne même pour du contenu régénéré dynamiquement (listes photo/
+// texte), sans avoir à ré-attacher quoi que ce soit à chaque refresh.
+function bindAccordionUx() {
+  const panel = document.querySelector('.editor-controls');
+  if (!panel || panel.dataset.uxBound) return;
+  panel.dataset.uxBound = '1';
+
+  panel.addEventListener(
+    'toggle',
+    (e) => {
+      const el = e.target;
+      if (!(el instanceof HTMLDetailsElement) || !el.open) return;
+      const selector = el.classList.contains('editor-accordion-nested')
+        ? ':scope > .editor-accordion-nested'
+        : ':scope > .editor-accordion';
+      const siblingsParent = el.parentElement;
+      if (!siblingsParent) return;
+      siblingsParent.querySelectorAll(selector).forEach((sib) => {
+        if (sib !== el) sib.open = false;
+      });
+    },
+    true
+  );
+
+  const majProgress = (input) => {
+    if (input.type !== 'range') return;
+    const min = Number(input.min) || 0;
+    const max = Number(input.max) || 100;
+    const pct = ((Number(input.value) - min) / (max - min || 1)) * 100;
+    input.style.setProperty('--range-progress', `${pct}%`);
+  };
+  panel.addEventListener('input', (e) => majProgress(e.target), true);
+  // Valeurs initiales (au chargement et après chaque régénération de liste).
+  new MutationObserver(() => {
+    panel.querySelectorAll('input[type="range"]').forEach(majProgress);
+  }).observe(panel, { childList: true, subtree: true });
+  panel.querySelectorAll('input[type="range"]').forEach(majProgress);
+}
+
 async function initEditeur() {
   const canvas = document.getElementById('editor-canvas');
   if (!canvas) return;
 
   bindEditorInputs();
   bindTimelineControls();
+  bindAccordionUx();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
 
@@ -629,12 +673,22 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
   const shape = p.maskShape || 'rect';
   const radius = Math.min(w, h) * 0.06;
 
+  // Ombre portée qui déborde du masque, sans remplir l'intérieur en noir
+  // opaque : sinon les PNG à fond transparent laissaient voir ce noir à
+  // travers leurs zones transparentes au lieu du fond de la scène. On
+  // peint le fill + son flou débordant, puis on efface la partie
+  // intérieure (destination-out) — il ne reste que le halo qui dépasse.
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.55)';
   ctx.shadowBlur = h * 0.14;
   ctx.shadowOffsetY = h * 0.08;
   maskShapePath(ctx, shape, ox, oy, w, h, radius);
   ctx.fillStyle = '#000';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.globalCompositeOperation = 'destination-out';
+  maskShapePath(ctx, shape, ox, oy, w, h, radius);
   ctx.fill();
   ctx.restore();
 
@@ -932,10 +986,10 @@ function dessinerBlocTexte(b, layerName, now) {
     scaleMul = 0.6 + 0.4 * progress;
   }
 
-  placerLayer(layer, cx, cy, b.z ?? 3, 0, 0, 0);
+  placerLayer(layer, cx, cy, b.z ?? 10, 0, 0, 0);
   layer.mesh.scale.set(panelW * scaleMul, panelH * scaleMul, 1);
 
-  return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: b.z ?? 3 };
+  return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: b.z ?? 10 };
 }
 
 let particuleSpriteTexture = null;
@@ -1365,7 +1419,7 @@ function renderPhotoLayerHtml(p, index) {
             </select>
           </div>
           <div class="editor-row">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-border-for="${p.id}" ${p.borderActive !== false ? 'checked' : ''}><span>Bordure</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-border-for="${p.id}" ${p.borderActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Bordure</span></label>
             <input type="color" data-bordercolor-for="${p.id}" value="${p.borderColor || '#ffffff'}" title="Couleur de la bordure">
             <label class="editor-mini-label">Épaisseur<input type="range" data-borderwidth-for="${p.id}" min="1" max="15" value="${p.borderWidth ?? 3}"></label>
           </div>
@@ -1384,11 +1438,11 @@ function renderPhotoLayerHtml(p, index) {
             <label class="editor-mini-label">Flou<input type="range" data-blur-for="${p.id}" min="0" max="10" value="${p.imgBlur ?? 0}"></label>
           </div>
           <div class="editor-row">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-grayscale-for="${p.id}" ${p.imgGrayscale ? 'checked' : ''}><span>Noir &amp; blanc</span></label>
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-sepia-for="${p.id}" ${p.imgSepia ? 'checked' : ''}><span>Sépia</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-grayscale-for="${p.id}" ${p.imgGrayscale ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Noir &amp; blanc</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-sepia-for="${p.id}" ${p.imgSepia ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Sépia</span></label>
           </div>
           <div class="editor-row">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-vignette-for="${p.id}" ${p.vignette ? 'checked' : ''}><span>Vignette</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-vignette-for="${p.id}" ${p.vignette ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Vignette</span></label>
             <label class="editor-mini-label">Intensité<input type="range" data-vignettestrength-for="${p.id}" min="10" max="100" value="${Math.round((p.vignetteStrength ?? 0.5) * 100)}"></label>
           </div>
         </div>
@@ -1424,9 +1478,9 @@ function renderPhotoLayerHtml(p, index) {
         <summary>Contour énergétique &amp; particules</summary>
         <div class="editor-accordion-nested-body">
           <div class="editor-row">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-saber-for="${p.id}" ${p.saberActive ? 'checked' : ''}><span>Contour énergétique</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-saber-for="${p.id}" ${p.saberActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Contour énergétique</span></label>
             <input type="color" data-sabercolor-for="${p.id}" value="${p.saberColor || '#00e5ff'}" title="Couleur de l'effet">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-particles-for="${p.id}" ${p.particlesActive ? 'checked' : ''}><span>Particules</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-particles-for="${p.id}" ${p.particlesActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Particules</span></label>
           </div>
           <div class="editor-row">
             <label class="editor-mini-label">Quantité<input type="range" data-sabercount-for="${p.id}" min="6" max="120" value="${p.saberCount ?? 26}"></label>
@@ -1439,11 +1493,11 @@ function renderPhotoLayerHtml(p, index) {
         <summary>Spectre audio</summary>
         <div class="editor-accordion-nested-body">
           <div class="editor-row">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-spectrum-for="${p.id}" ${p.spectrumActive ? 'checked' : ''}><span>Activer (musique de fond)</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-spectrum-for="${p.id}" ${p.spectrumActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Activer (musique de fond)</span></label>
             <input type="color" data-spectrumcolor-for="${p.id}" value="${p.spectrumColor || '#ff2d95'}" title="Couleur du spectre">
           </div>
           <div class="editor-row">
-            <label class="editor-mini-label">Quantité<input type="range" data-spectrumcount-for="${p.id}" min="8" max="128" value="${p.spectrumCount ?? 48}"></label>
+            <label class="editor-mini-label">Quantité<input type="range" data-spectrumcount-for="${p.id}" min="8" max="300" value="${p.spectrumCount ?? 48}"></label>
             <label class="editor-mini-label">Taille<input type="range" data-spectrumsize-for="${p.id}" min="30" max="300" value="${Math.round((p.spectrumSize ?? 1) * 100)}"></label>
           </div>
         </div>
@@ -1723,8 +1777,8 @@ function renderTextBlockHtml(b, index) {
             <label class="editor-mini-label">Taille<input type="range" data-size-for="${b.id}" min="16" max="140" value="${b.size}"></label>
           </div>
           <div class="editor-row">
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-bold-for="${b.id}" ${b.bold !== false ? 'checked' : ''}><span>Gras</span></label>
-            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-italic-for="${b.id}" ${b.italic ? 'checked' : ''}><span>Italique</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-bold-for="${b.id}" ${b.bold !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Gras</span></label>
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-italic-for="${b.id}" ${b.italic ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Italique</span></label>
             <select data-align-for="${b.id}">
               <option value="left" ${b.align === 'left' ? 'selected' : ''}>Gauche</option>
               <option value="center" ${(!b.align || b.align === 'center') ? 'selected' : ''}>Centré</option>
@@ -1819,7 +1873,7 @@ function ajouterBlocTexte() {
     texte: '',
     x: 0.5,
     y: 0.2 + decalage,
-    z: 3,
+    z: 10, // au-dessus de tout le reste (particules à z=6 étaient le plus haut)
     fontFamily: "'Space Grotesk', sans-serif",
     size: 56,
     color: '#ffffff',
@@ -1908,7 +1962,7 @@ function bindEditorDrag3D(canvas) {
     canvas.style.cursor = 'grabbing';
     if (EditorState.dragging.type === 'textblock') {
       const b = EditorState.textBlocks.find((tb) => tb.id === EditorState.dragging.id);
-      const frac = b && pointerToFraction(canvas, e, b.z ?? 3);
+      const frac = b && pointerToFraction(canvas, e, b.z ?? 10);
       if (b && frac) {
         b.x = frac.fx;
         b.y = frac.fy;
@@ -2058,7 +2112,7 @@ function brancherAnalyseurAudio(mediaEl) {
   const audioCtx = getSharedAudioCtx();
   const source = getOrCreateSourceNode(audioCtx, mediaEl);
   const analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 128;
+  analyser.fftSize = 512; // 256 bins de fréquence, assez pour jusqu'à ~300 barres sans motif trop répétitif
   analyser.smoothingTimeConstant = 0.75;
   source.connect(analyser);
   source.connect(audioCtx.destination);

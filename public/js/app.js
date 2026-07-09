@@ -1292,7 +1292,7 @@ function viewEditeur() {
         <details class="editor-accordion">
           <summary>Intro</summary>
           <div class="editor-accordion-body">
-            <label class="editor-checkbox-row"><input type="checkbox" id="editor-intro-toggle"><span>Ajouter une intro</span></label>
+            <label class="editor-toggle-row"><input type="checkbox" id="editor-intro-toggle"><span class="editor-toggle-switch"></span><span>Ajouter une intro</span></label>
             <div class="editor-subpanel hidden" id="editor-intro-panel">
               <span class="editor-mini-heading">Logo</span>
               ${renderFilePicker('editor-intro-logo-input', 'image/png', 'editor-intro-logo-filename')}
@@ -1327,7 +1327,7 @@ function viewEditeur() {
         <details class="editor-accordion">
           <summary>Outro</summary>
           <div class="editor-accordion-body">
-            <label class="editor-checkbox-row"><input type="checkbox" id="editor-outro-toggle"><span>Ajouter une outro</span></label>
+            <label class="editor-toggle-row"><input type="checkbox" id="editor-outro-toggle"><span class="editor-toggle-switch"></span><span>Ajouter une outro</span></label>
             <div class="editor-subpanel hidden" id="editor-outro-panel">
               <span class="editor-mini-heading">Logo</span>
               ${renderFilePicker('editor-outro-logo-input', 'image/png', 'editor-outro-logo-filename')}
@@ -1357,9 +1357,9 @@ function viewEditeur() {
         <details class="editor-accordion">
           <summary>Effets lumineux (glow)</summary>
           <div class="editor-accordion-body">
-            <label class="editor-checkbox-row"><input type="checkbox" id="editor-bloom-toggle"><span>Activer le halo lumineux</span></label>
+            <label class="editor-toggle-row"><input type="checkbox" id="editor-bloom-toggle"><span class="editor-toggle-switch"></span><span>Activer le halo lumineux</span></label>
             <label class="editor-mini-label">Intensité<input type="range" id="editor-bloom-strength" min="0" max="30" value="8"></label>
-            <label class="editor-checkbox-row"><input type="checkbox" id="editor-bloom-audioreactive"><span>Lier l'intensité à la musique</span></label>
+            <label class="editor-toggle-row"><input type="checkbox" id="editor-bloom-audioreactive"><span class="editor-toggle-switch"></span><span>Lier l'intensité à la musique</span></label>
             <span class="form-hint">Amplifie les contours énergétiques et particules activés sur une photo. Coûteux en performance.</span>
           </div>
         </details>

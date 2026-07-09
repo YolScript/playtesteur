@@ -930,6 +930,132 @@ tbody tr:hover { background: var(--bg-card-hover); }
     flex-direction: column;
     gap: 8px;
 }
+
+/* Barres (range) et zones de saisie de l'éditeur : style custom au lieu
+   du rendu natif du navigateur. */
+.editor-controls input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 5px;
+    min-width: 60px;
+    border-radius: var(--radius-full);
+    background: linear-gradient(90deg, var(--primary) 0%, var(--primary) var(--range-progress, 50%), var(--bg-darker) var(--range-progress, 50%), var(--bg-darker) 100%);
+    outline: none;
+    cursor: pointer;
+}
+.editor-controls input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    cursor: pointer;
+    margin-top: -0.5px;
+    transition: transform 0.1s ease;
+}
+.editor-controls input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+.editor-controls input[type="range"]::-moz-range-track {
+    height: 5px;
+    border-radius: var(--radius-full);
+    background: var(--bg-darker);
+}
+.editor-controls input[type="range"]::-moz-range-progress {
+    height: 5px;
+    border-radius: var(--radius-full);
+    background: var(--primary);
+}
+.editor-controls input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--primary);
+    cursor: pointer;
+}
+
+.editor-controls input[type="number"],
+.editor-controls input[type="text"]:not(.editor-photo-caption),
+.editor-controls textarea,
+.editor-controls select {
+    background: var(--bg-darker);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-white);
+    padding: 6px 9px;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    outline: none;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.editor-controls input[type="number"]:focus,
+.editor-controls input[type="text"]:focus,
+.editor-controls textarea:focus,
+.editor-controls select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(0,230,118,0.15);
+}
+.editor-controls input[type="number"] { max-width: 90px; }
+
+.editor-controls select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 26px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%238a94a6'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 12px;
+    cursor: pointer;
+}
+
+/* Interrupteur on/off, remplace visuellement les checkboxes de section
+   (garde le même <input type="checkbox"> sous le capot). */
+.editor-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-white);
+}
+.editor-toggle-row input[type="checkbox"] {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    border: 0;
+}
+.editor-toggle-switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: var(--radius-full);
+    background: var(--bg-darker);
+    border: 1px solid var(--border-color);
+    flex-shrink: 0;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.editor-toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+.editor-toggle-row input:checked ~ .editor-toggle-switch {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+.editor-toggle-row input:checked ~ .editor-toggle-switch::after { transform: translateX(16px); }
 .editor-label { font-size: 13px; font-weight: 600; color: var(--text-white); }
 .editor-mini-label {
     display: flex; align-items: center; gap: 8px;
