@@ -100,21 +100,30 @@ window.addEventListener('hashchange', router);
 /* ==========================================================================
    HEADER
    ========================================================================== */
+const NAV_ICONS = {
+  dashboard: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z"/></svg>',
+  catalogue: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zM4 13h7v7H4v-7z"/></svg>',
+  'mes-apps': '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 3l-6 6h4v6h4v-6h4l-6-6z"/></svg>',
+  admin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>',
+};
+
 function renderHeader() {
   const nav = document.getElementById('main-nav');
+  const bottomNav = document.getElementById('bottom-nav');
   const actions = document.getElementById('header-actions');
   const currentRoute = (location.hash.replace('#/', '') || 'dashboard').split('/')[0];
 
   if (!state.user) {
     nav.innerHTML = '';
+    bottomNav.innerHTML = '';
     actions.innerHTML = '';
     return;
   }
 
   const links = [
-    { route: 'dashboard', label: 'Tableau de bord' },
+    { route: 'dashboard', label: 'Accueil' },
     { route: 'catalogue', label: 'Catalogue' },
-    { route: 'mes-apps', label: 'Mes applications' },
+    { route: 'mes-apps', label: 'Mes apps' },
   ];
   if (state.user.role === 'administrator') {
     links.push({ route: 'admin', label: 'Admin' });
@@ -127,6 +136,19 @@ function renderHeader() {
     )
     .join('');
   nav.querySelectorAll('[data-route]').forEach((btn) => {
+    btn.addEventListener('click', () => (location.hash = `#/${btn.dataset.route}`));
+  });
+
+  bottomNav.innerHTML = links
+    .map(
+      (l) =>
+        `<button class="bottom-nav-link ${l.route === currentRoute ? 'active' : ''}" data-route="${l.route}">
+          <span class="bottom-nav-icon">${NAV_ICONS[l.route] || ''}</span>
+          <span class="bottom-nav-label">${l.label}</span>
+        </button>`
+    )
+    .join('');
+  bottomNav.querySelectorAll('[data-route]').forEach((btn) => {
     btn.addEventListener('click', () => (location.hash = `#/${btn.dataset.route}`));
   });
 
@@ -539,8 +561,8 @@ async function viewMesApps() {
       <form id="submit-form">
         <div class="form-group">
           <label>Nom du package (com.exemple.app)</label>
-          <div style="display:flex; gap:8px;">
-            <input type="text" name="package_name" placeholder="com.exemple.app" style="flex:1;" />
+          <div class="package-import-row">
+            <input type="text" name="package_name" placeholder="com.exemple.app" />
             <button type="button" class="btn-secondary" id="btn-import-playconsole">Importer depuis Play Console</button>
           </div>
           <p class="form-hint" style="margin-top:6px;">Récupère automatiquement le titre, la description, l'icône, les captures d'écran et la vidéo promo depuis votre fiche Play Console.</p>
@@ -767,13 +789,13 @@ async function viewAdmin() {
     .map(
       (u) => `
       <tr>
-        <td>${escapeHtml(u.pseudo)}</td>
-        <td>${escapeHtml(u.email)}</td>
-        <td>${u.suspendu ? '<span class="badge badge-suspendu">Suspendu</span>' : BADGE_PROFIL[u.statut_profil] || ''}</td>
-        <td>${u.score_global}/100</td>
-        <td>${u.mails_debloques}/${u.mails_max}</td>
-        <td>${u.fraud_warnings}/3</td>
-        <td>
+        <td data-label="Pseudo">${escapeHtml(u.pseudo)}</td>
+        <td data-label="Email">${escapeHtml(u.email)}</td>
+        <td data-label="Statut">${u.suspendu ? '<span class="badge badge-suspendu">Suspendu</span>' : BADGE_PROFIL[u.statut_profil] || ''}</td>
+        <td data-label="Score">${u.score_global}/100</td>
+        <td data-label="Mails">${u.mails_debloques}/${u.mails_max}</td>
+        <td data-label="Avertissements">${u.fraud_warnings}/3</td>
+        <td data-label="Actions">
           <div class="admin-actions">
             <div class="action-group">
               <span class="action-group-label">Score</span>
@@ -856,10 +878,10 @@ async function viewAdmin() {
     .map(
       (a) => `
       <tr id="app-row-${a.id}">
-        <td>${escapeHtml(a.nom_application)}</td>
-        <td>${BADGE_APP[a.statut] || ''}</td>
-        <td>${a.mails_recrutes}/${a.mails_max} <button class="btn-ghost" data-toggle-testeurs="${a.id}">Voir testeurs</button></td>
-        <td>${escapeHtml(a.created_at)}</td>
+        <td data-label="Nom">${escapeHtml(a.nom_application)}</td>
+        <td data-label="Statut">${BADGE_APP[a.statut] || ''}</td>
+        <td data-label="Testeurs">${a.mails_recrutes}/${a.mails_max} <button class="btn-ghost" data-toggle-testeurs="${a.id}">Voir testeurs</button></td>
+        <td data-label="Créée le">${escapeHtml(a.created_at)}</td>
       </tr>
     `
     )
