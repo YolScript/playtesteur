@@ -2209,7 +2209,7 @@ function renderPhotoLayerHtml(p, index) {
             <input type="color" data-spectrumcolor-for="${p.id}" value="${p.spectrumColor || '#ff2d95'}" title="Couleur du spectre">
           </div>
           <div class="editor-row">
-            <label class="editor-mini-label">Quantité<input type="range" data-spectrumcount-for="${p.id}" min="8" max="300" value="${p.spectrumCount ?? 48}"></label>
+            <label class="editor-mini-label">Quantité<input type="range" data-spectrumcount-for="${p.id}" min="8" max="600" value="${p.spectrumCount ?? 48}"></label>
             <label class="editor-mini-label">Taille<input type="range" data-spectrumsize-for="${p.id}" min="30" max="300" value="${Math.round((p.spectrumSize ?? 1) * 100)}"></label>
           </div>
         </div>
