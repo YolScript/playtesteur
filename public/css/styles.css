@@ -197,8 +197,8 @@ button { font-family: var(--font-sans); }
 main.view { animation: fadeIn 0.25s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-.page-title { font-size: 26px; font-weight: 700; margin-bottom: 4px; text-shadow: 0 2px 4px rgba(0,0,0,0.15); font-family: var(--font-display); }
-.page-subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 24px; }
+.page-title { font-size: 26px; font-weight: 700; margin-bottom: 4px; text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 2px 12px rgba(0,0,0,0.5); font-family: var(--font-display); }
+.page-subtitle { color: var(--text-white); opacity: 0.82; font-size: 14px; margin-bottom: 24px; text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 2px 12px rgba(0,0,0,0.5); }
 
 /* ==========================================================================
    BOUTONS
