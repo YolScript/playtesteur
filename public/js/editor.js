@@ -1,9 +1,17 @@
 /* ==========================================================================
    ÉDITEUR (vidéo/photo promo) — 100% côté navigateur, rien n'est envoyé
-   au serveur. Composition sur <canvas> en timeline (intro -> photos ->
+   au serveur. Rendu WebGL (three.js) en timeline (intro -> photos ->
    outro, chaque segment ayant sa propre durée), aperçu temps réel avec
    lecture/pause, export PNG (formats Play Store) et export MP4 haute
    qualité (1920x1080, 60 im/s) via MediaRecorder puis ffmpeg.wasm.
+
+   Chaque calque (photo, légende, texte, logo/texte d'intro-outro) est
+   composé visuellement sur un canvas 2D hors-écran (coins arrondis,
+   contour, ombre — même technique qu'avant), puis appliqué comme texture
+   sur un plan three.js positionnable/rotable librement sur les 3 axes
+   (x, y, z). Le plan z=0 correspond exactement au cadre 1920x1080 en
+   unités "pixel", donc tous les calculs de position existants (x*width,
+   y*height) restent valides pour la profondeur nulle.
    ========================================================================== */
 
 const EditorState = {
@@ -15,7 +23,7 @@ const EditorState = {
 
   intro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
   outro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
-  photos: [], // [{ id, img, x, y, scale, texte, duree }]
+  photos: [], // [{ id, img, x, y, z, rotX, rotY, rotZ, scale, texte, duree }]
 
   text: '',
   textStyle: { color: '#ffffff', size: 56, x: 0.5, y: 0.85 },
@@ -26,11 +34,11 @@ const EditorState = {
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
 
   dragging: null, // null | 'text' | { type:'photo', id } | { type:'caption', id }
-  _photoBoxes: {}, // id -> { x, y, w, h }
-  _captionBoxes: {}, // id -> { x, y, w, h }
   _textBox: null,
   audioCtx: null,
   audioSourceCache: null,
+
+  three: null, // rempli par initMoteur3D()
 };
 
 let editorRafId = null;
@@ -43,19 +51,20 @@ function arreterEditeur() {
   }
 }
 
-function initEditeur() {
+async function initEditeur() {
   const canvas = document.getElementById('editor-canvas');
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
 
   bindEditorInputs();
-  bindEditorDrag(canvas);
   bindTimelineControls();
   rafraichirListePhotos();
 
   arreterEditeur();
+  await initMoteur3D(canvas);
+  bindEditorDrag3D(canvas);
+
   (function loop() {
-    drawEditorFrame(ctx, canvas);
+    renderEditorFrame();
     editorRafId = requestAnimationFrame(loop);
   })();
 }
@@ -157,18 +166,126 @@ function mettreAJourUiTimeline(dureeTotale) {
 }
 
 /* -------------------------------------------------------------------- */
-/* Dessin                                                                 */
+/* Moteur 3D (three.js)                                                  */
 /* -------------------------------------------------------------------- */
-function drawCover(ctx, media, dw, dh) {
-  const mw = media.videoWidth || media.naturalWidth || media.width || 0;
-  const mh = media.videoHeight || media.naturalHeight || media.height || 0;
-  if (!mw || !mh) return;
-  const scale = Math.max(dw / mw, dh / mh);
-  const w = mw * scale;
-  const h = mh * scale;
-  ctx.drawImage(media, (dw - w) / 2, (dh - h) / 2, w, h);
+async function initMoteur3D(canvas) {
+  const THREE = await import('/vendor/three/three.module.min.js');
+  const width = canvas.width;
+  const height = canvas.height;
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(width, height, false);
+  renderer.setPixelRatio(1);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene = new THREE.Scene();
+
+  // Caméra perspective calibrée pour que le plan z=0 corresponde
+  // exactement aux dimensions du cadre en unités "pixel" (origine au
+  // centre, Y vers le haut) : convertirPx() fait le pont avec le système
+  // de coordonnées pixel (origine haut-gauche, Y vers le bas) utilisé
+  // partout ailleurs dans l'éditeur.
+  const fovDeg = 45;
+  const camera = new THREE.PerspectiveCamera(fovDeg, width / height, 1, 20000);
+  const distance = height / 2 / Math.tan(THREE.MathUtils.degToRad(fovDeg / 2));
+  camera.position.set(0, 0, distance);
+  camera.lookAt(0, 0, 0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 1.15));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+  dirLight.position.set(0.4, 0.6, 1);
+  scene.add(dirLight);
+
+  const bgGeo = new THREE.PlaneGeometry(1, 1);
+  const bgMat = new THREE.MeshBasicMaterial({ color: 0x12151c });
+  const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+  bgMesh.position.z = -500;
+  bgMesh.scale.set(width, height, 1);
+  scene.add(bgMesh);
+
+  EditorState.three = {
+    THREE,
+    renderer,
+    scene,
+    camera,
+    width,
+    height,
+    distance,
+    bgMesh,
+    bgTexture: null,
+    bgSourceEl: null,
+    raycaster: new THREE.Raycaster(),
+    layers: {
+      photo: null, // { mesh, canvas, ctx, texture, id }
+      caption: null,
+      introLogo: null,
+      introImg: null,
+      introText: null,
+      freeText: null,
+    },
+  };
 }
 
+// Coordonnées "pixel" (origine haut-gauche, Y bas) -> coordonnées monde
+// three.js (origine centre, Y haut).
+function pxToWorld(px, py, z) {
+  const { width, height } = EditorState.three;
+  return { x: px - width / 2, y: -(py - height / 2), z: z || 0 };
+}
+function worldToPx(x, y) {
+  const { width, height } = EditorState.three;
+  return { x: x + width / 2, y: height / 2 - y };
+}
+
+function getOrCreateCanvasLayer(name) {
+  const layers = EditorState.three.layers;
+  if (layers[name]) return layers[name];
+  const { THREE, scene } = EditorState.three;
+  const canvas = document.createElement('canvas');
+  canvas.width = 4;
+  canvas.height = 4;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.visible = false;
+  scene.add(mesh);
+  const layer = { mesh, canvas, ctx, texture };
+  layers[name] = layer;
+  return layer;
+}
+
+function hideLayer(name) {
+  const layer = EditorState.three.layers[name];
+  if (layer) layer.mesh.visible = false;
+}
+
+// Redimensionne le canvas hors-écran d'un calque et repositionne son
+// plan 3D en conséquence (le plan fait toujours exactement la taille du
+// contenu dessiné, en unités pixel).
+function sizeLayerCanvas(layer, w, h) {
+  w = Math.max(1, Math.round(w));
+  h = Math.max(1, Math.round(h));
+  if (layer.canvas.width !== w || layer.canvas.height !== h) {
+    layer.canvas.width = w;
+    layer.canvas.height = h;
+  }
+  layer.mesh.scale.set(w, h, 1);
+}
+
+function placerLayer(layer, centerPx, centerPy, z, rotX, rotY, rotZ) {
+  const world = pxToWorld(centerPx, centerPy, z);
+  layer.mesh.position.set(world.x, world.y, world.z);
+  layer.mesh.rotation.set(rotX || 0, rotY || 0, rotZ || 0);
+  layer.mesh.visible = true;
+  layer.texture.needsUpdate = true;
+}
+
+/* -------------------------------------------------------------------- */
+/* Dessin (composition 2D hors-écran, texturée sur les plans 3D)         */
+/* -------------------------------------------------------------------- */
 function wrapText(ctx, text, maxWidth) {
   const lines = [];
   text.split('\n').forEach((paragraphe) => {
@@ -192,22 +309,6 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
-function dessinerFond(ctx, width, height) {
-  if (EditorState.bgType === 'video' && EditorState.bgVideoEl && EditorState.bgVideoEl.readyState >= 2) {
-    drawCover(ctx, EditorState.bgVideoEl, width, height);
-  } else if (EditorState.bgType === 'image' && EditorState.bgImageEl) {
-    drawCover(ctx, EditorState.bgImageEl, width, height);
-  } else {
-    ctx.fillStyle = '#12151c';
-    ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.font = `${Math.round(width * 0.016)}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('Importez un fond pour commencer', width / 2, height / 2);
-  }
-}
-
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -219,242 +320,321 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Panneau "verre dépoli" derrière un bloc de texte : coins arrondis,
-// flou du fond déjà dessiné à cet endroit, voile semi-transparent.
-// Rend le texte lisible sur n'importe quel fond sans dépendre de sa
-// couleur ou de sa complexité (photo, vidéo, dégradé...).
-function dessinerPanneauTexte(ctx, x, y, w, h, radius) {
-  if (w <= 0 || h <= 0) return;
-  const marge = 12;
-  const iw = ctx.canvas.width;
-  const ih = ctx.canvas.height;
-  const sx = Math.max(0, Math.round(x - marge));
-  const sy = Math.max(0, Math.round(y - marge));
-  const sw = Math.max(1, Math.min(Math.round(w + marge * 2), iw - sx));
-  const sh = Math.max(1, Math.min(Math.round(h + marge * 2), ih - sy));
+// Fond : texture vidéo/image "cover" appliquée directement sur le plan
+// de fond (pas besoin de composition hors-écran, three.js gère la
+// texture vidéo nativement).
+function mettreAJourFond() {
+  const ts = EditorState.three;
+  const { THREE } = ts;
 
-  ctx.save();
-  roundRectPath(ctx, x, y, w, h, radius);
-  ctx.clip();
-  try {
-    const off = document.createElement('canvas');
-    off.width = sw;
-    off.height = sh;
-    off.getContext('2d').drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    ctx.filter = 'blur(14px)';
-    ctx.drawImage(off, sx, sy, sw, sh);
-    ctx.filter = 'none';
-  } catch (_) {
-    // Fond non capturable (média cross-origin) : on garde juste le voile.
+  if (EditorState.bgType === 'video' && EditorState.bgVideoEl && EditorState.bgVideoEl.readyState >= 2) {
+    if (ts.bgSourceEl !== EditorState.bgVideoEl) {
+      ts.bgTexture = new THREE.VideoTexture(EditorState.bgVideoEl);
+      ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
+      ts.bgMesh.material.map = ts.bgTexture;
+      ts.bgMesh.material.color.set(0xffffff);
+      ts.bgMesh.material.needsUpdate = true;
+      ts.bgSourceEl = EditorState.bgVideoEl;
+    }
+    const mw = EditorState.bgVideoEl.videoWidth;
+    const mh = EditorState.bgVideoEl.videoHeight;
+    ajusterCoverUV(ts.bgTexture, mw, mh, ts.width, ts.height);
+  } else if (EditorState.bgType === 'image' && EditorState.bgImageEl) {
+    if (ts.bgSourceEl !== EditorState.bgImageEl) {
+      ts.bgTexture = new THREE.Texture(EditorState.bgImageEl);
+      ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
+      ts.bgTexture.needsUpdate = true;
+      ts.bgMesh.material.map = ts.bgTexture;
+      ts.bgMesh.material.color.set(0xffffff);
+      ts.bgMesh.material.needsUpdate = true;
+      ts.bgSourceEl = EditorState.bgImageEl;
+    }
+    ajusterCoverUV(ts.bgTexture, EditorState.bgImageEl.naturalWidth, EditorState.bgImageEl.naturalHeight, ts.width, ts.height);
+  } else {
+    ts.bgMesh.material.map = null;
+    ts.bgMesh.material.color.set(0x12151c);
+    ts.bgMesh.material.needsUpdate = true;
+    ts.bgSourceEl = null;
   }
-  ctx.fillStyle = 'rgba(8,10,14,0.42)';
-  ctx.fillRect(x, y, w, h);
-  ctx.restore();
 }
 
-// Photo "carte flottante" : coins arrondis, légère inclinaison et
-// oscillation verticale douce et continue (aperçu comme export).
-function dessinerPhotoImage(ctx, width, height, p, tGlobal) {
-  if (!p.img) return null;
-  const w = width * p.scale;
-  const h = w * (p.img.naturalHeight / p.img.naturalWidth || 1);
-  const baseX = p.x * width;
-  const baseY = p.y * height;
+// Ajuste le repeat/offset UV d'une texture pour un rendu "cover" (comme
+// background-size:cover) sur un plan de proportions (dw x dh).
+function ajusterCoverUV(texture, mw, mh, dw, dh) {
+  if (!mw || !mh) return;
+  const mediaAspect = mw / mh;
+  const boxAspect = dw / dh;
+  let repeatX = 1;
+  let repeatY = 1;
+  if (mediaAspect > boxAspect) {
+    repeatX = boxAspect / mediaAspect;
+  } else {
+    repeatY = mediaAspect / boxAspect;
+  }
+  texture.wrapS = texture.wrapT = EditorState.three.THREE.ClampToEdgeWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.offset.set((1 - repeatX) / 2, (1 - repeatY) / 2);
+}
 
-  const phase = (p.id % 7) * 0.9;
-  const floatY = Math.sin(tGlobal * 1.1 + phase) * h * 0.035;
-  const tilt = Math.sin(tGlobal * 0.66 + phase) * 0.045;
+// Photo "carte flottante" : coins arrondis, ombre douce, contour clair —
+// composés sur un canvas hors-écran (comme avant) puis texturés sur un
+// plan 3D. Flottement + tilt automatiques, plus rotation manuelle sur
+// les 3 axes (p.rotX/rotY/rotZ, en degrés, ajoutés à l'auto-tilt).
+function mettreAJourPhoto(p, tGlobal) {
+  if (!p.img) {
+    hideLayer('photo');
+    hideLayer('caption');
+    return null;
+  }
+  const { width, height } = EditorState.three;
+  const layer = getOrCreateCanvasLayer('photo');
+
+  const w = Math.round(width * p.scale);
+  const h = Math.round(w * (p.img.naturalHeight / p.img.naturalWidth || 1));
+  const marge = Math.ceil(Math.min(w, h) * 0.14) + 16;
+  sizeLayerCanvas(layer, w + marge * 2, h + marge * 2);
+
+  const ctx = layer.ctx;
+  ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+  const ox = marge;
+  const oy = marge;
 
   ctx.save();
-  ctx.translate(baseX, baseY + floatY);
-  ctx.rotate(tilt);
-
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
   ctx.shadowBlur = h * 0.14;
   ctx.shadowOffsetY = h * 0.08;
-  roundRectPath(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+  roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
   ctx.fillStyle = '#000';
   ctx.fill();
   ctx.restore();
 
   ctx.save();
-  roundRectPath(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+  roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
   ctx.clip();
-  ctx.drawImage(p.img, -w / 2, -h / 2, w, h);
+  ctx.drawImage(p.img, ox, oy, w, h);
   ctx.restore();
 
   ctx.lineWidth = Math.max(1, w * 0.003);
   ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  roundRectPath(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+  roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
   ctx.stroke();
 
-  ctx.restore();
+  const phase = (p.id % 7) * 0.9;
+  const floatY = Math.sin(tGlobal * 1.1 + phase) * h * 0.035;
+  const autoTilt = Math.sin(tGlobal * 0.66 + phase) * 0.045;
 
-  return { x: baseX - w / 2, y: baseY - h / 2, w, h };
+  const baseX = p.x * width;
+  const baseY = p.y * height + floatY;
+  const rotX = ((p.rotX || 0) * Math.PI) / 180;
+  const rotY = ((p.rotY || 0) * Math.PI) / 180;
+  const rotZ = ((p.rotZ || 0) * Math.PI) / 180 + autoTilt;
+  placerLayer(layer, baseX, baseY, p.z || 0, rotX, rotY, rotZ);
+
+  return { x: baseX - w / 2, y: baseY - h / 2, w, h, cx: baseX, cy: baseY, z: p.z || 0 };
 }
 
-// Légende détachée de l'image : position libre (glissable), couleur
-// choisie automatiquement pour rester lisible sur le fond à cet endroit.
-function dessinerLegendePhoto(ctx, width, height, p) {
-  if (!p.texte) return null;
+// Légende détachée de l'image : position libre (glissable), panneau
+// "verre dépoli" derrière le texte (flou du fond de la texture composée,
+// simplifié en voile semi-transparent — le vrai flou de scène 3D
+// nécessiterait un post-processing dédié, cf. effets Saber à venir).
+function mettreAJourLegende(p) {
+  if (!p.texte) {
+    hideLayer('caption');
+    return null;
+  }
+  const { width, height } = EditorState.three;
+  const layer = getOrCreateCanvasLayer('caption');
   const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Roboto', sans-serif";
   const size = Math.max(14, Math.round(width * 0.022));
-  ctx.font = `600 ${size}px ${famille}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
 
+  const measureCtx = layer.ctx;
+  measureCtx.font = `600 ${size}px ${famille}`;
   const maxWidth = width * 0.7;
-  const lignes = wrapText(ctx, p.texte, maxWidth);
+  const lignes = wrapText(measureCtx, p.texte, maxWidth);
   const lineHeight = size * 1.25;
   let boxW = 0;
   lignes.forEach((ligne) => {
-    boxW = Math.max(boxW, ctx.measureText(ligne).width);
+    boxW = Math.max(boxW, measureCtx.measureText(ligne).width);
   });
   const boxH = lineHeight * lignes.length;
-
-  const cx = (p.texteX ?? p.x) * width;
-  const topY = (p.texteY ?? p.y) * height;
   const padX = 18;
   const padY = 12;
-  const boxX = cx - boxW / 2 - padX;
-  const boxY = topY - padY;
   const panelW = boxW + padX * 2;
   const panelH = boxH + padY * 2;
+  const radius = 14;
 
-  dessinerPanneauTexte(ctx, boxX, boxY, panelW, panelH, 14);
+  sizeLayerCanvas(layer, panelW, panelH);
+  const ctx = layer.ctx;
+  ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+  roundRectPath(ctx, 0, 0, panelW, panelH, radius);
+  ctx.fillStyle = 'rgba(8,10,14,0.5)';
+  ctx.fill();
 
+  ctx.font = `600 ${size}px ${famille}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
   ctx.fillStyle = '#ffffff';
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 6;
-  lignes.forEach((ligne, i) => ctx.fillText(ligne, cx, topY + i * lineHeight));
+  lignes.forEach((ligne, i) => ctx.fillText(ligne, panelW / 2, padY + i * lineHeight));
   ctx.shadowBlur = 0;
 
-  return { x: boxX, y: boxY, w: panelW, h: panelH };
+  const cx = (p.texteX ?? p.x) * width;
+  const topY = (p.texteY ?? p.y) * height;
+  const centerY = topY - padY + panelH / 2;
+  placerLayer(layer, cx, centerY, (p.z || 0) + 2, 0, 0, 0);
+
+  return { x: cx - panelW / 2, y: topY - padY, w: panelW, h: panelH, cx, cy: centerY, z: (p.z || 0) + 2 };
 }
 
-function dessinerIntroOutro(ctx, width, height, seg) {
+function mettreAJourIntroOutro(seg) {
+  const { width, height } = EditorState.three;
   const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
+
   if (seg.logoImg) {
-    const lw = width * 0.16;
-    const lh = lw * (seg.logoImg.naturalHeight / seg.logoImg.naturalWidth || 1);
-    ctx.drawImage(seg.logoImg, width / 2 - lw / 2, height * 0.1, lw, lh);
+    const layer = getOrCreateCanvasLayer('introLogo');
+    const lw = Math.round(width * 0.16);
+    const lh = Math.round(lw * (seg.logoImg.naturalHeight / seg.logoImg.naturalWidth || 1));
+    sizeLayerCanvas(layer, lw, lh);
+    layer.ctx.clearRect(0, 0, lw, lh);
+    layer.ctx.drawImage(seg.logoImg, 0, 0, lw, lh);
+    placerLayer(layer, width / 2, height * 0.1 + lh / 2, 0, 0, 0, 0);
+  } else {
+    hideLayer('introLogo');
   }
+
   if (seg.img) {
-    const iw = width * 0.46;
-    const ih = iw * (seg.img.naturalHeight / seg.img.naturalWidth || 1);
-    ctx.drawImage(seg.img, width / 2 - iw / 2, height / 2 - ih / 2, iw, ih);
+    const layer = getOrCreateCanvasLayer('introImg');
+    const iw = Math.round(width * 0.46);
+    const ih = Math.round(iw * (seg.img.naturalHeight / seg.img.naturalWidth || 1));
+    sizeLayerCanvas(layer, iw, ih);
+    layer.ctx.clearRect(0, 0, iw, ih);
+    layer.ctx.drawImage(seg.img, 0, 0, iw, ih);
+    placerLayer(layer, width / 2, height / 2, -1, 0, 0, 0);
+  } else {
+    hideLayer('introImg');
   }
+
   if (seg.texte) {
+    const layer = getOrCreateCanvasLayer('introText');
     const size = Math.max(18, Math.round(width * 0.03));
-    ctx.font = `700 ${size}px ${famille}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const lignes = wrapText(ctx, seg.texte, width * 0.8);
+    const measureCtx = layer.ctx;
+    measureCtx.font = `700 ${size}px ${famille}`;
+    const lignes = wrapText(measureCtx, seg.texte, width * 0.8);
     const lineHeight = size * 1.25;
     const totalHeight = lineHeight * lignes.length;
-    const y0 = height * 0.86 - totalHeight / 2;
     let boxW = 0;
     lignes.forEach((ligne) => {
-      boxW = Math.max(boxW, ctx.measureText(ligne).width);
+      boxW = Math.max(boxW, measureCtx.measureText(ligne).width);
     });
-
     const padX = 26;
     const padY = 16;
-    dessinerPanneauTexte(ctx, width / 2 - boxW / 2 - padX, y0 - padY, boxW + padX * 2, totalHeight + padY * 2, 16);
+    const panelW = boxW + padX * 2;
+    const panelH = totalHeight + padY * 2;
 
+    sizeLayerCanvas(layer, panelW, panelH);
+    const ctx = layer.ctx;
+    ctx.clearRect(0, 0, panelW, panelH);
+    roundRectPath(ctx, 0, 0, panelW, panelH, 16);
+    ctx.fillStyle = 'rgba(8,10,14,0.5)';
+    ctx.fill();
+
+    ctx.font = `700 ${size}px ${famille}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
     ctx.fillStyle = '#ffffff';
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = 8;
-    lignes.forEach((ligne, i) => ctx.fillText(ligne, width / 2, y0 + i * lineHeight));
+    lignes.forEach((ligne, i) => ctx.fillText(ligne, panelW / 2, padY + i * lineHeight));
     ctx.shadowBlur = 0;
+
+    const y0 = height * 0.86 - totalHeight / 2;
+    placerLayer(layer, width / 2, y0 - padY + panelH / 2, 1, 0, 0, 0);
+  } else {
+    hideLayer('introText');
   }
 }
 
-function dessinerTexteLibre(ctx, width, height) {
-  if (!EditorState.text) return null;
+function mettreAJourTexteLibre() {
+  if (!EditorState.text) {
+    hideLayer('freeText');
+    return null;
+  }
+  const { width, height } = EditorState.three;
+  const layer = getOrCreateCanvasLayer('freeText');
   const size = Number(EditorState.textStyle.size) || 56;
   const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
-  ctx.font = `700 ${size}px ${famille}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
 
+  const measureCtx = layer.ctx;
+  measureCtx.font = `700 ${size}px ${famille}`;
   const maxWidth = width * 0.85;
-  const lignes = wrapText(ctx, EditorState.text, maxWidth);
+  const lignes = wrapText(measureCtx, EditorState.text, maxWidth);
   const lineHeight = size * 1.2;
   const totalHeight = lineHeight * lignes.length;
-  const cx = EditorState.textStyle.x * width;
-  const cy = EditorState.textStyle.y * height;
   let boxW = 0;
   lignes.forEach((ligne) => {
-    boxW = Math.max(boxW, ctx.measureText(ligne).width);
+    boxW = Math.max(boxW, measureCtx.measureText(ligne).width);
   });
-
   const padX = 26;
   const padY = 18;
-  const boxX = cx - boxW / 2 - padX;
-  const boxY = cy - totalHeight / 2 - padY;
   const panelW = boxW + padX * 2;
   const panelH = totalHeight + padY * 2;
 
-  dessinerPanneauTexte(ctx, boxX, boxY, panelW, panelH, 18);
+  sizeLayerCanvas(layer, panelW, panelH);
+  const ctx = layer.ctx;
+  ctx.clearRect(0, 0, panelW, panelH);
+  roundRectPath(ctx, 0, 0, panelW, panelH, 18);
+  ctx.fillStyle = 'rgba(8,10,14,0.5)';
+  ctx.fill();
 
+  ctx.font = `700 ${size}px ${famille}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
   ctx.fillStyle = EditorState.textStyle.color;
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 8;
-  lignes.forEach((ligne, i) => {
-    ctx.fillText(ligne, cx, cy - totalHeight / 2 + lineHeight * (i + 0.5));
-  });
+  lignes.forEach((ligne, i) => ctx.fillText(ligne, panelW / 2, padY + i * lineHeight));
   ctx.shadowBlur = 0;
 
-  return { x: boxX, y: boxY, w: panelW, h: panelH };
+  const cx = EditorState.textStyle.x * width;
+  const cy = EditorState.textStyle.y * height;
+  placerLayer(layer, cx, cy, 3, 0, 0, 0);
+
+  return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: 3 };
 }
 
-function drawEditorFrame(ctx, canvas) {
-  const { width, height } = canvas;
-  ctx.clearRect(0, 0, width, height);
-  dessinerFond(ctx, width, height);
+function renderEditorFrame() {
+  const ts = EditorState.three;
+  if (!ts) return;
+
+  mettreAJourFond();
 
   const { segments, dureeTotale } = calculerTimeline();
   avancerPlayback(dureeTotale);
   const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
 
-  EditorState._photoBoxes = {};
-  EditorState._captionBoxes = {};
   const tGlobal = performance.now() / 1000;
-  if (segmentActif) {
-    if (segmentActif.type === 'photo') {
-      const p = segmentActif.data;
-      const imgBox = dessinerPhotoImage(ctx, width, height, p, tGlobal);
-      if (imgBox) {
-        EditorState._photoBoxes[p.id] = imgBox;
-        if (EditorState.dragging && EditorState.dragging.type === 'photo' && EditorState.dragging.id === p.id) {
-          ctx.strokeStyle = '#00e676';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(imgBox.x, imgBox.y, imgBox.w, imgBox.h);
-        }
-      }
-      const capBox = dessinerLegendePhoto(ctx, width, height, p);
-      if (capBox) {
-        EditorState._captionBoxes[p.id] = capBox;
-        if (EditorState.dragging && EditorState.dragging.type === 'caption' && EditorState.dragging.id === p.id) {
-          ctx.strokeStyle = '#2979ff';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(capBox.x, capBox.y, capBox.w, capBox.h);
-        }
-      }
-    } else {
-      dessinerIntroOutro(ctx, width, height, segmentActif.data);
-    }
+  if (segmentActif && segmentActif.type === 'photo') {
+    hideLayer('introLogo');
+    hideLayer('introImg');
+    hideLayer('introText');
+    mettreAJourPhoto(segmentActif.data, tGlobal);
+    mettreAJourLegende(segmentActif.data);
+  } else if (segmentActif) {
+    hideLayer('photo');
+    hideLayer('caption');
+    mettreAJourIntroOutro(segmentActif.data);
+  } else {
+    hideLayer('photo');
+    hideLayer('caption');
+    hideLayer('introLogo');
+    hideLayer('introImg');
+    hideLayer('introText');
   }
 
-  EditorState._textBox = dessinerTexteLibre(ctx, width, height);
-  if (EditorState._textBox && EditorState.dragging === 'text') {
-    ctx.strokeStyle = '#2979ff';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(EditorState._textBox.x, EditorState._textBox.y, EditorState._textBox.w, EditorState._textBox.h);
-  }
+  EditorState._textBox = mettreAJourTexteLibre();
 
+  ts.renderer.render(ts.scene, ts.camera);
   mettreAJourUiTimeline(dureeTotale);
 }
 
@@ -652,6 +832,11 @@ function renderPhotoLayerHtml(p, index) {
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
         <label class="editor-mini-label">Durée (s)<input type="number" data-duree-for="${p.id}" min="0.5" max="30" step="0.5" value="${p.duree}" style="max-width:80px;"></label>
       </div>
+      <div class="editor-row">
+        <label class="editor-mini-label">Rotation X<input type="range" data-rotx-for="${p.id}" min="-45" max="45" value="${p.rotX || 0}"></label>
+        <label class="editor-mini-label">Rotation Y<input type="range" data-roty-for="${p.id}" min="-45" max="45" value="${p.rotY || 0}"></label>
+        <label class="editor-mini-label">Rotation Z<input type="range" data-rotz-for="${p.id}" min="-45" max="45" value="${p.rotZ || 0}"></label>
+      </div>
     </div>
   `;
 }
@@ -690,6 +875,15 @@ function bindPhotoLayerEvents() {
         p.duree = Math.max(0.5, Number(e.target.value) || 3);
       });
     }
+    ['rotx', 'roty', 'rotz'].forEach((axe, i) => {
+      const input = document.querySelector(`[data-${axe}-for="${p.id}"]`);
+      if (!input) return;
+      const champ = ['rotX', 'rotY', 'rotZ'][i];
+      input.addEventListener('input', (e) => {
+        p[champ] = Number(e.target.value);
+        jump();
+      });
+    });
   });
   document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
@@ -712,6 +906,10 @@ function ajouterCalquePhoto() {
     img: null,
     x: 0.5,
     y: 0.45,
+    z: 0,
+    rotX: 0,
+    rotY: 0,
+    rotZ: 0,
     scale: 0.3,
     texte: '',
     duree: 3,
@@ -724,82 +922,88 @@ function ajouterCalquePhoto() {
 
 function supprimerCalquePhoto(id) {
   EditorState.photos = EditorState.photos.filter((p) => p.id !== id);
-  delete EditorState._photoBoxes[id];
   rafraichirListePhotos();
 }
 
 /* -------------------------------------------------------------------- */
-/* Glisser-déposer sur le canvas (texte / photo active)                  */
+/* Glisser-déposer sur le canvas (texte / photo active) — raycasting 3D  */
 /* -------------------------------------------------------------------- */
-function toCanvasCoords(canvas, evt) {
+function pointerToNdc(canvas, evt) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  return { x: (evt.clientX - rect.left) * scaleX, y: (evt.clientY - rect.top) * scaleY };
+  return {
+    x: ((evt.clientX - rect.left) / rect.width) * 2 - 1,
+    y: -((evt.clientY - rect.top) / rect.height) * 2 + 1,
+  };
 }
 
-function pointInBox(x, y, box) {
-  return !!box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+function raycastLayer(canvas, evt, layerNames) {
+  const ts = EditorState.three;
+  const ndc = pointerToNdc(canvas, evt);
+  ts.raycaster.setFromCamera(ndc, ts.camera);
+  const meshes = layerNames
+    .map((name) => ts.layers[name])
+    .filter((l) => l && l.mesh.visible)
+    .map((l) => l.mesh);
+  const hits = ts.raycaster.intersectObjects(meshes, false);
+  return hits.length ? hits[0] : null;
 }
 
-function trouverCaptionSurvolee(x, y) {
-  for (let i = EditorState.photos.length - 1; i >= 0; i--) {
-    const p = EditorState.photos[i];
-    if (pointInBox(x, y, EditorState._captionBoxes[p.id])) return p;
-  }
-  return null;
+// Convertit une position pointeur en fraction (0..1) du cadre, projetée
+// sur le plan de profondeur z du calque en cours de glisser-déposer.
+function pointerToFraction(canvas, evt, z) {
+  const ts = EditorState.three;
+  const { THREE } = ts;
+  const ndc = pointerToNdc(canvas, evt);
+  ts.raycaster.setFromCamera(ndc, ts.camera);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -z);
+  const point = new THREE.Vector3();
+  if (!ts.raycaster.ray.intersectPlane(plane, point)) return null;
+  const px = worldToPx(point.x, point.y);
+  return { fx: Math.min(1, Math.max(0, px.x / ts.width)), fy: Math.min(1, Math.max(0, px.y / ts.height)) };
 }
 
-function trouverPhotoSurvolee(x, y) {
-  for (let i = EditorState.photos.length - 1; i >= 0; i--) {
-    const p = EditorState.photos[i];
-    if (pointInBox(x, y, EditorState._photoBoxes[p.id])) return p;
-  }
-  return null;
-}
-
-function bindEditorDrag(canvas) {
+function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
-    const { x, y } = toCanvasCoords(canvas, e);
-    if (pointInBox(x, y, EditorState._textBox)) {
+    const layers = EditorState.three.layers;
+    if (layers.freeText && layers.freeText.mesh.visible && raycastLayer(canvas, e, ['freeText'])) {
       EditorState.dragging = 'text';
-    } else {
-      const caption = trouverCaptionSurvolee(x, y);
-      if (caption) {
-        EditorState.dragging = { type: 'caption', id: caption.id };
-      } else {
-        const photo = trouverPhotoSurvolee(x, y);
-        if (photo) EditorState.dragging = { type: 'photo', id: photo.id };
-      }
+    } else if (layers.caption && layers.caption.mesh.visible && raycastLayer(canvas, e, ['caption'])) {
+      const p = calquePhotoActif();
+      if (p) EditorState.dragging = { type: 'caption', id: p.id };
+    } else if (layers.photo && layers.photo.mesh.visible && raycastLayer(canvas, e, ['photo'])) {
+      const p = calquePhotoActif();
+      if (p) EditorState.dragging = { type: 'photo', id: p.id };
     }
     if (EditorState.dragging) canvas.setPointerCapture(e.pointerId);
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    const { x, y } = toCanvasCoords(canvas, e);
     if (!EditorState.dragging) {
       const survole =
-        pointInBox(x, y, EditorState._textBox) || !!trouverCaptionSurvolee(x, y) || !!trouverPhotoSurvolee(x, y);
+        raycastLayer(canvas, e, ['freeText', 'caption', 'photo']) !== null;
       canvas.style.cursor = survole ? 'grab' : 'default';
       return;
     }
     canvas.style.cursor = 'grabbing';
-    const fx = Math.min(1, Math.max(0, x / canvas.width));
-    const fy = Math.min(1, Math.max(0, y / canvas.height));
     if (EditorState.dragging === 'text') {
-      EditorState.textStyle.x = fx;
-      EditorState.textStyle.y = fy;
+      const frac = pointerToFraction(canvas, e, 3);
+      if (frac) {
+        EditorState.textStyle.x = frac.fx;
+        EditorState.textStyle.y = frac.fy;
+      }
     } else if (EditorState.dragging.type === 'photo') {
       const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
-      if (p) {
-        p.x = fx;
-        p.y = fy;
+      const frac = p && pointerToFraction(canvas, e, p.z || 0);
+      if (p && frac) {
+        p.x = frac.fx;
+        p.y = frac.fy;
       }
     } else if (EditorState.dragging.type === 'caption') {
       const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
-      if (p) {
-        p.texteX = fx;
-        p.texteY = fy;
+      const frac = p && pointerToFraction(canvas, e, (p.z || 0) + 2);
+      if (p && frac) {
+        p.texteX = frac.fx;
+        p.texteY = frac.fy;
       }
     }
   });
@@ -812,30 +1016,42 @@ function bindEditorDrag(canvas) {
   });
 }
 
+function calquePhotoActif() {
+  const { segments } = calculerTimeline();
+  const seg = segmentAuTemps(segments, EditorState.playback.currentTime);
+  return seg && seg.type === 'photo' ? seg.data : null;
+}
+
 /* -------------------------------------------------------------------- */
 /* Export PNG (formats verticaux Play Store)                             */
 /* -------------------------------------------------------------------- */
 function exportEditeurPng() {
   const dims = EditorState.imageExportFormat === 'square' ? { w: 1080, h: 1080 } : { w: 1080, h: 1920 };
-  const off = document.createElement('canvas');
-  off.width = dims.w;
-  off.height = dims.h;
-  const ctx = off.getContext('2d');
+  const ts = EditorState.three;
+  const canvas = ts.renderer.domElement;
+  const tailleOriginale = { w: ts.width, h: ts.height };
 
-  dessinerFond(ctx, dims.w, dims.h);
-  const { segments } = calculerTimeline();
-  const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
-  if (segmentActif) {
-    if (segmentActif.type === 'photo') {
-      dessinerPhotoImage(ctx, dims.w, dims.h, segmentActif.data, performance.now() / 1000);
-      dessinerLegendePhoto(ctx, dims.w, dims.h, segmentActif.data);
-    } else {
-      dessinerIntroOutro(ctx, dims.w, dims.h, segmentActif.data);
-    }
-  }
-  dessinerTexteLibre(ctx, dims.w, dims.h);
+  ts.renderer.setSize(dims.w, dims.h, false);
+  ts.camera.aspect = dims.w / dims.h;
+  const distance = dims.h / 2 / Math.tan((ts.camera.fov * Math.PI) / 360);
+  ts.camera.position.z = distance;
+  ts.camera.updateProjectionMatrix();
+  ts.width = dims.w;
+  ts.height = dims.h;
+  ts.bgMesh.scale.set(dims.w, dims.h, 1);
 
-  off.toBlob((blob) => {
+  renderEditorFrame();
+
+  canvas.toBlob((blob) => {
+    // Restaure la taille d'aperçu normale.
+    ts.renderer.setSize(tailleOriginale.w, tailleOriginale.h, false);
+    ts.camera.aspect = tailleOriginale.w / tailleOriginale.h;
+    ts.camera.position.z = ts.distance;
+    ts.camera.updateProjectionMatrix();
+    ts.width = tailleOriginale.w;
+    ts.height = tailleOriginale.h;
+    ts.bgMesh.scale.set(tailleOriginale.w, tailleOriginale.h, 1);
+
     if (blob) downloadBlob(blob, `${obtenirNomExport('playtesteur-visuel')}.png`);
   }, 'image/png');
 }
