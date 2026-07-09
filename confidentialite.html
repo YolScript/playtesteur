@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#00e676">
+    <title>Confidentialité — PlayTesteur</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="app-container" style="max-width: 760px;">
+        <header class="app-header">
+            <div class="logo-area">
+                <img src="logo.png" alt="PlayTesteur" class="logo-icon-img">
+                <div class="logo-text">
+                    <span class="logo-primary">Play</span><span class="logo-secondary">Testeur</span>
+                </div>
+            </div>
+            <a href="/" class="btn-ghost">&larr; Retour au site</a>
+        </header>
+
+        <main class="view">
+            <h1 class="page-title">Confidentialité des données</h1>
+            <p class="page-subtitle">Quelles informations PlayTesteur récupère, et pourquoi.</p>
+
+            <div class="form-success" style="margin-bottom:28px;">
+                <strong>En résumé :</strong> ces informations restent privées et ne servent qu'au fonctionnement de la plateforme (gamification, accès aux tests, validation automatique). Elles ne sont ni vendues, ni partagées avec des tiers, ni utilisées à des fins publicitaires.
+            </div>
+
+            <div class="profile-card">
+                <div class="section-title" style="margin-top:0;">Connexion Google</div>
+                <p class="form-hint">Lors de la connexion "Continuer avec Google", nous récupérons :</p>
+                <ul style="margin:12px 0 0 20px; font-size:14px; line-height:1.8; color:var(--text-white);">
+                    <li><strong>Email</strong> — sert d'identifiant de compte, et c'est cet email qui est ajouté aux Google Groups des applications que vous testez (c'est pourquoi il faut utiliser le même compte que sur Google Play).</li>
+                    <li><strong>Nom du profil Google</strong> — affiché comme votre pseudo sur la plateforme, et présumé être votre pseudo Play Store pour la validation automatique des avis.</li>
+                    <li><strong>Photo de profil</strong> — affichée comme avatar dans l'interface.</li>
+                </ul>
+                <p class="form-hint" style="margin-top:12px;">Nous ne recevons jamais votre mot de passe Google : l'authentification est entièrement gérée par Google (OAuth).</p>
+            </div>
+
+            <div class="profile-card">
+                <div class="section-title" style="margin-top:0;">Historique de tests et score</div>
+                <p class="form-hint">Pour faire fonctionner le système de points, nous conservons :</p>
+                <ul style="margin:12px 0 0 20px; font-size:14px; line-height:1.8; color:var(--text-white);">
+                    <li>La liste des applications que vous avez rejointes ou testées, et la date de validation.</li>
+                    <li>Votre score global et votre nombre de mails actifs débloqués.</li>
+                    <li>Un journal des actions significatives (connexion, test rejoint/validé, application soumise) — visible uniquement par les administrateurs de la plateforme, pour la modération et le support.</li>
+                </ul>
+            </div>
+
+            <div class="profile-card">
+                <div class="section-title" style="margin-top:0;">Vérification des avis Play Store</div>
+                <p class="form-hint">Pour valider automatiquement vos tests, le serveur interroge l'API publique de Google Play Développeur et recherche, parmi les avis publiés sur l'application, un avis dont l'auteur correspond à votre pseudo Google. Nous ne consultons pas vos autres avis, ni votre activité en dehors des applications de la plateforme.</p>
+            </div>
+
+            <div class="profile-card">
+                <div class="section-title" style="margin-top:0;">Applications soumises par les développeurs</div>
+                <p class="form-hint">Quand un développeur soumet une application, nous importons automatiquement le titre, la description, l'icône, les captures d'écran et la vidéo promo depuis sa fiche Play Console publique — ce ne sont pas des données personnelles, mais des informations déjà publiques sur le Play Store.</p>
+            </div>
+
+            <div class="profile-card">
+                <div class="section-title" style="margin-top:0;">Qui peut voir vos données ?</div>
+                <p class="form-hint">Votre pseudo est visible des autres utilisateurs (catalogue, classement, chat). Votre email n'est visible que par les administrateurs de la plateforme et par les développeurs des applications que vous testez (nécessaire pour la gestion des Google Groups). Il n'est jamais affiché publiquement.</p>
+            </div>
+
+            <p class="form-hint" style="margin-top:24px;">Une question sur vos données ? Contactez l'administrateur de la plateforme.</p>
+        </main>
+    </div>
+</body>
+</html>
