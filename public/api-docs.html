@@ -110,6 +110,7 @@
     <a href="#historique">Historique</a>
     <a href="#export">Export</a>
     <a href="#mode-ia">Mode IA (contours)</a>
+    <a href="#bonnes-pratiques">Bonnes pratiques (montage vidéo)</a>
     <a href="#exemple">Exemple complet</a>
   </nav>
   <main>
@@ -282,6 +283,48 @@ const id = await page.evaluate(
   console.log('nb photos:', etat.photos.length);
 }, 3000);
 // arreter() pour stopper</code></pre>
+
+    <h2 id="bonnes-pratiques">Bonnes pratiques pour monter une vidéo complète</h2>
+    <p>Leçons tirées d'un montage réel piloté par API (screenshots de site + narration). Chaque point corrige un piège rencontré concrètement — les suivre évite de refaire les mêmes erreurs.</p>
+
+    <h3>1. Calculer le <code>scale</code> d'une photo depuis son ratio réel</h3>
+    <p>Un <code>scale</code> fixe (ex. 0.3 pour tous les calques) laisse énormément de vide autour d'une image dont le ratio diffère du cadre 16:9 — en particulier une capture <em>fullPage</em> d'un site web, souvent bien plus haute que large. Calculez un scale qui remplit une fraction cible du cadre selon le ratio réel de l'image :</p>
+    <pre><code>const RATIO_CADRE = 1920 / 1080;
+function scaleAdapte(largeurImg, hauteurImg, margeCible = 0.6) {
+  const ratioImg = largeurImg / hauteurImg;
+  if (ratioImg > RATIO_CADRE) return margeCible; // image "large" : contrainte par la largeur
+  return (1080 * margeCible * ratioImg) / 1920;  // image "haute" : contrainte par la hauteur
+}</code></pre>
+
+    <h3>2. <code>align</code> ne déplace pas le bloc de texte, il aligne le texte à l'intérieur</h3>
+    <p>Le panneau d'un bloc de texte reste toujours <strong>centré sur <code>x</code></strong>, quel que soit <code>align</code> ('left'/'center'/'right'). Positionner <code>x</code> près d'un bord (ex. 0.94) fait déborder le panneau hors du cadre côté <code>align:'right'</code>, puisque le panneau s'étend symétriquement autour de son centre. Pour une colonne latérale calée sur <code>wrapWidth</code>, calculez le centre en tenant compte de la largeur de la colonne :</p>
+    <pre><code>const margeExterieure = 0.05;
+const xGauche = margeExterieure + wrapWidth / 2;
+const xDroite = 1 - margeExterieure - wrapWidth / 2;</code></pre>
+
+    <h3>3. Ne jamais coller un texte au bord ni le superposer à une photo</h3>
+    <p>Gardez une marge extérieure d'au moins 5% (<code>margeExterieure</code> ci-dessus) et vérifiez la zone réellement occupée par la photo (dépend de son <code>scale</code> <em>et</em> de son ratio, voir point 1) avant de positionner un texte à proximité. Pour un montage "titre en haut + description latérale", décalez la photo d'un côté (ex. <code>x: 0.6</code>) pour libérer une vraie colonne de l'autre côté plutôt que de superposer texte et image.</p>
+
+    <h3>4. Laisser une marge de silence textuel entre deux segments</h3>
+    <p>Si la fenêtre <code>[startTime, endTime]</code> d'un texte touche exactement celle du suivant, les deux sont actives simultanément pendant l'animation d'entrée/sortie (~0.5s) — elles se superposent visuellement. Reculez le <code>startTime</code> et avancez le <code>endTime</code> d'environ 0.3s par rapport aux bornes du segment.</p>
+
+    <h3>5. Préférer <code>setTransition('none')</code> pour un montage riche en texte</h3>
+    <p>La transition <code>'fade'</code> superpose brièvement les deux photos consécutives à l'écran — avec des mises en page différentes par segment (photo décalée à gauche/droite, texte différent), le résultat peut sembler confus. Une coupe franche (<code>'none'</code>) reste lisible même avec beaucoup de contenu qui change à chaque segment.</p>
+
+    <h3>6. Le titre intro/outro s'agrandit autour d'un centre fixe</h3>
+    <p>Sa position verticale est ancrée à un centre fixe (indépendant de sa taille) : l'agrandir remonte son bord supérieur. Si un texte est positionné juste au-dessus (ex. description d'intro), remontez-le en conséquence pour ne pas le voir chevauché par le titre.</p>
+
+    <h3>7. Vérifier le vrai format d'un logo avant de compter sur sa transparence</h3>
+    <p>Un fichier <code>.png</code> peut en réalité être un JPEG (aucune transparence possible, quel que soit son contenu) — vérifiez avec un outil qui lit le format réel plutôt que l'extension avant de l'utiliser en <code>logoUrl</code>. Un logo à fond blanc opaque utilisé tel quel produira un carré blanc disgracieux dans l'intro/outro.</p>
+
+    <h3>8. Caler la durée des segments sur la voix off, pas l'inverse</h3>
+    <p>Si vous ajoutez une narration (voix off), générez d'abord les clips audio, mesurez leur durée réelle, <em>puis</em> fixez les durées de segment (durée du clip + une marge, ex. +1s) — plutôt que d'essayer de faire tenir une narration dans une fenêtre déjà choisie arbitrairement.</p>
+
+    <h3>9. Un clic utilisateur réel doit toujours pouvoir (re)lancer l'audio</h3>
+    <p>Un média chargé/joué par script (plutôt que par une vraie interaction) peut être bloqué par la politique autoplay du navigateur, et rester bloqué indéfiniment si rien ne retente la lecture ensuite. Si vous pilotez l'éditeur par script et que la musique reste silencieuse, un clic sur le bouton Play de l'aperçu relance explicitement tous les médias (musique, voix off, vidéo de fond) — c'est le point de rattrapage fiable, car un clic est toujours un vrai geste utilisateur.</p>
+
+    <h3>10. <code>page.evaluate</code> n'a pas accès aux variables Node externes</h3>
+    <p>Le callback passé à <code>page.evaluate(fn, data)</code> s'exécute dans le contexte du navigateur : seules les valeurs transmises explicitement via <code>data</code> (le second argument) sont accessibles à l'intérieur. Référencer une variable du scope Node englobant directement dans <code>fn</code> lève une erreur silencieuse ou une <code>ReferenceError</code> selon les cas.</p>
 
     <h2 id="exemple">Exemple complet</h2>
     <pre><code>await page.evaluate(async () => {
