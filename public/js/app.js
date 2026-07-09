@@ -1263,8 +1263,9 @@ function viewEditeur() {
         </div>
 
         <div class="editor-section">
-          <label class="editor-label">Police d'écriture personnalisée</label>
+          <label class="editor-label">Police d'écriture personnalisée (optionnelle)</label>
           ${renderFilePicker('editor-font-input', '.ttf,.otf,.woff,.woff2', 'editor-font-filename')}
+          <span class="form-hint">Sans import, une police par défaut est utilisée pour tous les textes.</span>
         </div>
         <div class="editor-section">
           <label class="editor-label">Texte fixe (affiché pendant toute la vidéo)</label>
