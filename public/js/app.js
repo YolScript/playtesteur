@@ -1275,77 +1275,102 @@ function viewEditeur() {
       </div>
 
       <div class="editor-controls">
-        <div class="editor-section">
-          <label class="editor-label">Fond (vidéo MP4 ou image)</label>
-          ${renderFilePicker('editor-bg-input', 'video/mp4,image/png,image/jpeg', 'editor-bg-filename')}
-        </div>
-        <div class="editor-section">
-          <label class="editor-label">Musique de fond (MP3)</label>
-          ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
-        </div>
+        <details class="editor-accordion" open>
+          <summary>Fond &amp; musique</summary>
+          <div class="editor-accordion-body">
+            <div class="editor-section">
+              <label class="editor-label">Fond (vidéo MP4 ou image)</label>
+              ${renderFilePicker('editor-bg-input', 'video/mp4,image/png,image/jpeg', 'editor-bg-filename')}
+            </div>
+            <div class="editor-section">
+              <label class="editor-label">Musique de fond (MP3)</label>
+              ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
+            </div>
+          </div>
+        </details>
 
-        <div class="editor-section">
-          <label class="editor-checkbox-row"><input type="checkbox" id="editor-intro-toggle"><span>Ajouter une intro</span></label>
-          <div class="editor-subpanel hidden" id="editor-intro-panel">
-            <span class="editor-mini-heading">Logo</span>
-            ${renderFilePicker('editor-intro-logo-input', 'image/png', 'editor-intro-logo-filename')}
-            <span class="editor-mini-heading">Image</span>
-            ${renderFilePicker('editor-intro-img-input', 'image/png', 'editor-intro-img-filename')}
-            <textarea id="editor-intro-text" rows="2" placeholder="Texte de l'intro..."></textarea>
-            <label class="editor-mini-label">Durée (s)<input type="number" id="editor-intro-duree" min="0.5" max="20" step="0.5" value="3" style="max-width:90px;"></label>
+        <details class="editor-accordion">
+          <summary>Intro</summary>
+          <div class="editor-accordion-body">
+            <label class="editor-checkbox-row"><input type="checkbox" id="editor-intro-toggle"><span>Ajouter une intro</span></label>
+            <div class="editor-subpanel hidden" id="editor-intro-panel">
+              <span class="editor-mini-heading">Logo</span>
+              ${renderFilePicker('editor-intro-logo-input', 'image/png', 'editor-intro-logo-filename')}
+              <span class="editor-mini-heading">Image</span>
+              ${renderFilePicker('editor-intro-img-input', 'image/png', 'editor-intro-img-filename')}
+              <textarea id="editor-intro-text" rows="2" placeholder="Texte de l'intro..."></textarea>
+              <label class="editor-mini-label">Durée (s)<input type="number" id="editor-intro-duree" min="0.5" max="20" step="0.5" value="3" style="max-width:90px;"></label>
+            </div>
           </div>
-        </div>
+        </details>
 
-        <div class="editor-section">
-          <div class="editor-row" style="justify-content:space-between;">
-            <label class="editor-label" style="margin:0;">Photos (une à la fois, dans l'ordre)</label>
-            <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
+        <details class="editor-accordion">
+          <summary>Photos</summary>
+          <div class="editor-accordion-body">
+            <div class="editor-row" style="justify-content:flex-end;">
+              <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
+            </div>
+            <div id="editor-photos-list" class="editor-photos-list"></div>
           </div>
-          <div id="editor-photos-list" class="editor-photos-list"></div>
-        </div>
+        </details>
 
-        <div class="editor-section">
-          <label class="editor-checkbox-row"><input type="checkbox" id="editor-outro-toggle"><span>Ajouter une outro</span></label>
-          <div class="editor-subpanel hidden" id="editor-outro-panel">
-            <span class="editor-mini-heading">Logo</span>
-            ${renderFilePicker('editor-outro-logo-input', 'image/png', 'editor-outro-logo-filename')}
-            <span class="editor-mini-heading">Image</span>
-            ${renderFilePicker('editor-outro-img-input', 'image/png', 'editor-outro-img-filename')}
-            <textarea id="editor-outro-text" rows="2" placeholder="Texte de l'outro..."></textarea>
-            <label class="editor-mini-label">Durée (s)<input type="number" id="editor-outro-duree" min="0.5" max="20" step="0.5" value="3" style="max-width:90px;"></label>
+        <details class="editor-accordion">
+          <summary>Outro</summary>
+          <div class="editor-accordion-body">
+            <label class="editor-checkbox-row"><input type="checkbox" id="editor-outro-toggle"><span>Ajouter une outro</span></label>
+            <div class="editor-subpanel hidden" id="editor-outro-panel">
+              <span class="editor-mini-heading">Logo</span>
+              ${renderFilePicker('editor-outro-logo-input', 'image/png', 'editor-outro-logo-filename')}
+              <span class="editor-mini-heading">Image</span>
+              ${renderFilePicker('editor-outro-img-input', 'image/png', 'editor-outro-img-filename')}
+              <textarea id="editor-outro-text" rows="2" placeholder="Texte de l'outro..."></textarea>
+              <label class="editor-mini-label">Durée (s)<input type="number" id="editor-outro-duree" min="0.5" max="20" step="0.5" value="3" style="max-width:90px;"></label>
+            </div>
           </div>
-        </div>
+        </details>
 
-        <div class="editor-section">
-          <label class="editor-label">Police d'écriture personnalisée (optionnelle)</label>
-          ${renderFilePicker('editor-font-input', '.ttf,.otf,.woff,.woff2', 'editor-font-filename')}
-          <span class="form-hint">Sans import, une police par défaut est utilisée pour tous les textes.</span>
-        </div>
-        <div class="editor-section">
-          <label class="editor-label">Texte fixe (affiché pendant toute la vidéo)</label>
-          <textarea id="editor-text-input" rows="2" placeholder="Votre texte..."></textarea>
-          <div class="editor-row">
-            <input type="color" id="editor-text-color" value="#ffffff" title="Couleur du texte">
-            <label class="editor-mini-label">Taille<input type="range" id="editor-text-size" min="16" max="140" value="56"></label>
+        <details class="editor-accordion">
+          <summary>Textes</summary>
+          <div class="editor-accordion-body">
+            <div class="editor-section">
+              <label class="editor-label">Police d'écriture personnalisée (optionnelle)</label>
+              ${renderFilePicker('editor-font-input', '.ttf,.otf,.woff,.woff2', 'editor-font-filename')}
+              <span class="form-hint">Utilisable pour un texte en sélectionnant "Police importée" dans son style.</span>
+            </div>
+            <div class="editor-row" style="justify-content:flex-end;">
+              <button type="button" id="editor-add-textblock" class="editor-add-btn">+ Ajouter un texte</button>
+            </div>
+            <div id="editor-textblocks-list" class="editor-photos-list"></div>
           </div>
-        </div>
-        <div class="editor-section">
-          <label class="editor-label">Effets lumineux (glow)</label>
-          <label class="editor-checkbox-row"><input type="checkbox" id="editor-bloom-toggle"><span>Activer le halo lumineux</span></label>
-          <label class="editor-mini-label">Intensité<input type="range" id="editor-bloom-strength" min="0" max="30" value="11"></label>
-          <span class="form-hint">Amplifie les contours énergétiques et particules activés sur une photo. Coûteux en performance.</span>
-        </div>
-        <div class="editor-section">
-          <label class="editor-label">Format des images exportées</label>
-          <div class="editor-row">
-            <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="playstore" checked> Vertical Play Store (1080×1920)</label>
-            <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="square"> Carré (1080×1080)</label>
+        </details>
+
+        <details class="editor-accordion">
+          <summary>Effets lumineux (glow)</summary>
+          <div class="editor-accordion-body">
+            <label class="editor-checkbox-row"><input type="checkbox" id="editor-bloom-toggle"><span>Activer le halo lumineux</span></label>
+            <label class="editor-mini-label">Intensité<input type="range" id="editor-bloom-strength" min="0" max="30" value="8"></label>
+            <label class="editor-checkbox-row"><input type="checkbox" id="editor-bloom-audioreactive"><span>Lier l'intensité à la musique</span></label>
+            <span class="form-hint">Amplifie les contours énergétiques et particules activés sur une photo. Coûteux en performance.</span>
           </div>
-        </div>
-        <div class="editor-section">
-          <label class="editor-label">Nom du fichier</label>
-          <input type="text" id="editor-filename" placeholder="playtesteur-promo" maxlength="80">
-        </div>
+        </details>
+
+        <details class="editor-accordion">
+          <summary>Export</summary>
+          <div class="editor-accordion-body">
+            <div class="editor-section">
+              <label class="editor-label">Format des images exportées</label>
+              <div class="editor-row">
+                <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="playstore" checked> Vertical Play Store (1080×1920)</label>
+                <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="square"> Carré (1080×1080)</label>
+              </div>
+            </div>
+            <div class="editor-section">
+              <label class="editor-label">Nom du fichier</label>
+              <input type="text" id="editor-filename" placeholder="playtesteur-promo" maxlength="80">
+            </div>
+          </div>
+        </details>
+
         <div class="editor-actions">
           <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG</button>
           <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080, 60 im/s)</button>

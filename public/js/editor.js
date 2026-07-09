@@ -25,18 +25,21 @@ const EditorState = {
   outro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
   photos: [], // [{ id, img, x, y, z, rotX, rotY, rotZ, scale, texte, duree }]
 
-  text: '',
-  textStyle: { color: '#ffffff', size: 56, x: 0.5, y: 0.85 },
+  // [{ id, texte, x, y, z, fontFamily, size, color, bold, italic, align,
+  //    anim, startTime, endTime }] — plusieurs blocs de texte libres
+  // indépendants, chacun avec son propre style, sa fenêtre d'affichage
+  // (null = du début/jusqu'à la fin) et son animation d'entrée/sortie.
+  textBlocks: [],
 
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
   _scrubbing: false,
 
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
 
-  effects: { bloomActive: false, bloomStrength: 1.1 },
+  effects: { bloomActive: false, bloomStrength: 0.4, bloomAudioReactive: false },
 
-  dragging: null, // null | 'text' | { type:'photo', id } | { type:'caption', id }
-  _textBox: null,
+  dragging: null, // null | { type:'photo'|'caption'|'textblock', id }
+  _textBoxes: {}, // id -> box (pour le drag des blocs de texte)
   audioCtx: null,
   audioSourceCache: null,
 
@@ -45,6 +48,16 @@ const EditorState = {
 
 let editorRafId = null;
 let photoLayerCounter = 0;
+let textBlockCounter = 0;
+
+const FONTS_DISPONIBLES = [
+  { value: "'Space Grotesk', sans-serif", label: 'Space Grotesk' },
+  { value: "'Roboto', sans-serif", label: 'Roboto' },
+  { value: "'Bebas Neue', sans-serif", label: 'Bebas Neue' },
+  { value: "'Anton', sans-serif", label: 'Anton' },
+  { value: "'Caveat', cursive", label: 'Caveat (manuscrite)' },
+  { value: "'Playfair Display', serif", label: 'Playfair Display' },
+];
 
 function arreterEditeur() {
   if (editorRafId) {
@@ -60,6 +73,7 @@ async function initEditeur() {
   bindEditorInputs();
   bindTimelineControls();
   rafraichirListePhotos();
+  rafraichirListeTextBlocks();
 
   arreterEditeur();
   await initMoteur3D(canvas);
@@ -224,7 +238,11 @@ async function initMoteur3D(canvas) {
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.1, 0.55, 0.15);
+  // threshold élevé : seules les zones vraiment lumineuses (contour
+  // énergétique, particules, spectre) déclenchent le halo. Avec un seuil
+  // bas, la scène entière (texte blanc, bordures, fond clair) contribue
+  // et le bloom sature toute l'image en blanc dès une intensité modeste.
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.1, 0.55, 0.82);
   bloomPass.enabled = false;
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
@@ -250,7 +268,7 @@ async function initMoteur3D(canvas) {
       introLogo: null,
       introImg: null,
       introText: null,
-      freeText: null,
+      // Les blocs de texte libres utilisent des clés dynamiques `text-<id>`.
     },
   };
 }
@@ -456,7 +474,12 @@ function pointOnRoundRect(x, y, w, h, r, t) {
     const a = Math.PI + (d / arc) * (Math.PI / 2);
     return { px: x + r + r * Math.cos(a), py: y + r + r * Math.sin(a) };
   }
-  return { px: x + w / 2, py: y };
+  // Deuxième moitié du bord supérieur (du coin haut-gauche vers le milieu
+  // du haut) : referme la boucle. Manquait ici, ce qui figeait tous les t
+  // de cette plage sur un point fixe au lieu de parcourir le segment —
+  // avec le total comptant 2x straightTop mais un seul consommé, une
+  // fraction significative du contour n'était jamais réellement visitée.
+  return { px: x + r + d, py: y };
 }
 
 // Normale sortante au point t du contour (dérivée numérique de la
@@ -475,20 +498,22 @@ function normaleSurRoundRect(x, y, w, h, r, t) {
 
 // Spectre audio réactif : barres perpendiculaires au contour arrondi de
 // la carte, hauteur proportionnelle à l'amplitude de fréquence lue en
-// temps réel sur la musique de fond (Web Audio AnalyserNode).
-function dessinerSpectreAudio(ctx, x, y, w, h, r, color, maxBarLen) {
+// temps réel sur la musique de fond (Web Audio AnalyserNode). count =
+// nombre de barres réparties tout autour du contour (0..1 complet),
+// sizeMul = multiplicateur de leur longueur max.
+function dessinerSpectreAudio(ctx, x, y, w, h, r, color, maxBarLen, count, sizeMul) {
   const analyserState = EditorState.audioAnalyser;
   if (!analyserState) return;
   analyserState.analyser.getByteFrequencyData(analyserState.dataArray);
   const data = analyserState.dataArray;
-  const nBars = 48;
+  const nBars = Math.max(4, Math.round(count) || 48);
   ctx.save();
   for (let i = 0; i < nBars; i++) {
     const t = i / nBars;
     const { px, py } = pointOnRoundRect(x, y, w, h, r, t);
     const { nx, ny } = normaleSurRoundRect(x, y, w, h, r, t);
     const amp = data[i % data.length] / 255;
-    const len = 4 + amp * maxBarLen;
+    const len = (4 + amp * maxBarLen) * (sizeMul || 1);
     ctx.strokeStyle = color;
     ctx.globalAlpha = 0.55 + amp * 0.45;
     ctx.lineWidth = Math.max(2, w * 0.006);
@@ -504,16 +529,20 @@ function dessinerSpectreAudio(ctx, x, y, w, h, r, color, maxBarLen) {
 
 // Effet "Saber" : traînée lumineuse qui court le long du contour arrondi
 // de la carte, tête vive + queue qui s'estompe, glow amplifié ensuite par
-// le bloom global si activé.
-function dessinerContourEnergetique(ctx, x, y, w, h, r, color, tGlobal) {
-  const nQueue = 26;
+// le bloom global si activé. count = longueur de la traînée en nombre de
+// points (un espacement fixe entre points, donc plus de points = la
+// traînée couvre une plus grande fraction du tour, jusqu'au tour complet)
+// ; sizeMul = multiplicateur du rayon des points.
+function dessinerContourEnergetique(ctx, x, y, w, h, r, color, tGlobal, count, sizeMul) {
+  const nQueue = Math.max(4, Math.round(count) || 26);
+  const espacement = 0.9 / nQueue; // couvre jusqu'à 90% du tour au maximum du slider
   const vitesse = 0.18; // tours par seconde
   ctx.save();
   for (let i = 0; i < nQueue; i++) {
-    const tTete = (tGlobal * vitesse - i * 0.012) % 1;
+    const tTete = (tGlobal * vitesse - i * espacement) % 1;
     const { px, py } = pointOnRoundRect(x, y, w, h, r, tTete);
     const alpha = (1 - i / nQueue) * 0.9;
-    const radius = Math.max(1.5, Math.min(w, h) * 0.018) * (1 - i / nQueue * 0.5);
+    const radius = Math.max(1.5, Math.min(w, h) * 0.018) * (1 - (i / nQueue) * 0.5) * (sizeMul || 1);
     ctx.beginPath();
     ctx.fillStyle = color;
     ctx.globalAlpha = alpha;
@@ -541,7 +570,8 @@ function mettreAJourPhoto(p, tGlobal) {
   const w = Math.round(width * p.scale);
   const h = Math.round(w * (p.img.naturalHeight / p.img.naturalWidth || 1));
   const margeBase = Math.ceil(Math.min(w, h) * 0.14) + 16;
-  const margeSpectre = p.spectrumActive ? Math.ceil(Math.min(w, h) * 0.32) : 0;
+  const spectrumSizeMul = Number(p.spectrumSize) || 1;
+  const margeSpectre = p.spectrumActive ? Math.ceil(Math.min(w, h) * 0.32 * spectrumSizeMul) : 0;
   const marge = margeBase + margeSpectre;
   sizeLayerCanvas(layer, w + marge * 2, h + marge * 2);
 
@@ -571,10 +601,16 @@ function mettreAJourPhoto(p, tGlobal) {
   ctx.stroke();
 
   if (p.saberActive) {
-    dessinerContourEnergetique(ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.saberColor || '#00e5ff', tGlobal);
+    dessinerContourEnergetique(
+      ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.saberColor || '#00e5ff', tGlobal,
+      p.saberCount, p.saberSize
+    );
   }
   if (p.spectrumActive) {
-    dessinerSpectreAudio(ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.spectrumColor || '#ff2d95', margeSpectre * 0.85);
+    dessinerSpectreAudio(
+      ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.spectrumColor || '#ff2d95', margeSpectre * 0.85,
+      p.spectrumCount, spectrumSizeMul
+    );
   }
 
   const phase = (p.id % 7) * 0.9;
@@ -713,20 +749,55 @@ function mettreAJourIntroOutro(seg) {
   }
 }
 
-function mettreAJourTexteLibre() {
-  if (!EditorState.text) {
-    hideLayer('freeText');
-    return null;
-  }
+// Progression 0..1 d'une animation d'entrée/sortie pour un bloc actif
+// entre [start, end] (secondes, sur la timeline globale) au temps `now`.
+// null en start/end veut dire "pas de borne" (pas d'anim de ce côté).
+function progressionAnimation(start, end, now, dureeAnim) {
+  let inT = 1;
+  let outT = 1;
+  if (start != null) inT = Math.min(1, Math.max(0, (now - start) / dureeAnim));
+  if (end != null) outT = Math.min(1, Math.max(0, (end - now) / dureeAnim));
+  return Math.min(inT, outT);
+}
+
+function blocTexteActif(b, now) {
+  if (b.startTime != null && now < b.startTime) return false;
+  if (b.endTime != null && now > b.endTime) return false;
+  return true;
+}
+
+function mettreAJourBlocsTexte(now) {
+  const boxes = {};
+  EditorState.textBlocks.forEach((b) => {
+    const layerName = `text-${b.id}`;
+    if (!b.texte || !blocTexteActif(b, now)) {
+      hideLayer(layerName);
+      return;
+    }
+    const box = dessinerBlocTexte(b, layerName, now);
+    if (box) boxes[b.id] = box;
+  });
+  // Masque les layers de blocs supprimés entre-temps.
+  Object.keys(EditorState.three.layers).forEach((name) => {
+    if (name.startsWith('text-') && !EditorState.textBlocks.some((b) => `text-${b.id}` === name)) {
+      hideLayer(name);
+    }
+  });
+  return boxes;
+}
+
+function dessinerBlocTexte(b, layerName, now) {
   const { width, height } = EditorState.three;
-  const layer = getOrCreateCanvasLayer('freeText');
-  const size = Number(EditorState.textStyle.size) || 56;
-  const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
+  const layer = getOrCreateCanvasLayer(layerName);
+  const size = Number(b.size) || 56;
+  const famille = b.fontFamily === 'custom' && EditorState.fontFamily ? `"${EditorState.fontFamily}"` : b.fontFamily || "'Space Grotesk', sans-serif";
+  const weight = b.bold === false ? '400' : '700';
+  const style = b.italic ? 'italic' : 'normal';
 
   const measureCtx = layer.ctx;
-  measureCtx.font = `700 ${size}px ${famille}`;
+  measureCtx.font = `${style} ${weight} ${size}px ${famille}`;
   const maxWidth = width * 0.85;
-  const lignes = wrapText(measureCtx, EditorState.text, maxWidth);
+  const lignes = wrapText(measureCtx, b.texte, maxWidth);
   const lineHeight = size * 1.2;
   const totalHeight = lineHeight * lignes.length;
   let boxW = 0;
@@ -745,20 +816,48 @@ function mettreAJourTexteLibre() {
   ctx.fillStyle = 'rgba(8,10,14,0.5)';
   ctx.fill();
 
-  ctx.font = `700 ${size}px ${famille}`;
-  ctx.textAlign = 'center';
+  const align = b.align || 'center';
+  ctx.font = `${style} ${weight} ${size}px ${famille}`;
+  ctx.textAlign = align;
   ctx.textBaseline = 'top';
-  ctx.fillStyle = EditorState.textStyle.color;
+  ctx.fillStyle = b.color || '#ffffff';
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 8;
-  lignes.forEach((ligne, i) => ctx.fillText(ligne, panelW / 2, padY + i * lineHeight));
+  const textX = align === 'left' ? padX : align === 'right' ? panelW - padX : panelW / 2;
+
+  const anim = b.anim || 'none';
+  const dureeAnim = 0.5;
+  const progress = progressionAnimation(b.startTime, b.endTime, now, dureeAnim);
+
+  if (anim === 'typewriter') {
+    const texteComplet = lignes.join('\n');
+    const nVisible = Math.round(progress * texteComplet.length);
+    let compte = 0;
+    lignes.forEach((ligne, i) => {
+      const restant = Math.max(0, nVisible - compte);
+      ctx.fillText(ligne.slice(0, restant), textX, padY + i * lineHeight);
+      compte += ligne.length;
+    });
+  } else {
+    ctx.globalAlpha = anim === 'fade' || anim === 'slide' || anim === 'pop' ? progress : 1;
+    lignes.forEach((ligne, i) => ctx.fillText(ligne, textX, padY + i * lineHeight));
+    ctx.globalAlpha = 1;
+  }
   ctx.shadowBlur = 0;
 
-  const cx = EditorState.textStyle.x * width;
-  const cy = EditorState.textStyle.y * height;
-  placerLayer(layer, cx, cy, 3, 0, 0, 0);
+  let cx = b.x * width;
+  let cy = b.y * height;
+  let scaleMul = 1;
+  if (anim === 'slide') {
+    cx += (1 - progress) * width * 0.15;
+  } else if (anim === 'pop') {
+    scaleMul = 0.6 + 0.4 * progress;
+  }
 
-  return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: 3 };
+  placerLayer(layer, cx, cy, b.z ?? 3, 0, 0, 0);
+  layer.mesh.scale.set(panelW * scaleMul, panelH * scaleMul, 1);
+
+  return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: b.z ?? 3 };
 }
 
 let particuleSpriteTexture = null;
@@ -838,6 +937,19 @@ function mettreAJourParticules(p, box, tGlobal) {
   sys.points.geometry.attributes.position.needsUpdate = true;
 }
 
+// Niveau audio moyen instantané (0..1), pour piloter des effets réactifs
+// à la musique (ex. intensité du bloom global) sans dépendre du contour
+// d'un calque précis.
+function niveauAudioMoyen() {
+  const analyserState = EditorState.audioAnalyser;
+  if (!analyserState) return 0;
+  analyserState.analyser.getByteFrequencyData(analyserState.dataArray);
+  const data = analyserState.dataArray;
+  let somme = 0;
+  for (let i = 0; i < data.length; i++) somme += data[i];
+  return somme / data.length / 255;
+}
+
 function renderEditorFrame() {
   const ts = EditorState.three;
   if (!ts) return;
@@ -871,10 +983,14 @@ function renderEditorFrame() {
     mettreAJourParticules(null, null, tGlobal);
   }
 
-  EditorState._textBox = mettreAJourTexteLibre();
+  EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime);
 
   ts.bloomPass.enabled = EditorState.effects.bloomActive;
-  ts.bloomPass.strength = Number(EditorState.effects.bloomStrength) || 0;
+  let strength = Number(EditorState.effects.bloomStrength) || 0;
+  if (EditorState.effects.bloomAudioReactive) {
+    strength += niveauAudioMoyen() * 0.35;
+  }
+  ts.bloomPass.strength = strength;
   if (EditorState.effects.bloomActive) {
     ts.composer.setSize(ts.width, ts.height);
     ts.composer.render();
@@ -965,10 +1081,8 @@ function bindEditorInputs() {
   const bgInput = document.getElementById('editor-bg-input');
   const audioInput = document.getElementById('editor-audio-input');
   const addPhotoBtn = document.getElementById('editor-add-photo');
+  const addTextBlockBtn = document.getElementById('editor-add-textblock');
   const fontInput = document.getElementById('editor-font-input');
-  const textInput = document.getElementById('editor-text-input');
-  const colorInput = document.getElementById('editor-text-color');
-  const sizeInput = document.getElementById('editor-text-size');
   const exportPngBtn = document.getElementById('editor-export-png');
   const exportMp4Btn = document.getElementById('editor-export-mp4');
 
@@ -1031,15 +1145,7 @@ function bindEditorInputs() {
     }
   });
 
-  textInput.addEventListener('input', (e) => {
-    EditorState.text = e.target.value;
-  });
-  colorInput.addEventListener('input', (e) => {
-    EditorState.textStyle.color = e.target.value;
-  });
-  sizeInput.addEventListener('input', (e) => {
-    EditorState.textStyle.size = Number(e.target.value);
-  });
+  addTextBlockBtn.addEventListener('click', ajouterBlocTexte);
 
   const bloomToggle = document.getElementById('editor-bloom-toggle');
   const bloomStrength = document.getElementById('editor-bloom-strength');
@@ -1050,7 +1156,18 @@ function bindEditorInputs() {
   }
   if (bloomStrength) {
     bloomStrength.addEventListener('input', (e) => {
-      EditorState.effects.bloomStrength = Number(e.target.value) / 10;
+      EditorState.effects.bloomStrength = Number(e.target.value) / 20;
+    });
+  }
+  const bloomAudioReactive = document.getElementById('editor-bloom-audioreactive');
+  if (bloomAudioReactive) {
+    bloomAudioReactive.addEventListener('change', (e) => {
+      if (e.target.checked && !EditorState.audioEl) {
+        toast('Importez une musique de fond pour lier le halo à la musique.', 'error');
+        e.target.checked = false;
+        return;
+      }
+      EditorState.effects.bloomAudioReactive = e.target.checked;
     });
   }
 
@@ -1093,20 +1210,46 @@ function renderPhotoLayerHtml(p, index) {
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
         <label class="editor-mini-label">Durée (s)<input type="number" data-duree-for="${p.id}" min="0.5" max="30" step="0.5" value="${p.duree}" style="max-width:80px;"></label>
       </div>
-      <div class="editor-row">
-        <label class="editor-mini-label">Rotation X<input type="range" data-rotx-for="${p.id}" min="-45" max="45" value="${p.rotX || 0}"></label>
-        <label class="editor-mini-label">Rotation Y<input type="range" data-roty-for="${p.id}" min="-45" max="45" value="${p.rotY || 0}"></label>
-        <label class="editor-mini-label">Rotation Z<input type="range" data-rotz-for="${p.id}" min="-45" max="45" value="${p.rotZ || 0}"></label>
-      </div>
-      <div class="editor-row">
-        <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-saber-for="${p.id}" ${p.saberActive ? 'checked' : ''}><span>Contour énergétique</span></label>
-        <input type="color" data-sabercolor-for="${p.id}" value="${p.saberColor || '#00e5ff'}" title="Couleur de l'effet">
-        <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-particles-for="${p.id}" ${p.particlesActive ? 'checked' : ''}><span>Particules</span></label>
-      </div>
-      <div class="editor-row">
-        <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-spectrum-for="${p.id}" ${p.spectrumActive ? 'checked' : ''}><span>Spectre audio (musique de fond)</span></label>
-        <input type="color" data-spectrumcolor-for="${p.id}" value="${p.spectrumColor || '#ff2d95'}" title="Couleur du spectre">
-      </div>
+
+      <details class="editor-accordion-nested">
+        <summary>Rotation 3D</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-mini-label">Rotation X<input type="range" data-rotx-for="${p.id}" min="-45" max="45" value="${p.rotX || 0}"></label>
+            <label class="editor-mini-label">Rotation Y<input type="range" data-roty-for="${p.id}" min="-45" max="45" value="${p.rotY || 0}"></label>
+            <label class="editor-mini-label">Rotation Z<input type="range" data-rotz-for="${p.id}" min="-45" max="45" value="${p.rotZ || 0}"></label>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Contour énergétique &amp; particules</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-saber-for="${p.id}" ${p.saberActive ? 'checked' : ''}><span>Contour énergétique</span></label>
+            <input type="color" data-sabercolor-for="${p.id}" value="${p.saberColor || '#00e5ff'}" title="Couleur de l'effet">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-particles-for="${p.id}" ${p.particlesActive ? 'checked' : ''}><span>Particules</span></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Quantité<input type="range" data-sabercount-for="${p.id}" min="6" max="120" value="${p.saberCount ?? 26}"></label>
+            <label class="editor-mini-label">Taille<input type="range" data-sabersize-for="${p.id}" min="30" max="300" value="${Math.round((p.saberSize ?? 1) * 100)}"></label>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Spectre audio</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-spectrum-for="${p.id}" ${p.spectrumActive ? 'checked' : ''}><span>Activer (musique de fond)</span></label>
+            <input type="color" data-spectrumcolor-for="${p.id}" value="${p.spectrumColor || '#ff2d95'}" title="Couleur du spectre">
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Quantité<input type="range" data-spectrumcount-for="${p.id}" min="8" max="128" value="${p.spectrumCount ?? 48}"></label>
+            <label class="editor-mini-label">Taille<input type="range" data-spectrumsize-for="${p.id}" min="30" max="300" value="${Math.round((p.spectrumSize ?? 1) * 100)}"></label>
+          </div>
+        </div>
+      </details>
     </div>
   `;
 }
@@ -1192,6 +1335,31 @@ function bindPhotoLayerEvents() {
         p.spectrumColor = e.target.value;
       });
     }
+    const saberCountInput = document.querySelector(`[data-sabercount-for="${p.id}"]`);
+    if (saberCountInput) {
+      saberCountInput.addEventListener('input', (e) => {
+        p.saberCount = Number(e.target.value);
+      });
+    }
+    const saberSizeInput = document.querySelector(`[data-sabersize-for="${p.id}"]`);
+    if (saberSizeInput) {
+      saberSizeInput.addEventListener('input', (e) => {
+        p.saberSize = Number(e.target.value) / 100;
+      });
+    }
+    const spectrumCountInput = document.querySelector(`[data-spectrumcount-for="${p.id}"]`);
+    if (spectrumCountInput) {
+      spectrumCountInput.addEventListener('input', (e) => {
+        p.spectrumCount = Number(e.target.value);
+      });
+    }
+    const spectrumSizeInput = document.querySelector(`[data-spectrumsize-for="${p.id}"]`);
+    if (spectrumSizeInput) {
+      spectrumSizeInput.addEventListener('input', (e) => {
+        p.spectrumSize = Number(e.target.value) / 100;
+        jump();
+      });
+    }
   });
   document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
@@ -1225,9 +1393,13 @@ function ajouterCalquePhoto() {
     texteY: 0.72,
     saberActive: false,
     saberColor: '#00e5ff',
+    saberCount: 26,
+    saberSize: 1,
     particlesActive: false,
     spectrumActive: false,
     spectrumColor: '#ff2d95',
+    spectrumCount: 48,
+    spectrumSize: 1,
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
@@ -1236,6 +1408,149 @@ function ajouterCalquePhoto() {
 function supprimerCalquePhoto(id) {
   EditorState.photos = EditorState.photos.filter((p) => p.id !== id);
   rafraichirListePhotos();
+}
+
+/* -------------------------------------------------------------------- */
+/* Blocs de texte multiples (police, style, animation, fenêtre de temps) */
+/* -------------------------------------------------------------------- */
+function optionsFontsHtml(selected) {
+  return FONTS_DISPONIBLES.map(
+    (f) => `<option value="${f.value}" ${f.value === selected ? 'selected' : ''}>${f.label}</option>`
+  ).join('') + `<option value="custom" ${selected === 'custom' ? 'selected' : ''}>Police importée</option>`;
+}
+
+function renderTextBlockHtml(b, index) {
+  return `
+    <div class="editor-photo-layer">
+      <div class="editor-photo-layer-head">
+        <span class="editor-photo-layer-title">Texte ${index + 1}</span>
+        <button type="button" class="editor-remove-btn" data-remove-textblock="${b.id}" title="Supprimer ce texte">&times;</button>
+      </div>
+      <textarea data-texte-for="${b.id}" rows="2" placeholder="Votre texte...">${b.texte || ''}</textarea>
+
+      <details class="editor-accordion-nested">
+        <summary>Style</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <select data-font-for="${b.id}">${optionsFontsHtml(b.fontFamily)}</select>
+            <input type="color" data-color-for="${b.id}" value="${b.color || '#ffffff'}" title="Couleur du texte">
+            <label class="editor-mini-label">Taille<input type="range" data-size-for="${b.id}" min="16" max="140" value="${b.size}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-bold-for="${b.id}" ${b.bold !== false ? 'checked' : ''}><span>Gras</span></label>
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-italic-for="${b.id}" ${b.italic ? 'checked' : ''}><span>Italique</span></label>
+            <select data-align-for="${b.id}">
+              <option value="left" ${b.align === 'left' ? 'selected' : ''}>Gauche</option>
+              <option value="center" ${(!b.align || b.align === 'center') ? 'selected' : ''}>Centré</option>
+              <option value="right" ${b.align === 'right' ? 'selected' : ''}>Droite</option>
+            </select>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Animation &amp; timing</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-mini-label">Animation
+              <select data-anim-for="${b.id}">
+                <option value="none" ${(!b.anim || b.anim === 'none') ? 'selected' : ''}>Aucune</option>
+                <option value="fade" ${b.anim === 'fade' ? 'selected' : ''}>Fondu</option>
+                <option value="slide" ${b.anim === 'slide' ? 'selected' : ''}>Glissement</option>
+                <option value="pop" ${b.anim === 'pop' ? 'selected' : ''}>Pop (zoom)</option>
+                <option value="typewriter" ${b.anim === 'typewriter' ? 'selected' : ''}>Machine à écrire</option>
+              </select>
+            </label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Apparaît à (s, vide = début)<input type="number" data-start-for="${b.id}" min="0" step="0.5" value="${b.startTime ?? ''}" style="max-width:80px;"></label>
+            <label class="editor-mini-label">Disparaît à (s, vide = fin)<input type="number" data-end-for="${b.id}" min="0" step="0.5" value="${b.endTime ?? ''}" style="max-width:80px;"></label>
+          </div>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function bindTextBlockEvents() {
+  EditorState.textBlocks.forEach((b) => {
+    const texteInput = document.querySelector(`[data-texte-for="${b.id}"]`);
+    if (texteInput) texteInput.addEventListener('input', (e) => (b.texte = e.target.value));
+
+    const fontInput = document.querySelector(`[data-font-for="${b.id}"]`);
+    if (fontInput) fontInput.addEventListener('change', (e) => (b.fontFamily = e.target.value));
+
+    const colorInput = document.querySelector(`[data-color-for="${b.id}"]`);
+    if (colorInput) colorInput.addEventListener('input', (e) => (b.color = e.target.value));
+
+    const sizeInput = document.querySelector(`[data-size-for="${b.id}"]`);
+    if (sizeInput) sizeInput.addEventListener('input', (e) => (b.size = Number(e.target.value)));
+
+    const boldInput = document.querySelector(`[data-bold-for="${b.id}"]`);
+    if (boldInput) boldInput.addEventListener('change', (e) => (b.bold = e.target.checked));
+
+    const italicInput = document.querySelector(`[data-italic-for="${b.id}"]`);
+    if (italicInput) italicInput.addEventListener('change', (e) => (b.italic = e.target.checked));
+
+    const alignInput = document.querySelector(`[data-align-for="${b.id}"]`);
+    if (alignInput) alignInput.addEventListener('change', (e) => (b.align = e.target.value));
+
+    const animInput = document.querySelector(`[data-anim-for="${b.id}"]`);
+    if (animInput) animInput.addEventListener('change', (e) => (b.anim = e.target.value));
+
+    const startInput = document.querySelector(`[data-start-for="${b.id}"]`);
+    if (startInput) {
+      startInput.addEventListener('input', (e) => {
+        b.startTime = e.target.value === '' ? null : Math.max(0, Number(e.target.value));
+      });
+    }
+    const endInput = document.querySelector(`[data-end-for="${b.id}"]`);
+    if (endInput) {
+      endInput.addEventListener('input', (e) => {
+        b.endTime = e.target.value === '' ? null : Math.max(0, Number(e.target.value));
+      });
+    }
+  });
+  document.querySelectorAll('[data-remove-textblock]').forEach((btn) => {
+    btn.addEventListener('click', () => supprimerBlocTexte(Number(btn.dataset.removeTextblock)));
+  });
+}
+
+function rafraichirListeTextBlocks() {
+  const container = document.getElementById('editor-textblocks-list');
+  if (!container) return;
+  container.innerHTML =
+    EditorState.textBlocks.map((b, i) => renderTextBlockHtml(b, i)).join('') ||
+    '<p class="form-hint">Aucun texte ajouté pour le moment.</p>';
+  bindTextBlockEvents();
+}
+
+function ajouterBlocTexte() {
+  const id = ++textBlockCounter;
+  const decalage = (EditorState.textBlocks.length % 5) * 0.06;
+  EditorState.textBlocks.push({
+    id,
+    texte: '',
+    x: 0.5,
+    y: 0.2 + decalage,
+    z: 3,
+    fontFamily: "'Space Grotesk', sans-serif",
+    size: 56,
+    color: '#ffffff',
+    bold: true,
+    italic: false,
+    align: 'center',
+    anim: 'none',
+    startTime: null,
+    endTime: null,
+  });
+  rafraichirListeTextBlocks();
+}
+
+function supprimerBlocTexte(id) {
+  EditorState.textBlocks = EditorState.textBlocks.filter((b) => b.id !== id);
+  hideLayer(`text-${id}`);
+  rafraichirListeTextBlocks();
 }
 
 /* -------------------------------------------------------------------- */
@@ -1275,11 +1590,18 @@ function pointerToFraction(canvas, evt, z) {
   return { fx: Math.min(1, Math.max(0, px.x / ts.width)), fy: Math.min(1, Math.max(0, px.y / ts.height)) };
 }
 
+function nomsTextLayerNames() {
+  return EditorState.textBlocks.map((b) => `text-${b.id}`);
+}
+
 function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
     const layers = EditorState.three.layers;
-    if (layers.freeText && layers.freeText.mesh.visible && raycastLayer(canvas, e, ['freeText'])) {
-      EditorState.dragging = 'text';
+    const textLayerNames = nomsTextLayerNames();
+    const textHit = raycastLayer(canvas, e, textLayerNames);
+    if (textHit) {
+      const id = Number(textLayerNames.find((n) => layers[n] && layers[n].mesh === textHit.object).replace('text-', ''));
+      EditorState.dragging = { type: 'textblock', id };
     } else if (layers.caption && layers.caption.mesh.visible && raycastLayer(canvas, e, ['caption'])) {
       const p = calquePhotoActif();
       if (p) EditorState.dragging = { type: 'caption', id: p.id };
@@ -1293,16 +1615,17 @@ function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointermove', (e) => {
     if (!EditorState.dragging) {
       const survole =
-        raycastLayer(canvas, e, ['freeText', 'caption', 'photo']) !== null;
+        raycastLayer(canvas, e, [...nomsTextLayerNames(), 'caption', 'photo']) !== null;
       canvas.style.cursor = survole ? 'grab' : 'default';
       return;
     }
     canvas.style.cursor = 'grabbing';
-    if (EditorState.dragging === 'text') {
-      const frac = pointerToFraction(canvas, e, 3);
-      if (frac) {
-        EditorState.textStyle.x = frac.fx;
-        EditorState.textStyle.y = frac.fy;
+    if (EditorState.dragging.type === 'textblock') {
+      const b = EditorState.textBlocks.find((tb) => tb.id === EditorState.dragging.id);
+      const frac = b && pointerToFraction(canvas, e, b.z ?? 3);
+      if (b && frac) {
+        b.x = frac.fx;
+        b.y = frac.fy;
       }
     } else if (EditorState.dragging.type === 'photo') {
       const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);

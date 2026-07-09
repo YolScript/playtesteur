@@ -862,6 +862,74 @@ tbody tr:hover { background: var(--bg-card-hover); }
 }
 
 .editor-section { display: flex; flex-direction: column; gap: 8px; }
+
+.editor-accordion {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+    overflow: hidden;
+}
+.editor-accordion + .editor-accordion { margin-top: 10px; }
+.editor-accordion > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-white);
+    user-select: none;
+}
+.editor-accordion > summary::-webkit-details-marker { display: none; }
+.editor-accordion > summary::after {
+    content: '\25BE';
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+}
+.editor-accordion[open] > summary::after { transform: rotate(180deg); }
+.editor-accordion > summary:hover { background: rgba(255,255,255,0.04); }
+.editor-accordion-body {
+    padding: 0 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.editor-accordion-nested {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: rgba(255,255,255,0.02);
+    overflow: hidden;
+}
+.editor-accordion-nested + .editor-accordion-nested { margin-top: 8px; }
+.editor-accordion-nested > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    user-select: none;
+}
+.editor-accordion-nested > summary::-webkit-details-marker { display: none; }
+.editor-accordion-nested > summary::after { content: '\25BE'; font-size: 10px; transition: transform 0.15s ease; }
+.editor-accordion-nested[open] > summary::after { transform: rotate(180deg); }
+.editor-accordion-nested-body {
+    padding: 4px 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
 .editor-label { font-size: 13px; font-weight: 600; color: var(--text-white); }
 .editor-mini-label {
     display: flex; align-items: center; gap: 8px;
