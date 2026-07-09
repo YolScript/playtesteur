@@ -1281,6 +1281,10 @@ function viewEditeur() {
             <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="square"> Carré (1080×1080)</label>
           </div>
         </div>
+        <div class="editor-section">
+          <label class="editor-label">Nom du fichier</label>
+          <input type="text" id="editor-filename" placeholder="playtesteur-promo" maxlength="80">
+        </div>
         <div class="editor-actions">
           <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG</button>
           <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080, 60 im/s)</button>

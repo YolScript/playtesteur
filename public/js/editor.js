@@ -345,6 +345,18 @@ function afficherNomFichier(spanId, file) {
   if (span) span.textContent = file ? file.name : 'Aucun fichier choisi';
 }
 
+function obtenirNomExport(defaut) {
+  const input = document.getElementById('editor-filename');
+  const brut = (input && input.value.trim()) || defaut;
+  const nettoye = brut
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9\-_ ]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+  return nettoye || defaut;
+}
+
 async function chargerImage(file) {
   const img = new Image();
   img.src = URL.createObjectURL(file);
@@ -658,7 +670,7 @@ function exportEditeurPng() {
   dessinerTexteLibre(ctx, dims.w, dims.h);
 
   off.toBlob((blob) => {
-    if (blob) downloadBlob(blob, 'playtesteur-visuel.png');
+    if (blob) downloadBlob(blob, `${obtenirNomExport('playtesteur-visuel')}.png`);
   }, 'image/png');
 }
 
@@ -811,7 +823,7 @@ async function exportEditeurMp4() {
     );
 
     setProgress(1, 'Terminé !');
-    downloadBlob(mp4Blob, 'playtesteur-promo.mp4');
+    downloadBlob(mp4Blob, `${obtenirNomExport('playtesteur-promo')}.mp4`);
   } catch (err) {
     console.error('[editeur] export MP4 échoué', err);
     toast("Échec de l'export MP4 : " + err.message, 'error');

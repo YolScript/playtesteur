@@ -902,7 +902,8 @@ tbody tr:hover { background: var(--bg-card-hover); }
     word-break: break-all;
 }
 .editor-section textarea,
-.editor-section input[type="number"] {
+.editor-section input[type="number"],
+.editor-section input[type="text"] {
     background: var(--bg-input);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
