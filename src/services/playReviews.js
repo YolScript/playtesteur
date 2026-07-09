@@ -170,4 +170,6 @@ async function listerAvis(packageName, maxResults = 10) {
   });
 }
 
-module.exports = { devMode, trouverAvisDuTesteur, importerFicheApp, listerAvis };
+const serviceAccountEmail = credentials?.client_email || null;
+
+module.exports = { devMode, trouverAvisDuTesteur, importerFicheApp, listerAvis, serviceAccountEmail };

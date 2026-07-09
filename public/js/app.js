@@ -73,6 +73,7 @@ async function router() {
   }
 
   renderHeader();
+  arreterChat();
 
   try {
     switch (route) {
@@ -80,6 +81,8 @@ async function router() {
         return viewLogin();
       case 'catalogue':
         return viewCatalogue();
+      case 'classement':
+        return viewClassement();
       case 'mes-apps':
         return viewMesApps();
       case 'app':
@@ -103,6 +106,7 @@ window.addEventListener('hashchange', router);
 const NAV_ICONS = {
   dashboard: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z"/></svg>',
   catalogue: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zM4 13h7v7H4v-7z"/></svg>',
+  classement: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 21h8v-2H8v2zM6 10H3V3h3v7zm12 0h-3V3h3v7zM12 15c-2.8 0-5-2.2-5-5V3h10v7c0 2.8-2.2 5-5 5z"/></svg>',
   'mes-apps': '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 3l-6 6h4v6h4v-6h4l-6-6z"/></svg>',
   admin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>',
 };
@@ -122,6 +126,7 @@ function renderHeader() {
 
   const links = [
     { route: 'catalogue', label: 'Catalogue' },
+    { route: 'classement', label: 'Classement' },
     { route: 'mes-apps', label: 'Mes apps' },
     { route: 'dashboard', label: 'Compte' },
   ];
@@ -181,6 +186,7 @@ function viewLogin() {
       </div>
       <div id="form-msg"></div>
       <div id="auth-zone"><p class="form-hint">Chargement...</p></div>
+      <p class="form-switch"><a href="/confidentialite.html">Quelles données sont récupérées, et pourquoi ?</a></p>
     </div>
   `;
 
@@ -362,6 +368,49 @@ async function viewCatalogue() {
 }
 
 /* ==========================================================================
+   CLASSEMENT DES TESTEURS
+   ========================================================================== */
+async function viewClassement() {
+  viewRoot.innerHTML = `
+    <h1 class="page-title">Classement des testeurs</h1>
+    <p class="page-subtitle">Applications testées et jours consécutifs d'activité.</p>
+    <div id="classement-liste"><p class="page-subtitle">Chargement...</p></div>
+  `;
+
+  const { classement } = await Api.get('/api/classement');
+  const container = document.getElementById('classement-liste');
+
+  if (classement.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🏆</div><p>Personne n'a encore validé de test. Soyez le premier !</p></div>`;
+    return;
+  }
+
+  const medailles = ['🥇', '🥈', '🥉'];
+
+  container.innerHTML = `
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Rang</th><th>Testeur</th><th>Applications testées</th><th>Jours consécutifs</th></tr></thead>
+        <tbody>
+          ${classement
+            .map(
+              (u, i) => `
+            <tr>
+              <td data-label="Rang" style="font-size:18px; font-weight:700;">${medailles[i] || `#${i + 1}`}</td>
+              <td data-label="Testeur">${escapeHtml(u.pseudo)}</td>
+              <td data-label="Applications testées">${u.apps_testees}</td>
+              <td data-label="Jours consécutifs">${u.jours_consecutifs > 0 ? `🔥 ${u.jours_consecutifs}` : '—'}</td>
+            </tr>
+          `
+            )
+            .join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/* ==========================================================================
    DÉTAIL APPLICATION
    ========================================================================== */
 async function viewAppDetail(id) {
@@ -397,11 +446,28 @@ async function viewAppDetail(id) {
 
       <div class="section-title">Avis Play Store</div>
       <div id="app-avis"><p class="form-hint">Chargement des avis...</p></div>
+
+      ${
+        estMonApp || dejaRejoint
+          ? `
+      <div class="section-title">Chat avec ${estMonApp ? 'les testeurs' : 'le créateur'}</div>
+      <div id="app-chat-messages" style="display:flex; flex-direction:column; gap:8px; max-height:320px; overflow-y:auto; padding:4px;"></div>
+      <form id="chat-form" style="display:flex; gap:8px; margin-top:10px;">
+        <input type="text" name="texte" placeholder="Écrire un message..." maxlength="1000" style="flex:1; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:10px 14px; color:var(--text-white); font-family:var(--font-sans);" />
+        <button type="submit" class="btn-primary">Envoyer</button>
+      </form>
+      `
+          : ''
+      }
     </div>
   `;
 
   document.getElementById('btn-back').addEventListener('click', () => history.back());
   chargerAvisApp(app.id);
+
+  if (estMonApp || dejaRejoint) {
+    demarrerChat(app.id);
+  }
 
   if (!estMonApp) {
     const joinBtn = document.getElementById('btn-join');
@@ -544,6 +610,76 @@ async function chargerAvisApp(appId) {
 }
 
 /* ==========================================================================
+   CHAT PAR APPLICATION
+   ========================================================================== */
+let chatInterval = null;
+
+function arreterChat() {
+  if (chatInterval) {
+    clearInterval(chatInterval);
+    chatInterval = null;
+  }
+}
+
+async function chargerMessagesChat(appId) {
+  const container = document.getElementById('app-chat-messages');
+  if (!container) {
+    arreterChat();
+    return;
+  }
+  try {
+    const { messages } = await Api.get(`/api/apps/${appId}/messages`);
+    const étaitEnBas = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+    if (messages.length === 0) {
+      container.innerHTML = `<p class="form-hint">Aucun message pour le moment. Lancez la conversation !</p>`;
+      return;
+    }
+
+    container.innerHTML = messages
+      .map(
+        (m) => `
+        <div style="align-self:${m.de_moi ? 'flex-end' : 'flex-start'}; max-width:75%;">
+          <div style="font-size:11px; color:var(--text-muted); margin-bottom:2px; ${m.de_moi ? 'text-align:right;' : ''}">
+            ${escapeHtml(m.pseudo)}${m.du_createur ? ' <span class="badge badge-en-cours" style="padding:1px 6px;">Créateur</span>' : ''}
+          </div>
+          <div style="background:${m.de_moi ? 'var(--primary)' : 'var(--bg-input)'}; color:${m.de_moi ? 'var(--text-dark)' : 'var(--text-white)'}; border:1px solid var(--border-color); border-radius:var(--radius-md); padding:8px 12px; font-size:13px; word-break:break-word;">
+            ${escapeHtml(m.texte)}
+          </div>
+        </div>
+      `
+      )
+      .join('');
+
+    if (étaitEnBas) container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    container.innerHTML = `<p class="form-hint">Chat indisponible pour le moment.</p>`;
+  }
+}
+
+function demarrerChat(appId) {
+  arreterChat();
+  chargerMessagesChat(appId);
+  chatInterval = setInterval(() => chargerMessagesChat(appId), 6000);
+
+  const form = document.getElementById('chat-form');
+  if (!form) return;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = form.texte;
+    const texte = input.value.trim();
+    if (!texte) return;
+    input.value = '';
+    try {
+      await Api.post(`/api/apps/${appId}/messages`, { texte });
+      chargerMessagesChat(appId);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
+/* ==========================================================================
    MES APPLICATIONS
    ========================================================================== */
 async function viewMesApps() {
@@ -568,19 +704,19 @@ async function viewMesApps() {
             <button type="button" class="btn-secondary" id="btn-import-playconsole">Importer depuis Play Console</button>
           </div>
           <p class="form-hint" style="margin-top:6px;">Récupère automatiquement le titre, la description, l'icône, les captures d'écran et la vidéo promo depuis votre fiche Play Console.</p>
+          <div id="service-account-hint"></div>
           <div id="import-preview"></div>
         </div>
+        <input type="hidden" name="nom_application" />
+        <input type="hidden" name="logo_url" />
+        <input type="hidden" name="description" />
         <div class="form-group">
           <label>Nom de l'application</label>
-          <input type="text" name="nom_application" required />
-        </div>
-        <div class="form-group">
-          <label>URL du logo (optionnel)</label>
-          <input type="url" name="logo_url" placeholder="https://..." />
+          <div id="apercu-nom" class="readonly-field">—</div>
         </div>
         <div class="form-group">
           <label>Description</label>
-          <textarea name="description" placeholder="Présentez votre application aux testeurs..."></textarea>
+          <div id="apercu-description" class="readonly-field">—</div>
         </div>
         <div style="display:flex; gap:10px;">
           <button type="submit" class="btn-primary" id="submit-form-btn">Créer le groupe de test</button>
@@ -610,15 +746,24 @@ async function viewMesApps() {
         : '';
   }
 
+  function appliquerApercuFiche(fiche) {
+    submitForm.nom_application.value = fiche.nom_application || '';
+    submitForm.logo_url.value = fiche.logo_url || '';
+    submitForm.description.value = fiche.description || '';
+    document.getElementById('apercu-nom').textContent = fiche.nom_application || '—';
+    document.getElementById('apercu-description').textContent = fiche.description || '—';
+    submitForm.dataset.screenshots = JSON.stringify(fiche.screenshots || []);
+    submitForm.dataset.videoUrl = fiche.video_url || '';
+    renderImportPreview(fiche.screenshots || [], fiche.video_url || '');
+  }
+
   function ouvrirFormulaireCreation() {
     submitForm.reset();
     delete submitForm.dataset.editingId;
-    submitForm.dataset.screenshots = '[]';
-    submitForm.dataset.videoUrl = '';
+    appliquerApercuFiche({});
     submitCardTitle.textContent = 'Soumettre une nouvelle application';
     submitFormBtn.textContent = 'Créer le groupe de test';
     document.getElementById('submit-msg').innerHTML = '';
-    renderImportPreview([], '');
     submitCard.classList.remove('hidden');
     submitCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -626,16 +771,11 @@ async function viewMesApps() {
   function ouvrirFormulaireEdition(app) {
     submitForm.reset();
     submitForm.dataset.editingId = app.id;
-    submitForm.dataset.screenshots = JSON.stringify(app.screenshots || []);
-    submitForm.dataset.videoUrl = app.video_url || '';
     submitForm.package_name.value = app.package_name || '';
-    submitForm.nom_application.value = app.nom_application || '';
-    submitForm.logo_url.value = app.logo_url || '';
-    submitForm.description.value = app.description || '';
+    appliquerApercuFiche(app);
     submitCardTitle.textContent = `Modifier "${app.nom_application}"`;
     submitFormBtn.textContent = 'Enregistrer les modifications';
     document.getElementById('submit-msg').innerHTML = '';
-    renderImportPreview(app.screenshots || [], app.video_url || '');
     submitCard.classList.remove('hidden');
     submitCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -665,12 +805,7 @@ async function viewMesApps() {
     btn.textContent = 'Import en cours...';
     try {
       const fiche = await Api.post('/api/apps/import', { package_name: packageName });
-      submitForm.nom_application.value = fiche.nom_application || '';
-      submitForm.description.value = fiche.description || '';
-      submitForm.logo_url.value = fiche.logo_url || '';
-      submitForm.dataset.screenshots = JSON.stringify(fiche.screenshots || []);
-      submitForm.dataset.videoUrl = fiche.video_url || '';
-      renderImportPreview(fiche.screenshots, fiche.video_url);
+      appliquerApercuFiche(fiche);
       document.getElementById('submit-msg').innerHTML = '';
       toast('Fiche importée depuis Play Console.', 'success');
     } catch (err) {
@@ -722,6 +857,19 @@ async function viewMesApps() {
   });
 
   chargerMesApps(ouvrirFormulaireEdition);
+  afficherEmailCompteService();
+}
+
+async function afficherEmailCompteService() {
+  const hint = document.getElementById('service-account-hint');
+  try {
+    const { email } = await Api.get('/api/apps/service-account');
+    if (email) {
+      hint.innerHTML = `<p class="form-hint" style="margin-top:4px;">Ajoutez <strong>${escapeHtml(email)}</strong> dans Play Console → Utilisateurs et autorisations pour que l'import fonctionne sur cette app.</p>`;
+    }
+  } catch (_) {
+    // Silencieux : indication facultative.
+  }
 }
 
 async function chargerMesApps(onEdit) {

@@ -71,11 +71,20 @@ CREATE TABLE IF NOT EXISTS activity_log (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  texte TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_historique_testeur ON historique_tests(testeur_id);
 CREATE INDEX IF NOT EXISTS idx_historique_app ON historique_tests(application_id);
 CREATE INDEX IF NOT EXISTS idx_applications_dev ON applications(developpeur_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_app ON messages(application_id);
 `);
 
 // Migration idempotente pour les bases déjà créées avant l'ajout de ces

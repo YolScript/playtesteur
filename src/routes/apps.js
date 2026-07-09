@@ -87,6 +87,12 @@ router.get('/:id/avis', requireAuth, async (req, res) => {
   }
 });
 
+// Email du compte de service à ajouter dans Play Console (Utilisateurs et
+// autorisations) pour que l'import automatique de fiche fonctionne.
+router.get('/service-account', requireAuth, (req, res) => {
+  res.json({ email: playReviews.serviceAccountEmail });
+});
+
 // Pré-remplit le formulaire de soumission depuis la fiche Play Console
 // (titre, description, icône) sans créer l'application.
 router.post('/import', requireAuth, async (req, res) => {
@@ -217,6 +223,60 @@ router.post('/:id/valider', requireAuth, async (req, res) => {
     console.error('[apps.valider]', err);
     res.status(500).json({ erreur: "Impossible de vérifier l'avis pour le moment." });
   }
+});
+
+// Accès au chat : le créateur de l'app, ou un testeur ayant rejoint le test
+// (peu importe le statut de son historique).
+function peutAccederAuChat(app, userId) {
+  if (app.developpeur_id === userId) return true;
+  return !!findHistorique.get(userId, app.id);
+}
+
+// Chat de l'application : messages entre le créateur et les testeurs inscrits.
+router.get('/:id/messages', requireAuth, (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+  if (!peutAccederAuChat(app, req.session.userId)) {
+    return res.status(403).json({ erreur: "Vous devez avoir rejoint le test pour accéder au chat." });
+  }
+
+  const messages = db
+    .prepare(
+      `SELECT m.id, m.texte, m.created_at, u.id AS user_id, u.pseudo, u.avatar_url,
+              (u.id = ?) AS de_moi, (u.id = a.developpeur_id) AS du_createur
+       FROM messages m
+       JOIN users u ON u.id = m.user_id
+       JOIN applications a ON a.id = m.application_id
+       WHERE m.application_id = ?
+       ORDER BY m.created_at ASC
+       LIMIT 200`
+    )
+    .all(req.session.userId, app.id);
+
+  res.json({
+    messages: messages.map((m) => ({ ...m, de_moi: !!m.de_moi, du_createur: !!m.du_createur })),
+  });
+});
+
+router.post('/:id/messages', requireAuth, (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+  if (!peutAccederAuChat(app, req.session.userId)) {
+    return res.status(403).json({ erreur: "Vous devez avoir rejoint le test pour accéder au chat." });
+  }
+
+  const texte = (req.body?.texte || '').trim().slice(0, 1000);
+  if (!texte) {
+    return res.status(400).json({ erreur: 'Le message ne peut pas être vide.' });
+  }
+
+  db.prepare('INSERT INTO messages (application_id, user_id, texte) VALUES (?, ?, ?)').run(
+    app.id,
+    req.session.userId,
+    texte
+  );
+
+  res.status(201).json({ ok: true });
 });
 
 module.exports = router;
