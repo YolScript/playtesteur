@@ -5,6 +5,7 @@ const { publicUser, publicApplication } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
 const googleAuth = require('../services/googleAuth');
 const { ajusterScore } = require('../services/sanctions');
+const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
 
@@ -55,8 +56,20 @@ router.get('/users', (req, res) => {
 });
 
 router.get('/apps', (req, res) => {
-  const rows = db.prepare('SELECT * FROM applications ORDER BY created_at DESC').all();
-  res.json({ applications: rows.map(publicApplication) });
+  const rows = db
+    .prepare(
+      `SELECT a.*, u.pseudo AS dev_pseudo, u.email AS dev_email
+       FROM applications a
+       JOIN users u ON u.id = a.developpeur_id
+       ORDER BY a.created_at DESC`
+    )
+    .all();
+  res.json({
+    applications: rows.map((a) => ({
+      ...publicApplication(a),
+      developpeur: { pseudo: a.dev_pseudo, email: a.dev_email },
+    })),
+  });
 });
 
 // Système à 3 avertissements pour tentative de fraude. Au 3e, le compte est
@@ -70,6 +83,7 @@ router.post('/users/:id/warn', async (req, res) => {
   const doitSuspendre = nouveauxWarnings >= 3;
   majFraudWarnings.run(nouveauxWarnings, doitSuspendre ? 1 : user.suspendu, user.id);
   insertFraudLog.run(user.id, raison || 'Non précisée');
+  logActivity(user.id, 'A reçu un avertissement admin', raison || 'Non précisée');
 
   if (doitSuspendre) {
     await ejecterTousLesGroupes(user);
@@ -85,6 +99,7 @@ router.post('/users/:id/exclude', async (req, res) => {
   majSuspendu.run(1, user.id);
   await ejecterTousLesGroupes(user);
   insertFraudLog.run(user.id, req.body?.raison || 'Exclusion manuelle administrateur');
+  logActivity(user.id, 'Exclu par un administrateur', req.body?.raison || 'Non précisée');
 
   res.json({ user: publicUser(findUserById.get(user.id)) });
 });
@@ -107,10 +122,39 @@ router.post('/users/:id/adjust-score', async (req, res) => {
   }
   try {
     const user = await ajusterScore(req.params.id, delta);
+    logActivity(user.id, `Score ajusté par un admin (${delta > 0 ? '+' : ''}${delta})`);
     res.json({ user: publicUser(user) });
   } catch (err) {
     res.status(404).json({ erreur: err.message });
   }
+});
+
+// Console d'activité globale : dernières actions de tous les utilisateurs.
+router.get('/logs', (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT l.id, l.action, l.details, l.created_at, u.id AS user_id, u.pseudo, u.email
+       FROM activity_log l
+       JOIN users u ON u.id = l.user_id
+       ORDER BY l.created_at DESC
+       LIMIT 200`
+    )
+    .all();
+  res.json({ logs: rows });
+});
+
+// Console d'activité d'un utilisateur précis.
+router.get('/users/:id/logs', (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT id, action, details, created_at
+       FROM activity_log
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 100`
+    )
+    .all(req.params.id);
+  res.json({ logs: rows });
 });
 
 // Liste des testeurs ayant rejoint/validé un test pour une application

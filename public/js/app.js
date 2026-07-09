@@ -101,7 +101,7 @@ window.addEventListener('hashchange', router);
    HEADER
    ========================================================================== */
 const NAV_ICONS = {
-  dashboard: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z"/></svg>',
+  dashboard: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z"/></svg>',
   catalogue: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zM4 13h7v7H4v-7z"/></svg>',
   'mes-apps': '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 3l-6 6h4v6h4v-6h4l-6-6z"/></svg>',
   admin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>',
@@ -121,9 +121,9 @@ function renderHeader() {
   }
 
   const links = [
-    { route: 'dashboard', label: 'Accueil' },
     { route: 'catalogue', label: 'Catalogue' },
     { route: 'mes-apps', label: 'Mes apps' },
+    { route: 'dashboard', label: 'Compte' },
   ];
   if (state.user.role === 'administrator') {
     links.push({ route: 'admin', label: 'Admin' });
@@ -153,13 +153,12 @@ function renderHeader() {
   });
 
   actions.innerHTML = `
-    <div class="user-chip" id="user-chip">
+    <div class="user-chip" id="user-chip" title="Cliquer pour se déconnecter">
       ${avatarHtml(state.user, 'user-avatar')}
       <span class="user-pseudo">${escapeHtml(state.user.pseudo)}</span>
     </div>
-    <button class="btn-ghost" id="btn-logout" title="Se déconnecter">Déconnexion</button>
   `;
-  document.getElementById('btn-logout').addEventListener('click', async () => {
+  document.getElementById('user-chip').addEventListener('click', async () => {
     await Api.post('/api/auth/logout');
     state.user = null;
     location.hash = '#/login';
@@ -178,7 +177,7 @@ function viewLogin() {
       <p class="form-hint">Accédez à votre tableau de bord de testeur avec votre compte Google.</p>
       <div class="auth-warning">
         <span class="warning-icon">⚠️</span>
-        <span><strong>Utilisez impérativement le même compte Google que celui associé à votre Google Play Console.</strong> C'est cet email qui sera ajouté aux groupes de test fermé des applications — un autre compte n'aura pas accès aux téléchargements.</span>
+        <span><strong>Utilisez impérativement le même compte Google que celui associé à votre Google Play Console.</strong></span>
       </div>
       <div id="form-msg"></div>
       <div id="auth-zone"><p class="form-hint">Chargement...</p></div>
@@ -291,15 +290,10 @@ async function viewDashboard() {
 
     <div class="section-title">Pseudo Google Play Store</div>
     <div class="profile-card" style="padding:20px;">
-      <div id="form-msg"></div>
-      <form id="pseudo-form" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
-        <div class="form-group" style="flex:1; min-width:220px; margin-bottom:0;">
-          <label>Pseudo affiché sur vos avis Play Store</label>
-          <input type="text" name="pseudo_play_store" value="${escapeHtml(user.pseudo_play_store || '')}" placeholder="Ex : JeanDupont42" />
-        </div>
-        <button type="submit" class="btn-primary">Enregistrer</button>
-      </form>
-      <p class="form-hint" style="margin-top:10px;">Détecté automatiquement depuis votre compte Google à la connexion. Vérifiez qu'il correspond bien au pseudo affiché sur vos avis Play Store, sinon corrigez-le : c'est ce pseudo que le serveur recherche pour valider vos tests quotidiens.</p>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Pseudo affiché sur vos avis Play Store</label>
+        <div style="font-size:15px; font-weight:600; padding:11px 14px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md);">${escapeHtml(user.pseudo_play_store || '—')}</div>
+      </div>
     </div>
 
     <div class="section-title">Aller plus loin</div>
@@ -319,18 +313,6 @@ async function viewDashboard() {
 
   document.getElementById('go-catalogue').addEventListener('click', () => (location.hash = '#/catalogue'));
   document.getElementById('go-mesapps').addEventListener('click', () => (location.hash = '#/mes-apps'));
-
-  document.getElementById('pseudo-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    try {
-      const { user: updated } = await Api.put('/api/profile', { pseudo_play_store: fd.get('pseudo_play_store') });
-      state.user = updated;
-      toast('Pseudo Play Store enregistré.', 'success');
-    } catch (err) {
-      showFormError(err.message);
-    }
-  });
 }
 
 /* ==========================================================================
@@ -363,6 +345,7 @@ async function viewCatalogue() {
           </div>
         </div>
         <p class="app-card-desc">${escapeHtml(app.description || 'Pas de description.')}</p>
+        ${renderMiniGalerie(app.screenshots, app.video_url)}
         <div class="gauge-row"><span class="gauge-label">Testeurs</span><span class="gauge-value">${app.mails_recrutes} / ${app.mails_max}</span></div>
         <div class="gauge-bar-bg"><div class="gauge-bar-fill" style="width:${Math.round((app.mails_recrutes / app.mails_max) * 100)}%"></div></div>
         <div class="app-card-actions">
@@ -510,6 +493,25 @@ function renderGalerieScreenshots(screenshots) {
   `;
 }
 
+// Version compacte pour les cards (catalogue, mes applications) : quelques
+// vignettes de captures + badge vidéo si une vidéo promo est disponible.
+function renderMiniGalerie(screenshots, videoUrl) {
+  if ((!screenshots || screenshots.length === 0) && !videoUrl) return '';
+  const vignettes = (screenshots || [])
+    .slice(0, 4)
+    .map(
+      (url) =>
+        `<img src="${escapeHtml(url)}" alt="" style="height:70px; border-radius:var(--radius-sm); border:1px solid var(--border-color); flex-shrink:0;">`
+    )
+    .join('');
+  return `
+    <div style="display:flex; gap:6px; align-items:center; overflow-x:auto; padding:2px 0;">
+      ${vignettes}
+      ${videoUrl ? '<span class="badge badge-en-cours" style="flex-shrink:0;">🎬 Vidéo</span>' : ''}
+    </div>
+  `;
+}
+
 function etoiles(note) {
   if (!note) return '';
   return '★'.repeat(note) + '☆'.repeat(5 - note);
@@ -650,13 +652,15 @@ async function viewMesApps() {
     submitCard.classList.add('hidden');
   });
 
-  document.getElementById('btn-import-playconsole').addEventListener('click', async () => {
-    const packageName = submitForm.package_name.value.trim();
+  let dernierPackageImporte = '';
+
+  async function lancerImportPlayConsole(packageName) {
     const btn = document.getElementById('btn-import-playconsole');
     if (!packageName) {
       document.getElementById('submit-msg').innerHTML = `<div class="form-error">Renseignez d'abord le nom du package.</div>`;
       return;
     }
+    dernierPackageImporte = packageName;
     btn.disabled = true;
     btn.textContent = 'Import en cours...';
     try {
@@ -674,6 +678,19 @@ async function viewMesApps() {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Importer depuis Play Console';
+    }
+  }
+
+  document.getElementById('btn-import-playconsole').addEventListener('click', () => {
+    lancerImportPlayConsole(submitForm.package_name.value.trim());
+  });
+
+  // Import automatique dès que l'utilisateur quitte le champ package (sans
+  // avoir à cliquer sur le bouton), tant que la valeur a changé.
+  submitForm.package_name.addEventListener('blur', () => {
+    const val = submitForm.package_name.value.trim();
+    if (val && val !== dernierPackageImporte) {
+      lancerImportPlayConsole(val);
     }
   });
 
@@ -727,6 +744,7 @@ async function chargerMesApps(onEdit) {
             ${BADGE_APP[app.statut] || ''}
           </div>
         </div>
+        ${renderMiniGalerie(app.screenshots, app.video_url)}
         <div class="gauge-row"><span class="gauge-label">Testeurs recrutés</span><span class="gauge-value">${app.mails_recrutes} / ${app.mails_max}</span></div>
         <div class="gauge-bar-bg"><div class="gauge-bar-fill" style="width:${Math.round((app.mails_recrutes / app.mails_max) * 100)}%"></div></div>
         <div class="app-card-actions">
@@ -770,7 +788,7 @@ async function viewAdmin() {
     <div class="section-title">Utilisateurs</div>
     <div class="table-wrapper">
       <table>
-        <thead><tr><th>Pseudo</th><th>Email</th><th>Statut</th><th>Score</th><th>Mails</th><th>Avertissements</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Pseudo</th><th>Email</th><th>Statut</th><th>Score</th><th>Mails</th><th>Avertissements</th><th>Activité</th><th>Actions</th></tr></thead>
         <tbody id="users-tbody"></tbody>
       </table>
     </div>
@@ -778,24 +796,32 @@ async function viewAdmin() {
     <div class="section-title">Applications</div>
     <div class="table-wrapper">
       <table>
-        <thead><tr><th>Nom</th><th>Statut</th><th>Testeurs</th><th>Créée le</th></tr></thead>
+        <thead><tr><th>Nom</th><th>Créateur</th><th>Statut</th><th>Testeurs</th><th>Créée le</th></tr></thead>
         <tbody id="apps-tbody"></tbody>
       </table>
     </div>
+
+    <div class="section-title">Console d'activité</div>
+    <div class="profile-card" style="padding:16px;">
+      <div id="activity-console"><p class="form-hint">Chargement...</p></div>
+    </div>
   `;
+
+  chargerConsoleActivite();
 
   const usersTbody = document.getElementById('users-tbody');
   usersTbody.innerHTML = users
     .map(
       (u) => `
-      <tr>
-        <td data-label="Pseudo">${escapeHtml(u.pseudo)}</td>
-        <td data-label="Email">${escapeHtml(u.email)}</td>
-        <td data-label="Statut">${u.suspendu ? '<span class="badge badge-suspendu">Suspendu</span>' : BADGE_PROFIL[u.statut_profil] || ''}</td>
-        <td data-label="Score">${u.score_global}/100</td>
-        <td data-label="Mails">${u.mails_debloques}/${u.mails_max}</td>
-        <td data-label="Avertissements">${u.fraud_warnings}/3</td>
-        <td data-label="Actions">
+      <tr class="admin-user-row" id="user-row-${u.id}">
+        <td data-label="Pseudo" class="row-summary">${escapeHtml(u.pseudo)}<span class="row-toggle-chevron">▾</span></td>
+        <td data-label="Email" class="row-detail">${escapeHtml(u.email)}</td>
+        <td data-label="Statut" class="row-summary">${u.suspendu ? '<span class="badge badge-suspendu">Suspendu</span>' : BADGE_PROFIL[u.statut_profil] || ''}</td>
+        <td data-label="Score" class="row-summary">${u.score_global}/100</td>
+        <td data-label="Mails" class="row-detail">${u.mails_debloques}/${u.mails_max}</td>
+        <td data-label="Avertissements" class="row-detail">${u.fraud_warnings}/3</td>
+        <td data-label="Activité" class="row-detail"><button class="btn-ghost" data-toggle-activite="${u.id}">Voir activité</button></td>
+        <td data-label="Actions" class="row-detail">
           <div class="admin-actions">
             <div class="action-group">
               <span class="action-group-label">Score</span>
@@ -820,6 +846,14 @@ async function viewAdmin() {
     `
     )
     .join('');
+
+  // Sur mobile, chaque ligne est une card repliée par défaut (résumé
+  // Pseudo/Statut/Score) : un clic sur le résumé déplie le détail/actions.
+  usersTbody.querySelectorAll('.admin-user-row').forEach((row) => {
+    row.querySelectorAll('.row-summary').forEach((cell) => {
+      cell.addEventListener('click', () => row.classList.toggle('expanded'));
+    });
+  });
 
   usersTbody.querySelectorAll('[data-adjust]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -874,11 +908,39 @@ async function viewAdmin() {
     });
   });
 
+  usersTbody.querySelectorAll('[data-toggle-activite]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const userId = btn.dataset.toggleActivite;
+      const existing = document.getElementById(`user-activite-${userId}`);
+      if (existing) {
+        existing.remove();
+        btn.textContent = 'Voir activité';
+        return;
+      }
+      document.querySelectorAll('[id^="user-activite-"]').forEach((el) => el.remove());
+      usersTbody.querySelectorAll('[data-toggle-activite]').forEach((b) => (b.textContent = 'Voir activité'));
+
+      try {
+        const { logs } = await Api.get(`/api/admin/users/${userId}/logs`);
+        const row = document.getElementById(`user-row-${userId}`);
+        row.insertAdjacentHTML(
+          'afterend',
+          `<tr id="user-activite-${userId}"><td colspan="8" style="background:var(--bg-input);">${renderLogsList(logs)}</td></tr>`
+        );
+        btn.textContent = 'Masquer activité';
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  });
+
   document.getElementById('apps-tbody').innerHTML = applications
     .map(
       (a) => `
       <tr id="app-row-${a.id}">
         <td data-label="Nom">${escapeHtml(a.nom_application)}</td>
+        <td data-label="Créateur">${escapeHtml(a.developpeur?.pseudo || '—')}<br><span class="form-hint">${escapeHtml(a.developpeur?.email || '')}</span></td>
         <td data-label="Statut">${BADGE_APP[a.statut] || ''}</td>
         <td data-label="Testeurs">${a.mails_recrutes}/${a.mails_max} <button class="btn-ghost" data-toggle-testeurs="${a.id}">Voir testeurs</button></td>
         <td data-label="Créée le">${escapeHtml(a.created_at)}</td>
@@ -918,7 +980,7 @@ async function viewAdmin() {
           .getElementById(`app-row-${appId}`)
           .insertAdjacentHTML(
             'afterend',
-            `<tr id="app-testeurs-${appId}"><td colspan="4" style="background:var(--bg-input);">${contenu}</td></tr>`
+            `<tr id="app-testeurs-${appId}"><td colspan="5" style="background:var(--bg-input);">${contenu}</td></tr>`
           );
         btn.textContent = 'Masquer testeurs';
       } catch (err) {
@@ -926,6 +988,47 @@ async function viewAdmin() {
       }
     });
   });
+}
+
+function tempsRelatif(iso) {
+  if (!iso) return '';
+  const diffMs = Date.now() - Date.parse(iso.replace(' ', 'T') + 'Z');
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `il y a ${h} h`;
+  return `il y a ${Math.floor(h / 24)} j`;
+}
+
+function renderLogsList(logs, avecUtilisateur) {
+  if (!logs || logs.length === 0) {
+    return '<p class="form-hint">Aucune activité enregistrée.</p>';
+  }
+  return `
+    <div style="display:flex; flex-direction:column; gap:2px; max-height:360px; overflow-y:auto;">
+      ${logs
+        .map(
+          (l) => `
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:8px 0; border-bottom:1px solid var(--border-color); font-size:13px;">
+          <span>${avecUtilisateur ? `<strong>${escapeHtml(l.pseudo)}</strong> — ` : ''}${escapeHtml(l.action)}${l.details ? ` <span class="form-hint">(${escapeHtml(l.details)})</span>` : ''}</span>
+          <span class="form-hint" style="white-space:nowrap;">${tempsRelatif(l.created_at)}</span>
+        </div>
+      `
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+async function chargerConsoleActivite() {
+  const container = document.getElementById('activity-console');
+  try {
+    const { logs } = await Api.get('/api/admin/logs');
+    container.innerHTML = renderLogsList(logs, true);
+  } catch (err) {
+    container.innerHTML = `<p class="form-hint">Impossible de charger la console d'activité.</p>`;
+  }
 }
 
 /* ==========================================================================

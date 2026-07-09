@@ -4,7 +4,8 @@ const { requireAuth } = require('../middleware/auth');
 const { publicApplication, publicUser } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
 const playReviews = require('../services/playReviews');
-const { applyDailyTestGain } = require('../services/scoring');
+const { tenterValiderTest } = require('../services/validation');
+const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
 
@@ -14,32 +15,11 @@ const insertApp = db.prepare(`
 `);
 const findAppById = db.prepare('SELECT * FROM applications WHERE id = ?');
 const findUserById = db.prepare('SELECT * FROM users WHERE id = ?');
-const countDistinctCompletedTests = db.prepare(
-  `SELECT COUNT(*) AS n FROM historique_tests WHERE testeur_id = ? AND statut = 'Complété'`
-);
 const findHistorique = db.prepare(
   'SELECT * FROM historique_tests WHERE testeur_id = ? AND application_id = ?'
 );
 const insertHistorique = db.prepare(
   `INSERT INTO historique_tests (testeur_id, application_id, statut) VALUES (?, ?, 'En_Cours')`
-);
-const completerHistorique = db.prepare(
-  `UPDATE historique_tests SET statut = 'Complété', date_action = datetime('now') WHERE id = ?`
-);
-const incrementerMailsApp = db.prepare(
-  'UPDATE applications SET mails_recrutes = mails_recrutes + 1 WHERE id = ?'
-);
-const marquerAppComplete = db.prepare(
-  `UPDATE applications SET statut = 'Complété' WHERE id = ? AND mails_recrutes >= 12`
-);
-const validerProfil = db.prepare(
-  `UPDATE users SET statut_profil = 'Validé', mails_debloques = MAX(mails_debloques, 1) WHERE id = ?`
-);
-const appliquerGainQuotidien = db.prepare(
-  'UPDATE users SET score_global = ?, mails_debloques = ?, derniere_date_test = datetime(\'now\') WHERE id = ?'
-);
-const marquerDateTestSansGain = db.prepare(
-  "UPDATE users SET derniere_date_test = datetime('now') WHERE id = ?"
 );
 
 // Catalogue public : toutes les apps en recrutement, hors mes propres apps et
@@ -142,6 +122,7 @@ router.post('/', requireAuth, async (req, res) => {
     db.prepare('UPDATE applications SET google_group_email = ? WHERE id = ?').run(groupEmail, appId);
 
     const app = findAppById.get(appId);
+    logActivity(req.session.userId, 'A soumis une application', nom_application.trim());
     res.status(201).json({ application: publicApplication(app) });
   } catch (err) {
     console.error('[apps.create]', err);
@@ -175,6 +156,7 @@ router.put('/:id', requireAuth, (req, res) => {
     app.id
   );
 
+  logActivity(req.session.userId, 'A modifié une application', nom_application.trim());
   res.json({ application: publicApplication(findAppById.get(app.id)) });
 });
 
@@ -199,6 +181,7 @@ router.post('/:id/join', requireAuth, async (req, res) => {
       await googleGroups.ajouterMembre(app.google_group_email, user.email);
     }
     insertHistorique.run(req.session.userId, app.id);
+    logActivity(req.session.userId, 'A rejoint un test', app.nom_application);
     res.status(201).json({ ok: true, message: 'Accès accordé. Installez l’application puis laissez un avis pour valider votre test.' });
   } catch (err) {
     console.error('[apps.join]', err);
@@ -218,41 +201,18 @@ router.post('/:id/valider', requireAuth, async (req, res) => {
   }
 
   const user = findUserById.get(req.session.userId);
-  if (!user.pseudo_play_store) {
-    return res.status(400).json({ erreur: "Renseignez d'abord votre pseudo Play Store dans votre profil." });
-  }
 
   try {
-    const reviewId = await playReviews.trouverAvisDuTesteur(app.package_name, user.pseudo_play_store);
-    if (!reviewId) {
+    const result = await tenterValiderTest(historique, app, user);
+    if (!result.valide) {
+      if (result.raison === 'pseudo_manquant') {
+        return res.status(400).json({ erreur: "Renseignez d'abord votre pseudo Play Store dans votre profil." });
+      }
       return res.status(404).json({
         erreur: "Aucun avis correspondant à votre pseudo Play Store n'a été détecté pour le moment. Réessayez après publication de l'avis.",
       });
     }
-
-    completerHistorique.run(historique.id);
-    incrementerMailsApp.run(app.id);
-    marquerAppComplete.run(app.id);
-
-    const nbTestsCompletes = countDistinctCompletedTests.get(req.session.userId).n;
-
-    let userMisAJour;
-    if (user.statut_profil !== 'Validé') {
-      if (nbTestsCompletes >= 10) {
-        // Ticket d'entrée franchi : profil validé + 1er mail débloqué.
-        validerProfil.run(req.session.userId);
-        marquerDateTestSansGain.run(req.session.userId);
-      } else {
-        // Encore dans les 10 tests obligatoires : pas de gain de score/mail.
-        marquerDateTestSansGain.run(req.session.userId);
-      }
-    } else {
-      const gain = applyDailyTestGain(user, new Date().toISOString());
-      appliquerGainQuotidien.run(gain.score_global, gain.mails_debloques, req.session.userId);
-    }
-    userMisAJour = findUserById.get(req.session.userId);
-
-    res.json({ ok: true, reviewId, user: publicUser(userMisAJour) });
+    res.json({ ok: true, reviewId: result.reviewId, user: publicUser(result.user) });
   } catch (err) {
     console.error('[apps.valider]', err);
     res.status(500).json({ erreur: "Impossible de vérifier l'avis pour le moment." });

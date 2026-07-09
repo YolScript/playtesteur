@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db/init');
 const { publicUser } = require('../services/serialize');
 const googleAuth = require('../services/googleAuth');
+const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
 
@@ -12,17 +13,19 @@ const insertUser = db.prepare(`
   INSERT INTO users (pseudo, email, google_id, avatar_url, pseudo_play_store)
   VALUES (?, ?, ?, ?, ?)
 `);
-const majProfilGoogle = db.prepare('UPDATE users SET google_id = ?, avatar_url = ? WHERE id = ?');
+const majProfilGoogle = db.prepare(
+  'UPDATE users SET google_id = ?, avatar_url = ?, pseudo = ?, pseudo_play_store = ? WHERE id = ?'
+);
 
 // Crée le compte au premier login Google, ou relie google_id à un compte
 // existant retrouvé par email (cas d'un compte créé avant liaison Google).
-// Le pseudo Play Store est pré-rempli avec le nom du compte Google : c'est
-// souvent le même que celui affiché sur les avis Play Store, l'utilisateur
-// peut le corriger ensuite si ce n'est pas le cas.
+// Le pseudo et le pseudo Play Store sont resynchronisés avec le nom du compte
+// Google à CHAQUE connexion (non modifiables manuellement) : c'est ce pseudo
+// que le serveur recherche pour valider les tests quotidiens.
 function connecterOuCreer(profile) {
   const existant = findByGoogleId.get(profile.googleId) || findByEmail.get(profile.email);
   if (existant) {
-    majProfilGoogle.run(profile.googleId, profile.avatarUrl, existant.id);
+    majProfilGoogle.run(profile.googleId, profile.avatarUrl, profile.pseudo, profile.pseudo, existant.id);
     return findById.get(existant.id);
   }
   const info = insertUser.run(profile.pseudo, profile.email, profile.googleId, profile.avatarUrl, profile.pseudo);
@@ -32,6 +35,7 @@ function connecterOuCreer(profile) {
 function ouvrirSession(req, user) {
   req.session.userId = user.id;
   req.session.role = user.role;
+  logActivity(user.id, 'Connexion');
 }
 
 router.get('/config', (req, res) => {
