@@ -1321,6 +1321,13 @@ function viewEditeur() {
                   </label>
                   <label class="editor-mini-label">Intensité<input type="range" id="editor-overlay-strength" min="10" max="100" value="50"></label>
                 </div>
+                <div class="editor-row">
+                  <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" id="editor-bg-chromakey-toggle"><span class="editor-toggle-switch"></span><span>Clé chromatique (fond vert)</span></label>
+                  <input type="color" id="editor-bg-chromakey-color" value="#00ff00" title="Couleur à retirer">
+                </div>
+                <div class="editor-row">
+                  <label class="editor-mini-label">Tolérance<input type="range" id="editor-bg-chromakey-tolerance" min="5" max="80" value="35"></label>
+                </div>
               </div>
             </details>
             <div class="editor-section">

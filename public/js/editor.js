@@ -22,6 +22,7 @@ const EditorState = {
   bgGradient: { color1: '#0f2027', color2: '#2c5364', angle: 135 },
   bgAdjust: { brightness: 100, blur: 0 }, // brightness: 40-160%, blur: 0-15px
   overlay: { type: 'none', strength: 0.5 }, // type: 'none' | 'grain' | 'vignette'
+  bgChromaKey: { active: false, color: '#00ff00', tolerance: 0.35 },
   audioEl: null,
   audioGainNode: null,
   audioVolume: 0.8,
@@ -468,6 +469,15 @@ function maskShapePath(ctx, shape, x, y, w, h, r) {
 // Fond : texture vidéo/image "cover" appliquée directement sur le plan
 // de fond (pas besoin de composition hors-écran, three.js gère la
 // texture vidéo nativement).
+// Dimensions naturelles d'un média, qu'il s'agisse d'une <img> ou d'une
+// <video> (calques "photo" acceptant maintenant les deux).
+function mediaW(media) {
+  return media.videoWidth || media.naturalWidth || media.width || 0;
+}
+function mediaH(media) {
+  return media.videoHeight || media.naturalHeight || media.height || 0;
+}
+
 // Dessine un média (vidéo/image) en mode "cover" dans un canvas 2D.
 function drawCoverOnCanvas(ctx, media, dw, dh) {
   const mw = media.videoWidth || media.naturalWidth || media.width || 0;
@@ -507,17 +517,20 @@ function mettreAJourFond(segmentActif) {
   const fond = resoudreFondEffectif(segmentActif);
   const brightness = Number(EditorState.bgAdjust.brightness) || 100;
   const blur = Number(EditorState.bgAdjust.blur) || 0;
-  const needsAdjustCanvas = (fond.type === 'video' || fond.type === 'image') && (brightness !== 100 || blur > 0);
+  const chromaKey = EditorState.bgChromaKey;
+  const needsAdjustCanvas =
+    (fond.type === 'video' || fond.type === 'image') && (brightness !== 100 || blur > 0 || chromaKey.active);
 
   if (fond.type === 'video' && fond.videoEl && fond.videoEl.readyState >= 2) {
     if (needsAdjustCanvas) {
-      appliquerFondAjuste(ts, fond.videoEl, brightness, blur);
+      appliquerFondAjuste(ts, fond.videoEl, brightness, blur, chromaKey);
     } else {
       if (ts.bgSourceEl !== fond.videoEl || ts.bgSourceKind !== 'video') {
         ts.bgTexture = new THREE.VideoTexture(fond.videoEl);
         ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
         ts.bgMesh.material.map = ts.bgTexture;
         ts.bgMesh.material.color.set(0xffffff);
+        ts.bgMesh.material.transparent = false;
         ts.bgMesh.material.needsUpdate = true;
         ts.bgSourceEl = fond.videoEl;
         ts.bgSourceKind = 'video';
@@ -526,7 +539,7 @@ function mettreAJourFond(segmentActif) {
     }
   } else if (fond.type === 'image' && fond.imageEl) {
     if (needsAdjustCanvas) {
-      appliquerFondAjuste(ts, fond.imageEl, brightness, blur);
+      appliquerFondAjuste(ts, fond.imageEl, brightness, blur, chromaKey);
     } else {
       if (ts.bgSourceEl !== fond.imageEl || ts.bgSourceKind !== 'image') {
         ts.bgTexture = new THREE.Texture(fond.imageEl);
@@ -534,6 +547,7 @@ function mettreAJourFond(segmentActif) {
         ts.bgTexture.needsUpdate = true;
         ts.bgMesh.material.map = ts.bgTexture;
         ts.bgMesh.material.color.set(0xffffff);
+        ts.bgMesh.material.transparent = false;
         ts.bgMesh.material.needsUpdate = true;
         ts.bgSourceEl = fond.imageEl;
         ts.bgSourceKind = 'image';
@@ -546,6 +560,7 @@ function mettreAJourFond(segmentActif) {
       ts.bgTexture = creerTextureDegrade(THREE, EditorState.bgGradient);
       ts.bgMesh.material.map = ts.bgTexture;
       ts.bgMesh.material.color.set(0xffffff);
+      ts.bgMesh.material.transparent = false;
       ts.bgMesh.material.needsUpdate = true;
       ts.bgSourceEl = key;
       ts.bgSourceKind = 'gradient';
@@ -553,12 +568,14 @@ function mettreAJourFond(segmentActif) {
   } else if (fond.type === 'color') {
     ts.bgMesh.material.map = null;
     ts.bgMesh.material.color.set(fond.color || '#12151c');
+    ts.bgMesh.material.transparent = false;
     ts.bgMesh.material.needsUpdate = true;
     ts.bgSourceEl = null;
     ts.bgSourceKind = 'color';
   } else {
     ts.bgMesh.material.map = null;
     ts.bgMesh.material.color.set(0x12151c);
+    ts.bgMesh.material.transparent = false;
     ts.bgMesh.material.needsUpdate = true;
     ts.bgSourceEl = null;
     ts.bgSourceKind = null;
@@ -570,7 +587,7 @@ function mettreAJourFond(segmentActif) {
 // Compose le fond (vidéo/image) sur un canvas 2D hors-écran avec un
 // filtre CSS (luminosité/flou), redessiné chaque frame — nécessaire pour
 // une vidéo, acceptable en coût vu la résolution réduite du canvas.
-function appliquerFondAjuste(ts, media, brightness, blur) {
+function appliquerFondAjuste(ts, media, brightness, blur, chromaKey) {
   if (!ts.bgAdjustCanvas) {
     ts.bgAdjustCanvas = document.createElement('canvas');
     ts.bgAdjustCanvas.width = 960;
@@ -582,17 +599,66 @@ function appliquerFondAjuste(ts, media, brightness, blur) {
   ctx.clearRect(0, 0, ts.bgAdjustCanvas.width, ts.bgAdjustCanvas.height);
   drawCoverOnCanvas(ctx, media, ts.bgAdjustCanvas.width, ts.bgAdjustCanvas.height);
   ctx.filter = 'none';
+  if (chromaKey && chromaKey.active) {
+    appliquerChromaKey(
+      ctx,
+      0,
+      0,
+      ts.bgAdjustCanvas.width,
+      ts.bgAdjustCanvas.height,
+      chromaKey.color || '#00ff00',
+      chromaKey.tolerance ?? 0.35
+    );
+  }
 
   if (ts.bgSourceKind !== 'adjust-canvas') {
     ts.bgTexture = new ts.THREE.CanvasTexture(ts.bgAdjustCanvas);
     ts.bgTexture.colorSpace = ts.THREE.SRGBColorSpace;
     ts.bgMesh.material.map = ts.bgTexture;
     ts.bgMesh.material.color.set(0xffffff);
-    ts.bgMesh.material.needsUpdate = true;
     ts.bgSourceEl = media;
     ts.bgSourceKind = 'adjust-canvas';
   }
+  ts.bgMesh.material.transparent = !!(chromaKey && chromaKey.active);
+  ts.bgMesh.material.needsUpdate = true;
   ts.bgTexture.needsUpdate = true;
+}
+
+// Clé chromatique (fond vert/bleu) : rend transparents les pixels proches
+// de la couleur cible dans la zone [x,y,w,h] du canvas, avec une bande de
+// transition douce sur les 30% de tolérance les plus élevés pour adoucir
+// le contour plutôt qu'un détourage à l'emporte-pièce.
+function appliquerChromaKey(ctx, x, y, w, h, color, tolerance) {
+  if (w <= 0 || h <= 0) return;
+  const ix = Math.max(0, Math.round(x));
+  const iy = Math.max(0, Math.round(y));
+  const iw = Math.max(1, Math.round(w));
+  const ih = Math.max(1, Math.round(h));
+  let imgData;
+  try {
+    imgData = ctx.getImageData(ix, iy, iw, ih);
+  } catch (_) {
+    return; // média cross-origin non lisible
+  }
+  const data = imgData.data;
+  const kr = parseInt(color.slice(1, 3), 16);
+  const kg = parseInt(color.slice(3, 5), 16);
+  const kb = parseInt(color.slice(5, 7), 16);
+  const maxDist = Math.sqrt(3 * 255 * 255);
+  const tol = Math.max(0.02, Number(tolerance) || 0.35) * maxDist;
+  const edge = tol * 0.3;
+  for (let i = 0; i < data.length; i += 4) {
+    const dr = data[i] - kr;
+    const dg = data[i + 1] - kg;
+    const db = data[i + 2] - kb;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    if (dist < tol - edge) {
+      data[i + 3] = 0;
+    } else if (dist < tol) {
+      data[i + 3] = Math.round(data[i + 3] * ((dist - (tol - edge)) / edge));
+    }
+  }
+  ctx.putImageData(imgData, ix, iy);
 }
 
 function creerTextureDegrade(THREE, grad) {
@@ -837,7 +903,7 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
   const layer = getOrCreateCanvasLayer(layerName);
 
   const w = Math.round(width * p.scale);
-  const h = Math.round(w * (p.img.naturalHeight / p.img.naturalWidth || 1));
+  const h = Math.round(w * (mediaH(p.img) / mediaW(p.img) || 1));
   const margeBase = Math.ceil(Math.min(w, h) * 0.14) + 16;
   const spectrumSizeMul = Number(p.spectrumSize) || 1;
   const margeSpectre = p.spectrumActive ? Math.ceil(Math.min(w, h) * 0.32 * spectrumSizeMul) : 0;
@@ -877,8 +943,8 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
   const cropY = Math.min(0.9, Math.max(0, Number(p.cropY) || 0));
   const cropW = Math.min(1 - cropX, Math.max(0.1, p.cropW != null ? Number(p.cropW) : 1));
   const cropH = Math.min(1 - cropY, Math.max(0.1, p.cropH != null ? Number(p.cropH) : 1));
-  const iw = p.img.naturalWidth;
-  const ih = p.img.naturalHeight;
+  const iw = mediaW(p.img);
+  const ih = mediaH(p.img);
 
   ctx.save();
   maskShapePath(ctx, shape, ox, oy, w, h, radius);
@@ -886,6 +952,9 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
   ctx.filter = cssFiltreImage(p);
   ctx.drawImage(p.img, cropX * iw, cropY * ih, cropW * iw, cropH * ih, ox, oy, w, h);
   ctx.filter = 'none';
+  if (p.chromaKeyActive) {
+    appliquerChromaKey(ctx, ox, oy, w, h, p.chromaKeyColor || '#00ff00', p.chromaKeyTolerance ?? 0.35);
+  }
   if (p.vignette) {
     const grad = ctx.createRadialGradient(
       ox + w / 2, oy + h / 2, Math.min(w, h) * 0.25,
@@ -1411,6 +1480,25 @@ async function chargerImage(file) {
   return img;
 }
 
+// Comme chargerImage, mais accepte aussi une vidéo (calques photo) : les
+// deux s'utilisent ensuite de façon interchangeable avec ctx.drawImage et
+// mediaW()/mediaH().
+async function chargerMediaPhoto(file) {
+  if (file.type.startsWith('video/')) {
+    const video = document.createElement('video');
+    video.src = URL.createObjectURL(file);
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.crossOrigin = 'anonymous';
+    try {
+      await video.play();
+    } catch (_) {}
+    return video;
+  }
+  return chargerImage(file);
+}
+
 function bindSegmentControls(seg, prefix, segType) {
   const toggle = document.getElementById(`editor-${prefix}-toggle`);
   const panel = document.getElementById(`editor-${prefix}-panel`);
@@ -1515,6 +1603,21 @@ function bindEditorInputs() {
   const overlayStrength = document.getElementById('editor-overlay-strength');
   if (overlayStrength) {
     overlayStrength.addEventListener('input', (e) => (EditorState.overlay.strength = Number(e.target.value) / 100));
+  }
+  const bgChromaKeyToggle = document.getElementById('editor-bg-chromakey-toggle');
+  if (bgChromaKeyToggle) {
+    bgChromaKeyToggle.addEventListener('change', (e) => (EditorState.bgChromaKey.active = e.target.checked));
+  }
+  const bgChromaKeyColor = document.getElementById('editor-bg-chromakey-color');
+  if (bgChromaKeyColor) {
+    bgChromaKeyColor.addEventListener('input', (e) => (EditorState.bgChromaKey.color = e.target.value));
+  }
+  const bgChromaKeyTolerance = document.getElementById('editor-bg-chromakey-tolerance');
+  if (bgChromaKeyTolerance) {
+    bgChromaKeyTolerance.addEventListener(
+      'input',
+      (e) => (EditorState.bgChromaKey.tolerance = Number(e.target.value) / 100)
+    );
   }
 
   audioInput.addEventListener('change', (e) => {
@@ -1651,7 +1754,7 @@ function markupFilePickerPhoto(inputId, filenameId) {
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
         <span>Choisir un fichier</span>
       </label>
-      <input type="file" id="${inputId}" accept="image/png" class="editor-file-input">
+      <input type="file" id="${inputId}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input">
       <span class="editor-file-name" id="${filenameId}">Aucun fichier choisi</span>
     </div>
   `;
@@ -1708,6 +1811,20 @@ function renderPhotoLayerHtml(p, index) {
             <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-vignette-for="${p.id}" ${p.vignette ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Vignette</span></label>
             <label class="editor-mini-label">Intensité<input type="range" data-vignettestrength-for="${p.id}" min="10" max="100" value="${Math.round((p.vignetteStrength ?? 0.5) * 100)}"></label>
           </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Clé chromatique (fond vert)</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-chromakey-for="${p.id}" ${p.chromaKeyActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Activer</span></label>
+            <input type="color" data-chromakeycolor-for="${p.id}" value="${p.chromaKeyColor || '#00ff00'}" title="Couleur à retirer">
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Tolérance<input type="range" data-chromakeytolerance-for="${p.id}" min="5" max="80" value="${Math.round((p.chromaKeyTolerance ?? 0.35) * 100)}"></label>
+          </div>
+          <span class="form-hint">Rend transparente la couleur choisie (fond vert/bleu) sur cette photo ou vidéo.</span>
         </div>
       </details>
 
@@ -1801,7 +1918,7 @@ function bindPhotoLayerEvents() {
         const file = e.target.files[0];
         if (!file) return;
         afficherNomFichier(`editor-photo-filename-${p.id}`, file);
-        p.img = await chargerImage(file);
+        p.img = await chargerMediaPhoto(file);
         jump();
       });
     }
@@ -1924,6 +2041,15 @@ function bindPhotoLayerEvents() {
     const vignetteStrengthInput = document.querySelector(`[data-vignettestrength-for="${p.id}"]`);
     if (vignetteStrengthInput) {
       vignetteStrengthInput.addEventListener('input', (e) => (p.vignetteStrength = Number(e.target.value) / 100));
+    }
+
+    const chromaKeyInput = document.querySelector(`[data-chromakey-for="${p.id}"]`);
+    if (chromaKeyInput) chromaKeyInput.addEventListener('change', (e) => (p.chromaKeyActive = e.target.checked));
+    const chromaKeyColorInput = document.querySelector(`[data-chromakeycolor-for="${p.id}"]`);
+    if (chromaKeyColorInput) chromaKeyColorInput.addEventListener('input', (e) => (p.chromaKeyColor = e.target.value));
+    const chromaKeyToleranceInput = document.querySelector(`[data-chromakeytolerance-for="${p.id}"]`);
+    if (chromaKeyToleranceInput) {
+      chromaKeyToleranceInput.addEventListener('input', (e) => (p.chromaKeyTolerance = Number(e.target.value) / 100));
     }
 
     const cropXInput = document.querySelector(`[data-cropx-for="${p.id}"]`);
@@ -2068,6 +2194,9 @@ function ajouterCalquePhoto() {
     bgOverrideVideoEl: null,
     bgOverrideImageEl: null,
     bgOverrideColor: '#12151c',
+    chromaKeyActive: false,
+    chromaKeyColor: '#00ff00',
+    chromaKeyTolerance: 0.35,
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
