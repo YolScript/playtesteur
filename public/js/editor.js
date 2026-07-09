@@ -25,8 +25,9 @@ const EditorState = {
 
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
 
-  dragging: null, // null | 'text' | { type:'photo', id }
+  dragging: null, // null | 'text' | { type:'photo', id } | { type:'caption', id }
   _photoBoxes: {}, // id -> { x, y, w, h }
+  _captionBoxes: {}, // id -> { x, y, w, h }
   _textBox: null,
   audioCtx: null,
   audioSourceCache: null,
@@ -207,32 +208,117 @@ function dessinerFond(ctx, width, height) {
   }
 }
 
-function dessinerPhoto(ctx, width, height, p) {
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// Échantillonne les pixels déjà dessinés sous une zone pour choisir une
+// couleur de texte (et une ombre) toujours lisible, que le fond à cet
+// endroit soit clair ou sombre.
+function couleurLisible(ctx, x, y, w, h) {
+  const iw = ctx.canvas.width;
+  const ih = ctx.canvas.height;
+  const sx = Math.max(0, Math.min(Math.round(x), iw - 1));
+  const sy = Math.max(0, Math.min(Math.round(y), ih - 1));
+  const sw = Math.max(1, Math.min(Math.round(w), iw - sx));
+  const sh = Math.max(1, Math.min(Math.round(h), ih - sy));
+  try {
+    const { data } = ctx.getImageData(sx, sy, sw, sh);
+    let total = 0;
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4 * 23) {
+      total += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      count++;
+    }
+    const luminance = count ? total / count : 128;
+    return luminance > 150
+      ? { texte: '#14171d', ombre: 'rgba(255,255,255,0.6)' }
+      : { texte: '#ffffff', ombre: 'rgba(0,0,0,0.65)' };
+  } catch (_) {
+    return { texte: '#ffffff', ombre: 'rgba(0,0,0,0.65)' };
+  }
+}
+
+// Photo "carte flottante" : coins arrondis, légère inclinaison et
+// oscillation verticale douce et continue (aperçu comme export).
+function dessinerPhotoImage(ctx, width, height, p, tGlobal) {
   if (!p.img) return null;
-  const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Roboto', sans-serif";
   const w = width * p.scale;
   const h = w * (p.img.naturalHeight / p.img.naturalWidth || 1);
-  const x = p.x * width - w / 2;
-  const y = p.y * height - h / 2;
-  ctx.drawImage(p.img, x, y, w, h);
-  let boiteHauteur = h;
+  const baseX = p.x * width;
+  const baseY = p.y * height;
 
-  if (p.texte) {
-    const size = Math.max(14, Math.round(width * 0.022));
-    ctx.font = `600 ${size}px ${famille}`;
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.shadowColor = 'rgba(0,0,0,0.7)';
-    ctx.shadowBlur = 8;
-    const lignes = wrapText(ctx, p.texte, w);
-    const lineHeight = size * 1.25;
-    lignes.forEach((ligne, i) => ctx.fillText(ligne, p.x * width, y + h + 8 + i * lineHeight));
-    ctx.shadowBlur = 0;
-    boiteHauteur = h + 8 + lineHeight * lignes.length;
-  }
+  const phase = (p.id % 7) * 0.9;
+  const floatY = Math.sin(tGlobal * 1.1 + phase) * h * 0.035;
+  const tilt = Math.sin(tGlobal * 0.66 + phase) * 0.045;
 
-  return { x, y, w, h: boiteHauteur };
+  ctx.save();
+  ctx.translate(baseX, baseY + floatY);
+  ctx.rotate(tilt);
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = h * 0.14;
+  ctx.shadowOffsetY = h * 0.08;
+  roundRectPath(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+  ctx.fillStyle = '#000';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  roundRectPath(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+  ctx.clip();
+  ctx.drawImage(p.img, -w / 2, -h / 2, w, h);
+  ctx.restore();
+
+  ctx.lineWidth = Math.max(1, w * 0.003);
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  roundRectPath(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+  ctx.stroke();
+
+  ctx.restore();
+
+  return { x: baseX - w / 2, y: baseY - h / 2, w, h };
+}
+
+// Légende détachée de l'image : position libre (glissable), couleur
+// choisie automatiquement pour rester lisible sur le fond à cet endroit.
+function dessinerLegendePhoto(ctx, width, height, p) {
+  if (!p.texte) return null;
+  const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Roboto', sans-serif";
+  const size = Math.max(14, Math.round(width * 0.022));
+  ctx.font = `600 ${size}px ${famille}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  const maxWidth = width * 0.7;
+  const lignes = wrapText(ctx, p.texte, maxWidth);
+  const lineHeight = size * 1.25;
+  let boxW = 0;
+  lignes.forEach((ligne) => {
+    boxW = Math.max(boxW, ctx.measureText(ligne).width);
+  });
+  const boxH = lineHeight * lignes.length;
+
+  const cx = (p.texteX ?? p.x) * width;
+  const topY = (p.texteY ?? p.y) * height;
+  const boxX = cx - boxW / 2;
+
+  const { texte, ombre } = couleurLisible(ctx, boxX - 10, topY - 6, boxW + 20, boxH + 12);
+  ctx.fillStyle = texte;
+  ctx.shadowColor = ombre;
+  ctx.shadowBlur = 8;
+  lignes.forEach((ligne, i) => ctx.fillText(ligne, cx, topY + i * lineHeight));
+  ctx.shadowBlur = 0;
+
+  return { x: boxX - 10, y: topY - 6, w: boxW + 20, h: boxH + 12 };
 }
 
 function dessinerIntroOutro(ctx, width, height, seg) {
@@ -300,15 +386,27 @@ function drawEditorFrame(ctx, canvas) {
   const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
 
   EditorState._photoBoxes = {};
+  EditorState._captionBoxes = {};
+  const tGlobal = performance.now() / 1000;
   if (segmentActif) {
     if (segmentActif.type === 'photo') {
-      const box = dessinerPhoto(ctx, width, height, segmentActif.data);
-      if (box) {
-        EditorState._photoBoxes[segmentActif.data.id] = box;
-        if (EditorState.dragging && EditorState.dragging.type === 'photo' && EditorState.dragging.id === segmentActif.data.id) {
+      const p = segmentActif.data;
+      const imgBox = dessinerPhotoImage(ctx, width, height, p, tGlobal);
+      if (imgBox) {
+        EditorState._photoBoxes[p.id] = imgBox;
+        if (EditorState.dragging && EditorState.dragging.type === 'photo' && EditorState.dragging.id === p.id) {
           ctx.strokeStyle = '#00e676';
           ctx.lineWidth = 2;
-          ctx.strokeRect(box.x, box.y, box.w, box.h);
+          ctx.strokeRect(imgBox.x, imgBox.y, imgBox.w, imgBox.h);
+        }
+      }
+      const capBox = dessinerLegendePhoto(ctx, width, height, p);
+      if (capBox) {
+        EditorState._captionBoxes[p.id] = capBox;
+        if (EditorState.dragging && EditorState.dragging.type === 'caption' && EditorState.dragging.id === p.id) {
+          ctx.strokeStyle = '#2979ff';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(capBox.x, capBox.y, capBox.w, capBox.h);
         }
       }
     } else {
@@ -575,7 +673,17 @@ function rafraichirListePhotos() {
 
 function ajouterCalquePhoto() {
   const id = ++photoLayerCounter;
-  EditorState.photos.push({ id, img: null, x: 0.5, y: 0.5, scale: 0.3, texte: '', duree: 3 });
+  EditorState.photos.push({
+    id,
+    img: null,
+    x: 0.5,
+    y: 0.45,
+    scale: 0.3,
+    texte: '',
+    duree: 3,
+    texteX: 0.5,
+    texteY: 0.72,
+  });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
 }
@@ -600,6 +708,14 @@ function pointInBox(x, y, box) {
   return !!box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
 }
 
+function trouverCaptionSurvolee(x, y) {
+  for (let i = EditorState.photos.length - 1; i >= 0; i--) {
+    const p = EditorState.photos[i];
+    if (pointInBox(x, y, EditorState._captionBoxes[p.id])) return p;
+  }
+  return null;
+}
+
 function trouverPhotoSurvolee(x, y) {
   for (let i = EditorState.photos.length - 1; i >= 0; i--) {
     const p = EditorState.photos[i];
@@ -614,8 +730,13 @@ function bindEditorDrag(canvas) {
     if (pointInBox(x, y, EditorState._textBox)) {
       EditorState.dragging = 'text';
     } else {
-      const photo = trouverPhotoSurvolee(x, y);
-      if (photo) EditorState.dragging = { type: 'photo', id: photo.id };
+      const caption = trouverCaptionSurvolee(x, y);
+      if (caption) {
+        EditorState.dragging = { type: 'caption', id: caption.id };
+      } else {
+        const photo = trouverPhotoSurvolee(x, y);
+        if (photo) EditorState.dragging = { type: 'photo', id: photo.id };
+      }
     }
     if (EditorState.dragging) canvas.setPointerCapture(e.pointerId);
   });
@@ -623,7 +744,8 @@ function bindEditorDrag(canvas) {
   canvas.addEventListener('pointermove', (e) => {
     const { x, y } = toCanvasCoords(canvas, e);
     if (!EditorState.dragging) {
-      const survole = pointInBox(x, y, EditorState._textBox) || !!trouverPhotoSurvolee(x, y);
+      const survole =
+        pointInBox(x, y, EditorState._textBox) || !!trouverCaptionSurvolee(x, y) || !!trouverPhotoSurvolee(x, y);
       canvas.style.cursor = survole ? 'grab' : 'default';
       return;
     }
@@ -638,6 +760,12 @@ function bindEditorDrag(canvas) {
       if (p) {
         p.x = fx;
         p.y = fy;
+      }
+    } else if (EditorState.dragging.type === 'caption') {
+      const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
+      if (p) {
+        p.texteX = fx;
+        p.texteY = fy;
       }
     }
   });
@@ -664,8 +792,12 @@ function exportEditeurPng() {
   const { segments } = calculerTimeline();
   const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
   if (segmentActif) {
-    if (segmentActif.type === 'photo') dessinerPhoto(ctx, dims.w, dims.h, segmentActif.data);
-    else dessinerIntroOutro(ctx, dims.w, dims.h, segmentActif.data);
+    if (segmentActif.type === 'photo') {
+      dessinerPhotoImage(ctx, dims.w, dims.h, segmentActif.data, performance.now() / 1000);
+      dessinerLegendePhoto(ctx, dims.w, dims.h, segmentActif.data);
+    } else {
+      dessinerIntroOutro(ctx, dims.w, dims.h, segmentActif.data);
+    }
   }
   dessinerTexteLibre(ctx, dims.w, dims.h);
 

@@ -1208,7 +1208,7 @@ function viewEditeur() {
     <div class="editor-layout">
       <div class="editor-canvas-wrap">
         <canvas id="editor-canvas" width="1920" height="1080"></canvas>
-        <div class="editor-hint">Glissez le texte ou la photo active directement sur l'aperçu pour les repositionner.</div>
+        <div class="editor-hint">Glissez le texte fixe, la photo active ou sa légende directement sur l'aperçu pour les repositionner.</div>
         <div class="editor-timeline">
           <button type="button" id="editor-play-btn" class="editor-play-btn" title="Lecture / Pause">▶</button>
           <input type="range" id="editor-scrubber" min="0" max="100" step="0.5" value="0">
