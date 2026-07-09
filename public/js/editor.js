@@ -1497,7 +1497,7 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
 
   const measureCtx = layer.ctx;
   measureCtx.font = `${style} ${weight} ${size}px ${famille}`;
-  const maxWidth = width * 0.85;
+  const maxWidth = width * (b.wrapWidth || 0.85);
   const lignes = wrapText(measureCtx, b.texte, maxWidth);
   const lineHeight = size * 1.2;
   const totalHeight = lineHeight * lignes.length;
