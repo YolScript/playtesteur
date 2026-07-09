@@ -459,6 +459,49 @@ function pointOnRoundRect(x, y, w, h, r, t) {
   return { px: x + w / 2, py: y };
 }
 
+// Normale sortante au point t du contour (dérivée numérique de la
+// tangente). pointOnRoundRect parcourt le contour dans le sens horaire
+// (Y vers le bas), donc la normale sortante est la tangente tournée de
+// -90° : (dy, -dx).
+function normaleSurRoundRect(x, y, w, h, r, t) {
+  const dt = 0.001;
+  const p0 = pointOnRoundRect(x, y, w, h, r, t);
+  const p1 = pointOnRoundRect(x, y, w, h, r, (t + dt) % 1);
+  const dx = p1.px - p0.px;
+  const dy = p1.py - p0.py;
+  const len = Math.hypot(dx, dy) || 1;
+  return { nx: dy / len, ny: -dx / len };
+}
+
+// Spectre audio réactif : barres perpendiculaires au contour arrondi de
+// la carte, hauteur proportionnelle à l'amplitude de fréquence lue en
+// temps réel sur la musique de fond (Web Audio AnalyserNode).
+function dessinerSpectreAudio(ctx, x, y, w, h, r, color, maxBarLen) {
+  const analyserState = EditorState.audioAnalyser;
+  if (!analyserState) return;
+  analyserState.analyser.getByteFrequencyData(analyserState.dataArray);
+  const data = analyserState.dataArray;
+  const nBars = 48;
+  ctx.save();
+  for (let i = 0; i < nBars; i++) {
+    const t = i / nBars;
+    const { px, py } = pointOnRoundRect(x, y, w, h, r, t);
+    const { nx, ny } = normaleSurRoundRect(x, y, w, h, r, t);
+    const amp = data[i % data.length] / 255;
+    const len = 4 + amp * maxBarLen;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.55 + amp * 0.45;
+    ctx.lineWidth = Math.max(2, w * 0.006);
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 4 + amp * 10;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + nx * len, py + ny * len);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // Effet "Saber" : traînée lumineuse qui court le long du contour arrondi
 // de la carte, tête vive + queue qui s'estompe, glow amplifié ensuite par
 // le bloom global si activé.
@@ -497,7 +540,9 @@ function mettreAJourPhoto(p, tGlobal) {
 
   const w = Math.round(width * p.scale);
   const h = Math.round(w * (p.img.naturalHeight / p.img.naturalWidth || 1));
-  const marge = Math.ceil(Math.min(w, h) * 0.14) + 16;
+  const margeBase = Math.ceil(Math.min(w, h) * 0.14) + 16;
+  const margeSpectre = p.spectrumActive ? Math.ceil(Math.min(w, h) * 0.32) : 0;
+  const marge = margeBase + margeSpectre;
   sizeLayerCanvas(layer, w + marge * 2, h + marge * 2);
 
   const ctx = layer.ctx;
@@ -527,6 +572,9 @@ function mettreAJourPhoto(p, tGlobal) {
 
   if (p.saberActive) {
     dessinerContourEnergetique(ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.saberColor || '#00e5ff', tGlobal);
+  }
+  if (p.spectrumActive) {
+    dessinerSpectreAudio(ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.spectrumColor || '#ff2d95', margeSpectre * 0.85);
   }
 
   const phase = (p.id % 7) * 0.9;
@@ -959,6 +1007,7 @@ function bindEditorInputs() {
     audio.crossOrigin = 'anonymous';
     EditorState.audioEl = audio;
     audio.play().catch(() => {});
+    brancherAnalyseurAudio(audio);
   });
 
   bindSegmentControls(EditorState.intro, 'intro', 'intro');
@@ -1054,6 +1103,10 @@ function renderPhotoLayerHtml(p, index) {
         <input type="color" data-sabercolor-for="${p.id}" value="${p.saberColor || '#00e5ff'}" title="Couleur de l'effet">
         <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-particles-for="${p.id}" ${p.particlesActive ? 'checked' : ''}><span>Particules</span></label>
       </div>
+      <div class="editor-row">
+        <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-spectrum-for="${p.id}" ${p.spectrumActive ? 'checked' : ''}><span>Spectre audio (musique de fond)</span></label>
+        <input type="color" data-spectrumcolor-for="${p.id}" value="${p.spectrumColor || '#ff2d95'}" title="Couleur du spectre">
+      </div>
     </div>
   `;
 }
@@ -1121,6 +1174,24 @@ function bindPhotoLayerEvents() {
         jump();
       });
     }
+    const spectrumInput = document.querySelector(`[data-spectrum-for="${p.id}"]`);
+    if (spectrumInput) {
+      spectrumInput.addEventListener('change', (e) => {
+        if (e.target.checked && !EditorState.audioEl) {
+          toast('Importez une musique de fond pour activer le spectre audio.', 'error');
+          e.target.checked = false;
+          return;
+        }
+        p.spectrumActive = e.target.checked;
+        jump();
+      });
+    }
+    const spectrumColorInput = document.querySelector(`[data-spectrumcolor-for="${p.id}"]`);
+    if (spectrumColorInput) {
+      spectrumColorInput.addEventListener('input', (e) => {
+        p.spectrumColor = e.target.value;
+      });
+    }
   });
   document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
@@ -1155,6 +1226,8 @@ function ajouterCalquePhoto() {
     saberActive: false,
     saberColor: '#00e5ff',
     particlesActive: false,
+    spectrumActive: false,
+    spectrumColor: '#ff2d95',
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
@@ -1365,6 +1438,22 @@ function getOrCreateSourceNode(ctx, mediaEl) {
   const node = ctx.createMediaElementSource(mediaEl);
   EditorState.audioSourceCache.set(mediaEl, node);
   return node;
+}
+
+// Branche un AnalyserNode sur la musique de fond pour le spectre réactif
+// (aperçu ET export, car le graphe Web Audio reste connecté). Une fois
+// qu'un <audio> passe par createMediaElementSource(), sa sortie native
+// est coupée : il faut le reconnecter explicitement à audioCtx.destination
+// pour continuer à l'entendre pendant l'édition.
+function brancherAnalyseurAudio(mediaEl) {
+  const audioCtx = getSharedAudioCtx();
+  const source = getOrCreateSourceNode(audioCtx, mediaEl);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 128;
+  analyser.smoothingTimeConstant = 0.75;
+  source.connect(analyser);
+  source.connect(audioCtx.destination);
+  EditorState.audioAnalyser = { analyser, dataArray: new Uint8Array(analyser.frequencyBinCount) };
 }
 
 async function exportEditeurMp4() {
