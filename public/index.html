@@ -4,22 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="PlayTesteur : plateforme d'entraide entre développeurs Android pour obtenir les 12 testeurs uniques exigés par Google Play.">
-    <meta name="theme-color" content="#ff6400">
+    <meta name="theme-color" content="#00e676">
     <title>PlayTesteur</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
+    <link rel="icon" type="image/png" href="favicon.png">
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <div id="toast-container"></div>
 
+    <!-- Vidéo d'arrière-plan (position:fixed, hors du flux) -->
+    <video class="bg-video" autoplay muted loop playsinline poster="bg-video-poster.jpg">
+        <source src="bg-video.mp4" type="video/mp4">
+    </video>
+
     <div class="app-container">
         <header class="app-header">
             <div class="logo-area">
-                <div class="logo-icon">🎮</div>
+                <img src="logo.png" alt="PlayTesteur" class="logo-icon-img">
                 <div class="logo-text">
                     <span class="logo-primary">Play</span><span class="logo-secondary">Testeur</span>
                     <span class="badge-tag">Bêta</span>
