@@ -848,20 +848,22 @@ let ffmpegInstance = null;
 
 async function getFfmpeg() {
   if (ffmpegInstance) return ffmpegInstance;
-  const { FFmpeg } = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
-  const { toBlobURL } = await import('https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js');
+  // Fichiers de @ffmpeg/ffmpeg, @ffmpeg/core et @ffmpeg/util hébergés sur
+  // ce site (public/vendor/ffmpeg) plutôt que chargés depuis unpkg.com :
+  // en passant par le CDN, le Worker interne devait être bricolé en blob
+  // URL pour éviter le blocage "Worker cross-origin" (voir historique),
+  // mais ce montage restait instable : le Worker se bloquait ensuite
+  // indéfiniment en tentant de fetch le .wasm (également en blob),
+  // laissant l'export figé sans jamais aboutir ni échouer. Servir ces
+  // fichiers depuis la même origine que le site élimine le problème à la
+  // racine — plus besoin de blob URL du tout.
+  const { FFmpeg } = await import('/vendor/ffmpeg/ffmpeg/index.js');
   const ffmpeg = new FFmpeg();
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+  const baseURL = '/vendor/ffmpeg/core';
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    // Sans ceci, le Worker interne pointe vers unpkg.com (import.meta.url du
-    // module chargé depuis le CDN) au lieu de l'origine du site, et le
-    // navigateur refuse sa construction (Worker cross-origin bloqué).
-    classWorkerURL: await toBlobURL(
-      'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js',
-      'text/javascript'
-    ),
+    coreURL: `${baseURL}/ffmpeg-core.js`,
+    wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+    classWorkerURL: '/vendor/ffmpeg/ffmpeg/worker.js',
   });
   ffmpegInstance = ffmpeg;
   return ffmpeg;
