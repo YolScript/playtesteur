@@ -74,6 +74,7 @@ async function router() {
 
   renderHeader();
   arreterChat();
+  if (typeof arreterEditeur === 'function') arreterEditeur();
 
   try {
     switch (route) {
@@ -87,6 +88,8 @@ async function router() {
         return viewMesApps();
       case 'app':
         return viewAppDetail(param);
+      case 'editeur':
+        return viewEditeur();
       case 'admin':
         return viewAdmin();
       case 'dashboard':
@@ -108,6 +111,7 @@ const NAV_ICONS = {
   catalogue: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zM4 13h7v7H4v-7z"/></svg>',
   classement: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 21h8v-2H8v2zM6 10H3V3h3v7zm12 0h-3V3h3v7zM12 15c-2.8 0-5-2.2-5-5V3h10v7c0 2.8-2.2 5-5 5z"/></svg>',
   'mes-apps': '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 3l-6 6h4v6h4v-6h4l-6-6z"/></svg>',
+  editeur: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
   admin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>',
 };
 
@@ -129,6 +133,7 @@ function renderHeader() {
     { route: 'classement', label: 'Classement' },
     { route: 'mes-apps', label: 'Mes apps' },
     { route: 'dashboard', label: 'Compte' },
+    { route: 'editeur', label: 'Éditeur' },
   ];
   if (state.user.role === 'administrator') {
     links.push({ route: 'admin', label: 'Admin' });
@@ -1177,6 +1182,66 @@ async function chargerConsoleActivite() {
   } catch (err) {
     container.innerHTML = `<p class="form-hint">Impossible de charger la console d'activité.</p>`;
   }
+}
+
+/* ==========================================================================
+   ÉDITEUR (vidéo/photo promo)
+   ========================================================================== */
+function viewEditeur() {
+  viewRoot.innerHTML = `
+    <h1 class="page-title">Éditeur</h1>
+    <p class="page-subtitle">Composez une vidéo ou une image promo : fond, musique, photo et texte avec votre propre police. Tout se passe dans votre navigateur, rien n'est envoyé au serveur.</p>
+
+    <div class="editor-layout">
+      <div class="editor-canvas-wrap">
+        <canvas id="editor-canvas" width="1280" height="720"></canvas>
+        <div class="editor-hint">Glissez le texte ou la photo directement sur l'aperçu pour les repositionner.</div>
+        <div class="editor-progress hidden" id="editor-export-progress">
+          <div class="editor-progress-bar"><div class="editor-progress-fill" id="editor-progress-fill"></div></div>
+          <span class="editor-progress-label" id="editor-progress-label">Export en cours… 0%</span>
+        </div>
+      </div>
+
+      <div class="editor-controls">
+        <div class="editor-section">
+          <label class="editor-label">Fond (vidéo MP4 ou image)</label>
+          <input type="file" id="editor-bg-input" accept="video/mp4,image/png,image/jpeg">
+        </div>
+        <div class="editor-section">
+          <label class="editor-label">Musique de fond (MP3)</label>
+          <input type="file" id="editor-audio-input" accept="audio/mpeg,audio/mp3">
+        </div>
+        <div class="editor-section">
+          <label class="editor-label">Photo à superposer (PNG)</label>
+          <input type="file" id="editor-photo-input" accept="image/png">
+          <div class="editor-row">
+            <label class="editor-mini-label">Taille<input type="range" id="editor-photo-scale" min="5" max="80" value="30"></label>
+          </div>
+        </div>
+        <div class="editor-section">
+          <label class="editor-label">Police d'écriture personnalisée</label>
+          <input type="file" id="editor-font-input" accept=".ttf,.otf,.woff,.woff2">
+        </div>
+        <div class="editor-section">
+          <label class="editor-label">Texte</label>
+          <textarea id="editor-text-input" rows="2" placeholder="Votre texte..."></textarea>
+          <div class="editor-row">
+            <input type="color" id="editor-text-color" value="#ffffff" title="Couleur du texte">
+            <label class="editor-mini-label">Taille<input type="range" id="editor-text-size" min="16" max="140" value="56"></label>
+          </div>
+        </div>
+        <div class="editor-section">
+          <label class="editor-label">Durée de l'export vidéo (secondes)</label>
+          <input type="number" id="editor-duration" min="1" max="30" value="6" style="max-width:120px;">
+        </div>
+        <div class="editor-actions">
+          <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG</button>
+          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4</button>
+        </div>
+      </div>
+    </div>
+  `;
+  if (typeof initEditeur === 'function') initEditeur();
 }
 
 /* ==========================================================================

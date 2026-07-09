@@ -27,13 +27,35 @@ function getAuthUrl() {
   return oauth2Client.generateAuthUrl({
     access_type: 'online',
     prompt: 'select_account',
-    scope: ['openid', 'email', 'profile'],
+    scope: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/user.nickname.read'],
   });
+}
+
+// Récupère le "Pseudo" configuré dans les paramètres du compte Google
+// (Infos personnelles > Nom > Pseudo). Ce champ n'est pas dans le id_token
+// OpenID standard (name/given_name/family_name) : il faut un appel séparé à
+// l'API Google People avec le scope user.nickname.read. Beaucoup
+// d'utilisateurs n'ont rien configuré -> retourne null dans ce cas.
+async function recupererPseudoGoogle(auth) {
+  try {
+    const { google } = require('googleapis');
+    const people = google.people({ version: 'v1', auth });
+    const { data } = await people.people.get({
+      resourceName: 'people/me',
+      personFields: 'nicknames',
+    });
+    const nickname = (data.nicknames || []).find((n) => n.value)?.value;
+    return nickname || null;
+  } catch (err) {
+    console.warn('[googleAuth] Pseudo Google (nickname) indisponible, fallback sur le prénom.', err.message);
+    return null;
+  }
 }
 
 // Échange le code OAuth contre le profil Google vérifié de l'utilisateur.
 async function handleCallback(code) {
   const { tokens } = await oauth2Client.getToken(code);
+  oauth2Client.setCredentials(tokens);
   const ticket = await oauth2Client.verifyIdToken({ idToken: tokens.id_token, audience: CLIENT_ID });
   const payload = ticket.getPayload();
 
@@ -41,10 +63,13 @@ async function handleCallback(code) {
     throw new Error('Cet email Google n\'est pas vérifié.');
   }
 
+  const nickname = await recupererPseudoGoogle(oauth2Client);
+  const pseudo = nickname || payload.given_name || payload.name || payload.email.split('@')[0];
+
   return {
     googleId: payload.sub,
     email: payload.email.toLowerCase(),
-    pseudo: payload.name || payload.email.split('@')[0],
+    pseudo,
     avatarUrl: payload.picture || null,
   };
 }
