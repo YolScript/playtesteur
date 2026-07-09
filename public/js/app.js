@@ -778,18 +778,18 @@ async function viewAdmin() {
             <div class="action-group">
               <span class="action-group-label">Score</span>
               <div class="action-group-buttons">
-                <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="1" ${u.role === 'administrator' ? 'disabled' : ''}>+1</button>
-                <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="5" ${u.role === 'administrator' ? 'disabled' : ''}>+5</button>
-                <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="10" ${u.role === 'administrator' ? 'disabled' : ''}>+10</button>
-                <button class="btn-xs btn-danger" data-adjust="${u.id}" data-delta="-20" ${u.role === 'administrator' ? 'disabled' : ''}>-20</button>
-                <button class="btn-xs btn-danger" data-ban="${u.id}" data-score="${u.score_global}" ${u.role === 'administrator' ? 'disabled' : ''}>Ban</button>
+                <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="1" ${u.id === state.user.id ? 'disabled' : ''}>+1</button>
+                <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="5" ${u.id === state.user.id ? 'disabled' : ''}>+5</button>
+                <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="10" ${u.id === state.user.id ? 'disabled' : ''}>+10</button>
+                <button class="btn-xs btn-danger" data-adjust="${u.id}" data-delta="-20" ${u.id === state.user.id ? 'disabled' : ''}>-20</button>
+                <button class="btn-xs btn-danger" data-ban="${u.id}" data-score="${u.score_global}" ${u.id === state.user.id ? 'disabled' : ''}>Ban</button>
               </div>
             </div>
             <div class="action-group">
               <span class="action-group-label">Modération</span>
               <div class="action-group-buttons">
-                <button class="btn-xs btn-secondary" data-warn="${u.id}" ${u.role === 'administrator' ? 'disabled' : ''}>Avertir</button>
-                <button class="btn-xs btn-danger" data-exclude="${u.id}" ${u.role === 'administrator' ? 'disabled' : ''}>Exclure</button>
+                <button class="btn-xs btn-secondary" data-warn="${u.id}" ${u.id === state.user.id ? 'disabled' : ''}>Avertir</button>
+                <button class="btn-xs btn-danger" data-exclude="${u.id}" ${u.id === state.user.id ? 'disabled' : ''}>Exclure</button>
               </div>
             </div>
           </div>
