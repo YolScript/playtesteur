@@ -925,6 +925,57 @@ tbody tr:hover { background: var(--bg-card-hover); }
 .editor-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
 .editor-actions button { flex: 1; }
 
+.editor-add-btn {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary);
+    background: var(--primary-glow);
+    border: 1px solid rgba(0, 230, 118, 0.35);
+    border-radius: var(--radius-full);
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    white-space: nowrap;
+}
+.editor-add-btn:hover { background: rgba(0, 230, 118, 0.25); }
+
+.editor-photos-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+
+.editor-photo-layer {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.editor-photo-layer-head { display: flex; justify-content: space-between; align-items: center; }
+.editor-photo-layer-title { font-size: 12px; font-weight: 700; color: var(--text-white); }
+.editor-remove-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+}
+.editor-remove-btn:hover { color: var(--color-danger); background: rgba(255, 23, 68, 0.12); }
+
+.editor-photo-caption {
+    background: var(--bg-darker);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-white);
+    padding: 8px 10px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    resize: vertical;
+}
+
 @media (max-width: 960px) {
     .editor-layout { grid-template-columns: 1fr; }
 }

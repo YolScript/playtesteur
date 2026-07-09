@@ -9,19 +9,19 @@ const EditorState = {
   bgVideoEl: null,
   bgImageEl: null,
   audioEl: null,
-  photoImg: null,
-  photo: { x: 0.5, y: 0.5, scale: 0.3 },
+  photos: [], // [{ id, img, x, y, scale, texte }] — chaque photo a son propre texte lié
   fontFamily: null,
   text: '',
   textStyle: { color: '#ffffff', size: 56, x: 0.5, y: 0.85 },
-  dragging: null,
-  _photoBox: null,
+  dragging: null, // null | 'text' | { type:'photo', id }
+  _photoBoxes: {}, // id -> { x, y, w, h }
   _textBox: null,
   audioCtx: null,
   audioSourceCache: null,
 };
 
 let editorRafId = null;
+let photoLayerCounter = 0;
 
 function arreterEditeur() {
   if (editorRafId) {
@@ -99,20 +99,39 @@ function drawEditorFrame(ctx, canvas) {
     ctx.fillText('Importez un fond pour commencer', width / 2, height / 2);
   }
 
-  EditorState._photoBox = null;
-  if (EditorState.photoImg) {
-    const w = width * EditorState.photo.scale;
-    const h = w * (EditorState.photoImg.naturalHeight / EditorState.photoImg.naturalWidth || 1);
-    const x = EditorState.photo.x * width - w / 2;
-    const y = EditorState.photo.y * height - h / 2;
-    ctx.drawImage(EditorState.photoImg, x, y, w, h);
-    EditorState._photoBox = { x, y, w, h };
-    if (EditorState.dragging === 'photo') {
+  EditorState._photoBoxes = {};
+  EditorState.photos.forEach((p) => {
+    if (!p.img) return;
+    const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Roboto', sans-serif";
+    const w = width * p.scale;
+    const h = w * (p.img.naturalHeight / p.img.naturalWidth || 1);
+    const x = p.x * width - w / 2;
+    const y = p.y * height - h / 2;
+    ctx.drawImage(p.img, x, y, w, h);
+    let boiteHauteur = h;
+
+    if (p.texte) {
+      const size = Math.max(14, Math.round(width * 0.022));
+      ctx.font = `600 ${size}px ${famille}`;
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.shadowColor = 'rgba(0,0,0,0.7)';
+      ctx.shadowBlur = 8;
+      const lignes = wrapText(ctx, p.texte, w);
+      const lineHeight = size * 1.25;
+      lignes.forEach((ligne, i) => ctx.fillText(ligne, p.x * width, y + h + 8 + i * lineHeight));
+      ctx.shadowBlur = 0;
+      boiteHauteur = h + 8 + lineHeight * lignes.length;
+    }
+
+    EditorState._photoBoxes[p.id] = { x, y, w, h: boiteHauteur };
+    if (EditorState.dragging && EditorState.dragging.type === 'photo' && EditorState.dragging.id === p.id) {
       ctx.strokeStyle = '#00e676';
       ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, boiteHauteur);
     }
-  }
+  });
 
   EditorState._textBox = null;
   if (EditorState.text) {
@@ -169,12 +188,11 @@ function afficherNomFichier(spanId, file) {
 function bindEditorInputs() {
   const bgInput = document.getElementById('editor-bg-input');
   const audioInput = document.getElementById('editor-audio-input');
-  const photoInput = document.getElementById('editor-photo-input');
+  const addPhotoBtn = document.getElementById('editor-add-photo');
   const fontInput = document.getElementById('editor-font-input');
   const textInput = document.getElementById('editor-text-input');
   const colorInput = document.getElementById('editor-text-color');
   const sizeInput = document.getElementById('editor-text-size');
-  const photoScaleInput = document.getElementById('editor-photo-scale');
   const exportPngBtn = document.getElementById('editor-export-png');
   const exportMp4Btn = document.getElementById('editor-export-mp4');
 
@@ -220,17 +238,8 @@ function bindEditorInputs() {
     audio.play().catch(() => {});
   });
 
-  photoInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    afficherNomFichier('editor-photo-filename', file);
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    try {
-      await img.decode();
-    } catch (_) {}
-    EditorState.photoImg = img;
-  });
+  addPhotoBtn.addEventListener('click', ajouterCalquePhoto);
+  rafraichirListePhotos();
 
   fontInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -257,12 +266,93 @@ function bindEditorInputs() {
   sizeInput.addEventListener('input', (e) => {
     EditorState.textStyle.size = Number(e.target.value);
   });
-  photoScaleInput.addEventListener('input', (e) => {
-    EditorState.photo.scale = Number(e.target.value) / 100;
-  });
 
   exportPngBtn.addEventListener('click', exportEditeurPng);
   exportMp4Btn.addEventListener('click', exportEditeurMp4);
+}
+
+/* -------------------------------------------------------------------- */
+/* Calques photo multiples (chacun avec sa légende liée)                 */
+/* -------------------------------------------------------------------- */
+function markupFilePickerPhoto(inputId, filenameId) {
+  return `
+    <div class="editor-file-picker-wrap">
+      <label class="editor-file-picker" for="${inputId}">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+        <span>Choisir un fichier</span>
+      </label>
+      <input type="file" id="${inputId}" accept="image/png" class="editor-file-input">
+      <span class="editor-file-name" id="${filenameId}">Aucun fichier choisi</span>
+    </div>
+  `;
+}
+
+function renderPhotoLayerHtml(p, index) {
+  return `
+    <div class="editor-photo-layer">
+      <div class="editor-photo-layer-head">
+        <span class="editor-photo-layer-title">Photo ${index + 1}</span>
+        <button type="button" class="editor-remove-btn" data-remove-photo="${p.id}" title="Supprimer cette photo">&times;</button>
+      </div>
+      ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
+      <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
+      <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
+    </div>
+  `;
+}
+
+function bindPhotoLayerEvents() {
+  EditorState.photos.forEach((p) => {
+    const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
+    if (fileInput) {
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        afficherNomFichier(`editor-photo-filename-${p.id}`, file);
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        try {
+          await img.decode();
+        } catch (_) {}
+        p.img = img;
+      });
+    }
+    const captionInput = document.querySelector(`[data-caption-for="${p.id}"]`);
+    if (captionInput) {
+      captionInput.addEventListener('input', (e) => {
+        p.texte = e.target.value;
+      });
+    }
+    const scaleInput = document.querySelector(`[data-scale-for="${p.id}"]`);
+    if (scaleInput) {
+      scaleInput.addEventListener('input', (e) => {
+        p.scale = Number(e.target.value) / 100;
+      });
+    }
+  });
+  document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
+    btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
+  });
+}
+
+function rafraichirListePhotos() {
+  const container = document.getElementById('editor-photos-list');
+  if (!container) return;
+  container.innerHTML =
+    EditorState.photos.map((p, i) => renderPhotoLayerHtml(p, i)).join('') ||
+    '<p class="form-hint">Aucune photo ajoutée pour le moment.</p>';
+  bindPhotoLayerEvents();
+}
+
+function ajouterCalquePhoto() {
+  EditorState.photos.push({ id: ++photoLayerCounter, img: null, x: 0.5, y: 0.5, scale: 0.3, texte: '' });
+  rafraichirListePhotos();
+}
+
+function supprimerCalquePhoto(id) {
+  EditorState.photos = EditorState.photos.filter((p) => p.id !== id);
+  delete EditorState._photoBoxes[id];
+  rafraichirListePhotos();
 }
 
 /* -------------------------------------------------------------------- */
@@ -279,13 +369,22 @@ function pointInBox(x, y, box) {
   return !!box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
 }
 
+function trouverPhotoSurvolee(x, y) {
+  for (let i = EditorState.photos.length - 1; i >= 0; i--) {
+    const p = EditorState.photos[i];
+    if (pointInBox(x, y, EditorState._photoBoxes[p.id])) return p;
+  }
+  return null;
+}
+
 function bindEditorDrag(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
     const { x, y } = toCanvasCoords(canvas, e);
     if (pointInBox(x, y, EditorState._textBox)) {
       EditorState.dragging = 'text';
-    } else if (pointInBox(x, y, EditorState._photoBox)) {
-      EditorState.dragging = 'photo';
+    } else {
+      const photo = trouverPhotoSurvolee(x, y);
+      if (photo) EditorState.dragging = { type: 'photo', id: photo.id };
     }
     if (EditorState.dragging) canvas.setPointerCapture(e.pointerId);
   });
@@ -293,19 +392,22 @@ function bindEditorDrag(canvas) {
   canvas.addEventListener('pointermove', (e) => {
     const { x, y } = toCanvasCoords(canvas, e);
     if (!EditorState.dragging) {
-      const survole = pointInBox(x, y, EditorState._textBox) || pointInBox(x, y, EditorState._photoBox);
+      const survole = pointInBox(x, y, EditorState._textBox) || !!trouverPhotoSurvolee(x, y);
       canvas.style.cursor = survole ? 'grab' : 'default';
       return;
     }
     canvas.style.cursor = 'grabbing';
     const fx = Math.min(1, Math.max(0, x / canvas.width));
     const fy = Math.min(1, Math.max(0, y / canvas.height));
-    if (EditorState.dragging === 'photo') {
-      EditorState.photo.x = fx;
-      EditorState.photo.y = fy;
-    } else if (EditorState.dragging === 'text') {
+    if (EditorState.dragging === 'text') {
       EditorState.textStyle.x = fx;
       EditorState.textStyle.y = fy;
+    } else if (EditorState.dragging.type === 'photo') {
+      const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
+      if (p) {
+        p.x = fx;
+        p.y = fy;
+      }
     }
   });
 

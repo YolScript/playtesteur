@@ -1225,11 +1225,11 @@ function viewEditeur() {
           ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
         </div>
         <div class="editor-section">
-          <label class="editor-label">Photo à superposer (PNG)</label>
-          ${renderFilePicker('editor-photo-input', 'image/png', 'editor-photo-filename')}
-          <div class="editor-row">
-            <label class="editor-mini-label">Taille<input type="range" id="editor-photo-scale" min="5" max="80" value="30"></label>
+          <div class="editor-row" style="justify-content:space-between;">
+            <label class="editor-label" style="margin:0;">Photos superposées</label>
+            <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
           </div>
+          <div id="editor-photos-list" class="editor-photos-list"></div>
         </div>
         <div class="editor-section">
           <label class="editor-label">Police d'écriture personnalisée</label>
