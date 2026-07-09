@@ -1203,12 +1203,17 @@ function renderFilePicker(inputId, accept, filenameId) {
 function viewEditeur() {
   viewRoot.innerHTML = `
     <h1 class="page-title">Éditeur</h1>
-    <p class="page-subtitle">Composez une vidéo ou une image promo : fond, musique, photo et texte avec votre propre police. Tout se passe dans votre navigateur, rien n'est envoyé au serveur.</p>
+    <p class="page-subtitle">Composez une vidéo ou une image promo : intro, photos (chacune avec sa durée et son texte), outro, musique et police perso. Tout se passe dans votre navigateur, rien n'est envoyé au serveur.</p>
 
     <div class="editor-layout">
       <div class="editor-canvas-wrap">
-        <canvas id="editor-canvas" width="1280" height="720"></canvas>
-        <div class="editor-hint">Glissez le texte ou la photo directement sur l'aperçu pour les repositionner.</div>
+        <canvas id="editor-canvas" width="1920" height="1080"></canvas>
+        <div class="editor-hint">Glissez le texte ou la photo active directement sur l'aperçu pour les repositionner.</div>
+        <div class="editor-timeline">
+          <button type="button" id="editor-play-btn" class="editor-play-btn" title="Lecture / Pause">▶</button>
+          <input type="range" id="editor-scrubber" min="0" max="100" step="0.5" value="0">
+          <span class="editor-time-label" id="editor-time-label">0.0s / 0.0s</span>
+        </div>
         <div class="editor-progress hidden" id="editor-export-progress">
           <div class="editor-progress-bar"><div class="editor-progress-fill" id="editor-progress-fill"></div></div>
           <span class="editor-progress-label" id="editor-progress-label">Export en cours… 0%</span>
@@ -1224,19 +1229,45 @@ function viewEditeur() {
           <label class="editor-label">Musique de fond (MP3)</label>
           ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
         </div>
+
+        <div class="editor-section">
+          <label class="editor-checkbox-row"><input type="checkbox" id="editor-intro-toggle"><span>Ajouter une intro</span></label>
+          <div class="editor-subpanel hidden" id="editor-intro-panel">
+            <span class="editor-mini-heading">Logo</span>
+            ${renderFilePicker('editor-intro-logo-input', 'image/png', 'editor-intro-logo-filename')}
+            <span class="editor-mini-heading">Image</span>
+            ${renderFilePicker('editor-intro-img-input', 'image/png', 'editor-intro-img-filename')}
+            <textarea id="editor-intro-text" rows="2" placeholder="Texte de l'intro..."></textarea>
+            <label class="editor-mini-label">Durée (s)<input type="number" id="editor-intro-duree" min="0.5" max="20" step="0.5" value="3" style="max-width:90px;"></label>
+          </div>
+        </div>
+
         <div class="editor-section">
           <div class="editor-row" style="justify-content:space-between;">
-            <label class="editor-label" style="margin:0;">Photos superposées</label>
+            <label class="editor-label" style="margin:0;">Photos (une à la fois, dans l'ordre)</label>
             <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
           </div>
           <div id="editor-photos-list" class="editor-photos-list"></div>
         </div>
+
+        <div class="editor-section">
+          <label class="editor-checkbox-row"><input type="checkbox" id="editor-outro-toggle"><span>Ajouter une outro</span></label>
+          <div class="editor-subpanel hidden" id="editor-outro-panel">
+            <span class="editor-mini-heading">Logo</span>
+            ${renderFilePicker('editor-outro-logo-input', 'image/png', 'editor-outro-logo-filename')}
+            <span class="editor-mini-heading">Image</span>
+            ${renderFilePicker('editor-outro-img-input', 'image/png', 'editor-outro-img-filename')}
+            <textarea id="editor-outro-text" rows="2" placeholder="Texte de l'outro..."></textarea>
+            <label class="editor-mini-label">Durée (s)<input type="number" id="editor-outro-duree" min="0.5" max="20" step="0.5" value="3" style="max-width:90px;"></label>
+          </div>
+        </div>
+
         <div class="editor-section">
           <label class="editor-label">Police d'écriture personnalisée</label>
           ${renderFilePicker('editor-font-input', '.ttf,.otf,.woff,.woff2', 'editor-font-filename')}
         </div>
         <div class="editor-section">
-          <label class="editor-label">Texte</label>
+          <label class="editor-label">Texte fixe (affiché pendant toute la vidéo)</label>
           <textarea id="editor-text-input" rows="2" placeholder="Votre texte..."></textarea>
           <div class="editor-row">
             <input type="color" id="editor-text-color" value="#ffffff" title="Couleur du texte">
@@ -1244,12 +1275,15 @@ function viewEditeur() {
           </div>
         </div>
         <div class="editor-section">
-          <label class="editor-label">Durée de l'export vidéo (secondes)</label>
-          <input type="number" id="editor-duration" min="1" max="30" value="6" style="max-width:120px;">
+          <label class="editor-label">Format des images exportées</label>
+          <div class="editor-row">
+            <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="playstore" checked> Vertical Play Store (1080×1920)</label>
+            <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="square"> Carré (1080×1080)</label>
+          </div>
         </div>
         <div class="editor-actions">
           <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG</button>
-          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4</button>
+          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080, 60 im/s)</button>
         </div>
       </div>
     </div>

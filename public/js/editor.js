@@ -1,7 +1,9 @@
 /* ==========================================================================
    ÉDITEUR (vidéo/photo promo) — 100% côté navigateur, rien n'est envoyé
-   au serveur. Composition sur <canvas>, export PNG via toBlob, export MP4
-   via MediaRecorder (webm) puis transcodage réel en MP4 avec ffmpeg.wasm.
+   au serveur. Composition sur <canvas> en timeline (intro -> photos ->
+   outro, chaque segment ayant sa propre durée), aperçu temps réel avec
+   lecture/pause, export PNG (formats Play Store) et export MP4 haute
+   qualité (1920x1080, 60 im/s) via MediaRecorder puis ffmpeg.wasm.
    ========================================================================== */
 
 const EditorState = {
@@ -9,10 +11,20 @@ const EditorState = {
   bgVideoEl: null,
   bgImageEl: null,
   audioEl: null,
-  photos: [], // [{ id, img, x, y, scale, texte }] — chaque photo a son propre texte lié
   fontFamily: null,
+
+  intro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
+  outro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
+  photos: [], // [{ id, img, x, y, scale, texte, duree }]
+
   text: '',
   textStyle: { color: '#ffffff', size: 56, x: 0.5, y: 0.85 },
+
+  playback: { playing: false, currentTime: 0, lastFrameTs: null },
+  _scrubbing: false,
+
+  imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
+
   dragging: null, // null | 'text' | { type:'photo', id }
   _photoBoxes: {}, // id -> { x, y, w, h }
   _textBox: null,
@@ -37,12 +49,110 @@ function initEditeur() {
 
   bindEditorInputs();
   bindEditorDrag(canvas);
+  bindTimelineControls();
+  rafraichirListePhotos();
 
   arreterEditeur();
   (function loop() {
     drawEditorFrame(ctx, canvas);
     editorRafId = requestAnimationFrame(loop);
   })();
+}
+
+/* -------------------------------------------------------------------- */
+/* Timeline (intro -> photos -> outro)                                   */
+/* -------------------------------------------------------------------- */
+function calculerTimeline() {
+  const segments = [];
+  let t = 0;
+  if (EditorState.intro.active) {
+    const duree = Math.max(0.5, Number(EditorState.intro.duree) || 3);
+    segments.push({ type: 'intro', start: t, end: t + duree, data: EditorState.intro });
+    t += duree;
+  }
+  EditorState.photos.forEach((p) => {
+    const duree = Math.max(0.5, Number(p.duree) || 3);
+    segments.push({ type: 'photo', start: t, end: t + duree, data: p });
+    t += duree;
+  });
+  if (EditorState.outro.active) {
+    const duree = Math.max(0.5, Number(EditorState.outro.duree) || 3);
+    segments.push({ type: 'outro', start: t, end: t + duree, data: EditorState.outro });
+    t += duree;
+  }
+  return { segments, dureeTotale: t };
+}
+
+function segmentAuTemps(segments, t) {
+  return segments.find((s) => t >= s.start && t < s.end) || segments[segments.length - 1] || null;
+}
+
+function allerAuSegment(predicate) {
+  const { segments } = calculerTimeline();
+  const seg = segments.find(predicate);
+  if (seg) {
+    EditorState.playback.playing = false;
+    EditorState.playback.currentTime = Math.min(seg.start + 0.05, Math.max(seg.start, seg.end - 0.01));
+  }
+}
+
+function avancerPlayback(dureeTotale) {
+  const now = performance.now();
+  if (EditorState.playback.playing) {
+    if (EditorState.playback.lastFrameTs != null) {
+      const delta = (now - EditorState.playback.lastFrameTs) / 1000;
+      EditorState.playback.currentTime += delta;
+      if (EditorState.playback.currentTime >= dureeTotale) {
+        EditorState.playback.currentTime = dureeTotale > 0 ? dureeTotale - 0.001 : 0;
+        EditorState.playback.playing = false;
+      }
+    }
+    EditorState.playback.lastFrameTs = now;
+  } else {
+    EditorState.playback.lastFrameTs = null;
+  }
+  if (EditorState.playback.currentTime > dureeTotale) {
+    EditorState.playback.currentTime = Math.max(0, dureeTotale - 0.001);
+  }
+}
+
+function bindTimelineControls() {
+  const playBtn = document.getElementById('editor-play-btn');
+  const scrubber = document.getElementById('editor-scrubber');
+  if (!playBtn || !scrubber) return;
+
+  playBtn.addEventListener('click', () => {
+    const { dureeTotale } = calculerTimeline();
+    if (dureeTotale <= 0) return;
+    if (EditorState.playback.currentTime >= dureeTotale - 0.02) EditorState.playback.currentTime = 0;
+    EditorState.playback.playing = !EditorState.playback.playing;
+    EditorState.playback.lastFrameTs = null;
+  });
+
+  scrubber.addEventListener('pointerdown', () => {
+    EditorState._scrubbing = true;
+    EditorState.playback.playing = false;
+  });
+  scrubber.addEventListener('input', (e) => {
+    const { dureeTotale } = calculerTimeline();
+    EditorState.playback.currentTime = (Number(e.target.value) / 100) * dureeTotale;
+  });
+  ['pointerup', 'pointercancel'].forEach((evtName) => {
+    scrubber.addEventListener(evtName, () => {
+      EditorState._scrubbing = false;
+    });
+  });
+}
+
+function mettreAJourUiTimeline(dureeTotale) {
+  const playBtn = document.getElementById('editor-play-btn');
+  const scrubber = document.getElementById('editor-scrubber');
+  const label = document.getElementById('editor-time-label');
+  if (playBtn) playBtn.textContent = EditorState.playback.playing ? '⏸' : '▶';
+  if (label) label.textContent = `${EditorState.playback.currentTime.toFixed(1)}s / ${dureeTotale.toFixed(1)}s`;
+  if (scrubber && !EditorState._scrubbing) {
+    scrubber.value = dureeTotale > 0 ? (EditorState.playback.currentTime / dureeTotale) * 100 : 0;
+  }
 }
 
 /* -------------------------------------------------------------------- */
@@ -81,10 +191,7 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
-function drawEditorFrame(ctx, canvas) {
-  const { width, height } = canvas;
-  ctx.clearRect(0, 0, width, height);
-
+function dessinerFond(ctx, width, height) {
   if (EditorState.bgType === 'video' && EditorState.bgVideoEl && EditorState.bgVideoEl.readyState >= 2) {
     drawCover(ctx, EditorState.bgVideoEl, width, height);
   } else if (EditorState.bgType === 'image' && EditorState.bgImageEl) {
@@ -93,77 +200,130 @@ function drawEditorFrame(ctx, canvas) {
     ctx.fillStyle = '#12151c';
     ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.font = '20px sans-serif';
+    ctx.font = `${Math.round(width * 0.016)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('Importez un fond pour commencer', width / 2, height / 2);
   }
+}
 
-  EditorState._photoBoxes = {};
-  EditorState.photos.forEach((p) => {
-    if (!p.img) return;
-    const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Roboto', sans-serif";
-    const w = width * p.scale;
-    const h = w * (p.img.naturalHeight / p.img.naturalWidth || 1);
-    const x = p.x * width - w / 2;
-    const y = p.y * height - h / 2;
-    ctx.drawImage(p.img, x, y, w, h);
-    let boiteHauteur = h;
+function dessinerPhoto(ctx, width, height, p) {
+  if (!p.img) return null;
+  const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Roboto', sans-serif";
+  const w = width * p.scale;
+  const h = w * (p.img.naturalHeight / p.img.naturalWidth || 1);
+  const x = p.x * width - w / 2;
+  const y = p.y * height - h / 2;
+  ctx.drawImage(p.img, x, y, w, h);
+  let boiteHauteur = h;
 
-    if (p.texte) {
-      const size = Math.max(14, Math.round(width * 0.022));
-      ctx.font = `600 ${size}px ${famille}`;
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.shadowColor = 'rgba(0,0,0,0.7)';
-      ctx.shadowBlur = 8;
-      const lignes = wrapText(ctx, p.texte, w);
-      const lineHeight = size * 1.25;
-      lignes.forEach((ligne, i) => ctx.fillText(ligne, p.x * width, y + h + 8 + i * lineHeight));
-      ctx.shadowBlur = 0;
-      boiteHauteur = h + 8 + lineHeight * lignes.length;
-    }
+  if (p.texte) {
+    const size = Math.max(14, Math.round(width * 0.022));
+    ctx.font = `600 ${size}px ${famille}`;
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.shadowBlur = 8;
+    const lignes = wrapText(ctx, p.texte, w);
+    const lineHeight = size * 1.25;
+    lignes.forEach((ligne, i) => ctx.fillText(ligne, p.x * width, y + h + 8 + i * lineHeight));
+    ctx.shadowBlur = 0;
+    boiteHauteur = h + 8 + lineHeight * lignes.length;
+  }
 
-    EditorState._photoBoxes[p.id] = { x, y, w, h: boiteHauteur };
-    if (EditorState.dragging && EditorState.dragging.type === 'photo' && EditorState.dragging.id === p.id) {
-      ctx.strokeStyle = '#00e676';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, boiteHauteur);
-    }
-  });
+  return { x, y, w, h: boiteHauteur };
+}
 
-  EditorState._textBox = null;
-  if (EditorState.text) {
-    const size = Number(EditorState.textStyle.size) || 56;
-    const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
+function dessinerIntroOutro(ctx, width, height, seg) {
+  const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
+  if (seg.logoImg) {
+    const lw = width * 0.16;
+    const lh = lw * (seg.logoImg.naturalHeight / seg.logoImg.naturalWidth || 1);
+    ctx.drawImage(seg.logoImg, width / 2 - lw / 2, height * 0.1, lw, lh);
+  }
+  if (seg.img) {
+    const iw = width * 0.46;
+    const ih = iw * (seg.img.naturalHeight / seg.img.naturalWidth || 1);
+    ctx.drawImage(seg.img, width / 2 - iw / 2, height / 2 - ih / 2, iw, ih);
+  }
+  if (seg.texte) {
+    const size = Math.max(18, Math.round(width * 0.03));
     ctx.font = `700 ${size}px ${famille}`;
-    ctx.fillStyle = EditorState.textStyle.color;
+    ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
     ctx.shadowBlur = 10;
-
-    const maxWidth = width * 0.85;
-    const lignes = wrapText(ctx, EditorState.text, maxWidth);
-    const lineHeight = size * 1.2;
-    const totalHeight = lineHeight * lignes.length;
-    const cx = EditorState.textStyle.x * width;
-    const cy = EditorState.textStyle.y * height;
-    let boxW = 0;
-    lignes.forEach((ligne, i) => {
-      boxW = Math.max(boxW, ctx.measureText(ligne).width);
-      ctx.fillText(ligne, cx, cy - totalHeight / 2 + lineHeight * (i + 0.5));
-    });
+    const lignes = wrapText(ctx, seg.texte, width * 0.8);
+    const lineHeight = size * 1.25;
+    const y0 = height * 0.86 - (lineHeight * lignes.length) / 2;
+    lignes.forEach((ligne, i) => ctx.fillText(ligne, width / 2, y0 + i * lineHeight));
     ctx.shadowBlur = 0;
+  }
+}
 
-    EditorState._textBox = { x: cx - boxW / 2 - 10, y: cy - totalHeight / 2 - 10, w: boxW + 20, h: totalHeight + 20 };
-    if (EditorState.dragging === 'text') {
-      ctx.strokeStyle = '#2979ff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(EditorState._textBox.x, EditorState._textBox.y, EditorState._textBox.w, EditorState._textBox.h);
+function dessinerTexteLibre(ctx, width, height) {
+  if (!EditorState.text) return null;
+  const size = Number(EditorState.textStyle.size) || 56;
+  const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
+  ctx.font = `700 ${size}px ${famille}`;
+  ctx.fillStyle = EditorState.textStyle.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = 10;
+
+  const maxWidth = width * 0.85;
+  const lignes = wrapText(ctx, EditorState.text, maxWidth);
+  const lineHeight = size * 1.2;
+  const totalHeight = lineHeight * lignes.length;
+  const cx = EditorState.textStyle.x * width;
+  const cy = EditorState.textStyle.y * height;
+  let boxW = 0;
+  lignes.forEach((ligne, i) => {
+    boxW = Math.max(boxW, ctx.measureText(ligne).width);
+    ctx.fillText(ligne, cx, cy - totalHeight / 2 + lineHeight * (i + 0.5));
+  });
+  ctx.shadowBlur = 0;
+
+  return { x: cx - boxW / 2 - 10, y: cy - totalHeight / 2 - 10, w: boxW + 20, h: totalHeight + 20 };
+}
+
+function drawEditorFrame(ctx, canvas) {
+  const { width, height } = canvas;
+  ctx.clearRect(0, 0, width, height);
+  dessinerFond(ctx, width, height);
+
+  const { segments, dureeTotale } = calculerTimeline();
+  avancerPlayback(dureeTotale);
+  const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
+
+  EditorState._photoBoxes = {};
+  if (segmentActif) {
+    if (segmentActif.type === 'photo') {
+      const box = dessinerPhoto(ctx, width, height, segmentActif.data);
+      if (box) {
+        EditorState._photoBoxes[segmentActif.data.id] = box;
+        if (EditorState.dragging && EditorState.dragging.type === 'photo' && EditorState.dragging.id === segmentActif.data.id) {
+          ctx.strokeStyle = '#00e676';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(box.x, box.y, box.w, box.h);
+        }
+      }
+    } else {
+      dessinerIntroOutro(ctx, width, height, segmentActif.data);
     }
   }
+
+  EditorState._textBox = dessinerTexteLibre(ctx, width, height);
+  if (EditorState._textBox && EditorState.dragging === 'text') {
+    ctx.strokeStyle = '#2979ff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(EditorState._textBox.x, EditorState._textBox.y, EditorState._textBox.w, EditorState._textBox.h);
+  }
+
+  mettreAJourUiTimeline(dureeTotale);
 }
 
 /* -------------------------------------------------------------------- */
@@ -183,6 +343,51 @@ function downloadBlob(blob, filename) {
 function afficherNomFichier(spanId, file) {
   const span = document.getElementById(spanId);
   if (span) span.textContent = file ? file.name : 'Aucun fichier choisi';
+}
+
+async function chargerImage(file) {
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  try {
+    await img.decode();
+  } catch (_) {}
+  return img;
+}
+
+function bindSegmentControls(seg, prefix, segType) {
+  const toggle = document.getElementById(`editor-${prefix}-toggle`);
+  const panel = document.getElementById(`editor-${prefix}-panel`);
+  const logoInput = document.getElementById(`editor-${prefix}-logo-input`);
+  const imgInput = document.getElementById(`editor-${prefix}-img-input`);
+  const textInput = document.getElementById(`editor-${prefix}-text`);
+  const dureeInput = document.getElementById(`editor-${prefix}-duree`);
+  if (!toggle) return;
+
+  toggle.addEventListener('change', (e) => {
+    seg.active = e.target.checked;
+    panel.classList.toggle('hidden', !seg.active);
+    if (seg.active) allerAuSegment((s) => s.type === segType);
+  });
+  logoInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    afficherNomFichier(`editor-${prefix}-logo-filename`, file);
+    seg.logoImg = await chargerImage(file);
+    allerAuSegment((s) => s.type === segType);
+  });
+  imgInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    afficherNomFichier(`editor-${prefix}-img-filename`, file);
+    seg.img = await chargerImage(file);
+    allerAuSegment((s) => s.type === segType);
+  });
+  textInput.addEventListener('input', (e) => {
+    seg.texte = e.target.value;
+  });
+  dureeInput.addEventListener('input', (e) => {
+    seg.duree = Math.max(0.5, Number(e.target.value) || 3);
+  });
 }
 
 function bindEditorInputs() {
@@ -216,12 +421,7 @@ function bindEditorInputs() {
       EditorState.bgVideoEl = video;
       EditorState.bgType = 'video';
     } else {
-      const img = new Image();
-      img.src = url;
-      try {
-        await img.decode();
-      } catch (_) {}
-      EditorState.bgImageEl = img;
+      EditorState.bgImageEl = await chargerImage(file);
       EditorState.bgType = 'image';
     }
   });
@@ -238,8 +438,10 @@ function bindEditorInputs() {
     audio.play().catch(() => {});
   });
 
+  bindSegmentControls(EditorState.intro, 'intro', 'intro');
+  bindSegmentControls(EditorState.outro, 'outro', 'outro');
+
   addPhotoBtn.addEventListener('click', ajouterCalquePhoto);
-  rafraichirListePhotos();
 
   fontInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -267,12 +469,18 @@ function bindEditorInputs() {
     EditorState.textStyle.size = Number(e.target.value);
   });
 
+  document.querySelectorAll('input[name="editor-img-format"]').forEach((radio) => {
+    radio.addEventListener('change', (e) => {
+      if (e.target.checked) EditorState.imageExportFormat = e.target.value;
+    });
+  });
+
   exportPngBtn.addEventListener('click', exportEditeurPng);
   exportMp4Btn.addEventListener('click', exportEditeurMp4);
 }
 
 /* -------------------------------------------------------------------- */
-/* Calques photo multiples (chacun avec sa légende liée)                 */
+/* Calques photo multiples (chacun avec sa légende et sa durée)          */
 /* -------------------------------------------------------------------- */
 function markupFilePickerPhoto(inputId, filenameId) {
   return `
@@ -296,25 +504,26 @@ function renderPhotoLayerHtml(p, index) {
       </div>
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
-      <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
+      <div class="editor-row">
+        <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
+        <label class="editor-mini-label">Durée (s)<input type="number" data-duree-for="${p.id}" min="0.5" max="30" step="0.5" value="${p.duree}" style="max-width:80px;"></label>
+      </div>
     </div>
   `;
 }
 
 function bindPhotoLayerEvents() {
   EditorState.photos.forEach((p) => {
+    const jump = () => allerAuSegment((s) => s.type === 'photo' && s.data.id === p.id);
+
     const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
     if (fileInput) {
       fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         afficherNomFichier(`editor-photo-filename-${p.id}`, file);
-        const img = new Image();
-        img.src = URL.createObjectURL(file);
-        try {
-          await img.decode();
-        } catch (_) {}
-        p.img = img;
+        p.img = await chargerImage(file);
+        jump();
       });
     }
     const captionInput = document.querySelector(`[data-caption-for="${p.id}"]`);
@@ -322,11 +531,19 @@ function bindPhotoLayerEvents() {
       captionInput.addEventListener('input', (e) => {
         p.texte = e.target.value;
       });
+      captionInput.addEventListener('focus', jump);
     }
     const scaleInput = document.querySelector(`[data-scale-for="${p.id}"]`);
     if (scaleInput) {
       scaleInput.addEventListener('input', (e) => {
         p.scale = Number(e.target.value) / 100;
+        jump();
+      });
+    }
+    const dureeInput = document.querySelector(`[data-duree-for="${p.id}"]`);
+    if (dureeInput) {
+      dureeInput.addEventListener('input', (e) => {
+        p.duree = Math.max(0.5, Number(e.target.value) || 3);
       });
     }
   });
@@ -345,8 +562,10 @@ function rafraichirListePhotos() {
 }
 
 function ajouterCalquePhoto() {
-  EditorState.photos.push({ id: ++photoLayerCounter, img: null, x: 0.5, y: 0.5, scale: 0.3, texte: '' });
+  const id = ++photoLayerCounter;
+  EditorState.photos.push({ id, img: null, x: 0.5, y: 0.5, scale: 0.3, texte: '', duree: 3 });
   rafraichirListePhotos();
+  allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
 }
 
 function supprimerCalquePhoto(id) {
@@ -356,7 +575,7 @@ function supprimerCalquePhoto(id) {
 }
 
 /* -------------------------------------------------------------------- */
-/* Glisser-déposer sur le canvas (texte / photo)                         */
+/* Glisser-déposer sur le canvas (texte / photo active)                  */
 /* -------------------------------------------------------------------- */
 function toCanvasCoords(canvas, evt) {
   const rect = canvas.getBoundingClientRect();
@@ -420,17 +639,32 @@ function bindEditorDrag(canvas) {
 }
 
 /* -------------------------------------------------------------------- */
-/* Export PNG                                                            */
+/* Export PNG (formats verticaux Play Store)                             */
 /* -------------------------------------------------------------------- */
 function exportEditeurPng() {
-  const canvas = document.getElementById('editor-canvas');
-  canvas.toBlob((blob) => {
+  const dims = EditorState.imageExportFormat === 'square' ? { w: 1080, h: 1080 } : { w: 1080, h: 1920 };
+  const off = document.createElement('canvas');
+  off.width = dims.w;
+  off.height = dims.h;
+  const ctx = off.getContext('2d');
+
+  dessinerFond(ctx, dims.w, dims.h);
+  const { segments } = calculerTimeline();
+  const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
+  if (segmentActif) {
+    if (segmentActif.type === 'photo') dessinerPhoto(ctx, dims.w, dims.h, segmentActif.data);
+    else dessinerIntroOutro(ctx, dims.w, dims.h, segmentActif.data);
+  }
+  dessinerTexteLibre(ctx, dims.w, dims.h);
+
+  off.toBlob((blob) => {
     if (blob) downloadBlob(blob, 'playtesteur-visuel.png');
   }, 'image/png');
 }
 
 /* -------------------------------------------------------------------- */
-/* Export MP4 (MediaRecorder -> webm, puis transcodage ffmpeg.wasm)      */
+/* Export MP4 (MediaRecorder 60fps -> webm, puis ffmpeg.wasm haute       */
+/* qualité, preset lent)                                                 */
 /* -------------------------------------------------------------------- */
 let ffmpegInstance = null;
 
@@ -455,14 +689,17 @@ async function transcoderEnMp4(webmBlob, onProgress) {
   try {
     const donneesEntree = new Uint8Array(await webmBlob.arrayBuffer());
     await ffmpeg.writeFile('entree.webm', donneesEntree);
+    // Preset "slow" + CRF bas : encodage plus lent mais meilleure qualité,
+    // conforme au 1920x1080/60fps de la capture.
     await ffmpeg.exec([
       '-i', 'entree.webm',
+      '-r', '60',
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-crf', '23',
+      '-preset', 'slow',
+      '-crf', '18',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
-      '-b:a', '160k',
+      '-b:a', '192k',
       'sortie.mp4',
     ]);
     const donneesSortie = await ffmpeg.readFile('sortie.mp4');
@@ -493,7 +730,12 @@ async function exportEditeurMp4() {
   const progressWrap = document.getElementById('editor-export-progress');
   const fill = document.getElementById('editor-progress-fill');
   const label = document.getElementById('editor-progress-label');
-  const duration = Math.max(1, Math.min(30, Number(document.getElementById('editor-duration').value) || 6));
+
+  const { dureeTotale } = calculerTimeline();
+  if (dureeTotale <= 0) {
+    toast("Ajoutez au moins une intro, une photo ou une outro avant d'exporter.", 'error');
+    return;
+  }
 
   const setProgress = (frac, texte) => {
     const pct = Math.round(frac * 100);
@@ -509,7 +751,7 @@ async function exportEditeurMp4() {
   let audioCtx = null;
   try {
     const canvas = document.getElementById('editor-canvas');
-    const canvasStream = canvas.captureStream(30);
+    const canvasStream = canvas.captureStream(60);
     const tracks = [...canvasStream.getVideoTracks()];
 
     if (EditorState.audioEl || EditorState.bgVideoEl) {
@@ -525,7 +767,7 @@ async function exportEditeurMp4() {
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
       : 'video/webm';
-    const recorder = new MediaRecorder(finalStream, { mimeType });
+    const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: 12_000_000 });
     const chunks = [];
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size) chunks.push(e.data);
@@ -540,6 +782,10 @@ async function exportEditeurMp4() {
       await EditorState.audioEl.play().catch(() => {});
     }
 
+    EditorState.playback.currentTime = 0;
+    EditorState.playback.lastFrameTs = null;
+    EditorState.playback.playing = true;
+
     const finEnregistrement = new Promise((resolve) => {
       recorder.onstop = resolve;
     });
@@ -548,16 +794,17 @@ async function exportEditeurMp4() {
     const debut = Date.now();
     const tick = setInterval(() => {
       const ecoule = (Date.now() - debut) / 1000;
-      setProgress(Math.min(0.5, (ecoule / duration) * 0.5));
+      setProgress(Math.min(0.5, (ecoule / dureeTotale) * 0.5));
     }, 100);
 
-    await new Promise((resolve) => setTimeout(resolve, duration * 1000));
+    await new Promise((resolve) => setTimeout(resolve, dureeTotale * 1000));
     clearInterval(tick);
+    EditorState.playback.playing = false;
     recorder.stop();
     if (EditorState.audioEl) EditorState.audioEl.pause();
     await finEnregistrement;
 
-    setProgress(0.5, 'Conversion en MP4…');
+    setProgress(0.5, 'Conversion en MP4 (qualité haute, encodage lent)…');
     const webmBlob = new Blob(chunks, { type: 'video/webm' });
     const mp4Blob = await transcoderEnMp4(webmBlob, (p) =>
       setProgress(0.5 + p * 0.5, `Conversion en MP4… ${Math.round(p * 100)}%`)
