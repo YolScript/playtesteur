@@ -31,34 +31,9 @@ function getAuthUrl() {
   });
 }
 
-// Récupère le "Pseudo" configuré dans les paramètres du compte Google
-// (Infos personnelles > Nom > Pseudo). Ce champ n'est pas dans le id_token
-// OpenID standard (name/given_name/family_name) : il faut un appel séparé à
-// l'API Google People. Il n'existe pas de scope OAuth dédié à ce champ
-// (user.nickname.read n'est pas un scope valide côté Google, cf. erreur
-// "invalid_scope") : on retente l'appel avec le scope "profile" déjà
-// accordé — Google le sert parfois pour people/me, sinon la requête
-// échoue proprement et on retombe sur le prénom.
-async function recupererPseudoGoogle(auth) {
-  try {
-    const { google } = require('googleapis');
-    const people = google.people({ version: 'v1', auth });
-    const { data } = await people.people.get({
-      resourceName: 'people/me',
-      personFields: 'nicknames',
-    });
-    const nickname = (data.nicknames || []).find((n) => n.value)?.value;
-    return nickname || null;
-  } catch (err) {
-    console.warn('[googleAuth] Pseudo Google (nickname) indisponible, fallback sur le prénom.', err.message);
-    return null;
-  }
-}
-
 // Échange le code OAuth contre le profil Google vérifié de l'utilisateur.
 async function handleCallback(code) {
   const { tokens } = await oauth2Client.getToken(code);
-  oauth2Client.setCredentials(tokens);
   const ticket = await oauth2Client.verifyIdToken({ idToken: tokens.id_token, audience: CLIENT_ID });
   const payload = ticket.getPayload();
 
@@ -66,13 +41,10 @@ async function handleCallback(code) {
     throw new Error('Cet email Google n\'est pas vérifié.');
   }
 
-  const nickname = await recupererPseudoGoogle(oauth2Client);
-  const pseudo = nickname || payload.given_name || payload.name || payload.email.split('@')[0];
-
   return {
     googleId: payload.sub,
     email: payload.email.toLowerCase(),
-    pseudo,
+    pseudo: payload.name || payload.email.split('@')[0],
     avatarUrl: payload.picture || null,
   };
 }
