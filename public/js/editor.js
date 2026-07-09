@@ -1460,9 +1460,11 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   sizeLayerCanvas(layer, panelW, panelH);
   const ctx = layer.ctx;
   ctx.clearRect(0, 0, panelW, panelH);
-  roundRectPath(ctx, 0, 0, panelW, panelH, 18);
-  ctx.fillStyle = 'rgba(8,10,14,0.5)';
-  ctx.fill();
+  if (b.bgPanelActive !== false) {
+    roundRectPath(ctx, 0, 0, panelW, panelH, 18);
+    ctx.fillStyle = 'rgba(8,10,14,0.5)';
+    ctx.fill();
+  }
 
   const align = b.align || 'center';
   ctx.font = `${style} ${weight} ${size}px ${famille}`;
@@ -2554,6 +2556,9 @@ function renderTextBlockHtml(b, index) {
               <option value="right" ${b.align === 'right' ? 'selected' : ''}>Droite</option>
             </select>
           </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-bgpanel-for="${b.id}" ${b.bgPanelActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Fond derrière le texte</span></label>
+          </div>
         </div>
       </details>
 
@@ -2636,6 +2641,9 @@ function bindTextBlockEvents() {
     const alignInput = document.querySelector(`[data-align-for="${b.id}"]`);
     if (alignInput) alignInput.addEventListener('change', (e) => (b.align = e.target.value));
 
+    const bgPanelInput = document.querySelector(`[data-bgpanel-for="${b.id}"]`);
+    if (bgPanelInput) bgPanelInput.addEventListener('change', (e) => (b.bgPanelActive = e.target.checked));
+
     const animInput = document.querySelector(`[data-anim-for="${b.id}"]`);
     if (animInput) animInput.addEventListener('change', (e) => (b.anim = e.target.value));
 
@@ -2710,6 +2718,7 @@ function ajouterBlocTexte() {
     anim: 'none',
     startTime: null,
     endTime: null,
+    bgPanelActive: true,
     rotX: 0,
     rotY: 0,
     rotZ: 0,
