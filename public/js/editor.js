@@ -438,12 +438,27 @@ function bindTimelineControls() {
   const scrubber = document.getElementById('editor-scrubber');
   if (!playBtn || !scrubber) return;
 
-  playBtn.addEventListener('click', () => {
+  playBtn.addEventListener('click', async () => {
     const { dureeTotale } = calculerTimeline();
     if (dureeTotale <= 0) return;
     if (EditorState.playback.currentTime >= dureeTotale - 0.02) EditorState.playback.currentTime = 0;
     EditorState.playback.playing = !EditorState.playback.playing;
     EditorState.playback.lastFrameTs = null;
+
+    if (EditorState.playback.playing) {
+      // Un clic est garanti être un vrai geste utilisateur : c'est le
+      // point de rattrapage fiable pour (re)lancer tout l'audio/vidéo,
+      // y compris quand le premier appel .play() (au chargement d'un
+      // média, potentiellement déclenché par script plutôt que par
+      // l'utilisateur) avait été silencieusement bloqué par la politique
+      // autoplay du navigateur — sans quoi la musique ne redémarre jamais.
+      if (EditorState.audioCtx && EditorState.audioCtx.state === 'suspended') {
+        await EditorState.audioCtx.resume().catch(() => {});
+      }
+      if (EditorState.audioEl) EditorState.audioEl.play().catch(() => {});
+      if (EditorState.voiceEl) EditorState.voiceEl.play().catch(() => {});
+      if (EditorState.bgVideoEl) EditorState.bgVideoEl.play().catch(() => {});
+    }
   });
 
   scrubber.addEventListener('pointerdown', () => {
