@@ -1029,7 +1029,9 @@ tbody tr:hover { background: var(--bg-card-hover); }
     gap: 8px;
 }
 .editor-photo-layer-head { display: flex; justify-content: space-between; align-items: center; }
-.editor-photo-layer-title { font-size: 12px; font-weight: 700; color: var(--text-white); }
+.editor-photo-layer-title { font-size: 12px; font-weight: 700; color: var(--text-white); cursor: grab; }
+.editor-photo-layer[draggable="true"] { transition: opacity 0.12s ease, transform 0.12s ease; }
+.editor-photo-layer.dragging { opacity: 0.4; }
 .editor-remove-btn {
     background: none;
     border: none;

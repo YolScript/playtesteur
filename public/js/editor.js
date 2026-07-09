@@ -37,6 +37,7 @@ const EditorState = {
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
 
   effects: { bloomActive: false, bloomStrength: 0.4, bloomAudioReactive: false },
+  transitionType: 'none', // 'none' | 'fade' | 'slide' | 'zoom'
 
   dragging: null, // null | { type:'photo'|'caption'|'textblock', id }
   _textBoxes: {}, // id -> box (pour le drag des blocs de texte)
@@ -380,6 +381,33 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// Path de masque selon la forme choisie pour une photo. 'rect' = coins
+// arrondis (comportement historique), 'circle' = ellipse inscrite,
+// 'hexagon' = hexagone régulier inscrit.
+function maskShapePath(ctx, shape, x, y, w, h, r) {
+  if (shape === 'circle') {
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.closePath();
+    return;
+  }
+  if (shape === 'hexagon') {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI / 3) * i - Math.PI / 2;
+      const px = cx + (w / 2) * Math.cos(a);
+      const py = cy + (h / 2) * Math.sin(a);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    return;
+  }
+  roundRectPath(ctx, x, y, w, h, r);
+}
+
 // Fond : texture vidéo/image "cover" appliquée directement sur le plan
 // de fond (pas besoin de composition hors-écran, three.js gère la
 // texture vidéo nativement).
@@ -554,18 +582,36 @@ function dessinerContourEnergetique(ctx, x, y, w, h, r, color, tGlobal, count, s
   ctx.restore();
 }
 
+// Construit la chaîne CSS filter (Canvas 2D ctx.filter) pour une photo à
+// partir de ses réglages. Valeurs neutres (100/0) omises pour rester
+// performant quand aucun filtre n'est appliqué.
+function cssFiltreImage(p) {
+  const parts = [];
+  const brightness = p.imgBrightness ?? 100;
+  const contrast = p.imgContrast ?? 100;
+  const saturation = p.imgSaturation ?? 100;
+  if (brightness !== 100) parts.push(`brightness(${brightness}%)`);
+  if (contrast !== 100) parts.push(`contrast(${contrast}%)`);
+  if (saturation !== 100) parts.push(`saturate(${saturation}%)`);
+  if (p.imgGrayscale) parts.push('grayscale(100%)');
+  if (p.imgSepia) parts.push('sepia(75%)');
+  if (p.imgBlur) parts.push(`blur(${Number(p.imgBlur)}px)`);
+  return parts.length ? parts.join(' ') : 'none';
+}
+
 // Photo "carte flottante" : coins arrondis, ombre douce, contour clair —
 // composés sur un canvas hors-écran (comme avant) puis texturés sur un
 // plan 3D. Flottement + tilt automatiques, plus rotation manuelle sur
 // les 3 axes (p.rotX/rotY/rotZ, en degrés, ajoutés à l'auto-tilt).
-function mettreAJourPhoto(p, tGlobal) {
+function mettreAJourPhoto(p, tGlobal, layerName) {
+  layerName = layerName || 'photo';
   if (!p.img) {
-    hideLayer('photo');
-    hideLayer('caption');
+    hideLayer(layerName);
+    if (layerName === 'photo') hideLayer('caption');
     return null;
   }
   const { width, height } = EditorState.three;
-  const layer = getOrCreateCanvasLayer('photo');
+  const layer = getOrCreateCanvasLayer(layerName);
 
   const w = Math.round(width * p.scale);
   const h = Math.round(w * (p.img.naturalHeight / p.img.naturalWidth || 1));
@@ -580,35 +626,67 @@ function mettreAJourPhoto(p, tGlobal) {
   const ox = marge;
   const oy = marge;
 
+  const shape = p.maskShape || 'rect';
+  const radius = Math.min(w, h) * 0.06;
+
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.55)';
   ctx.shadowBlur = h * 0.14;
   ctx.shadowOffsetY = h * 0.08;
-  roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
+  maskShapePath(ctx, shape, ox, oy, w, h, radius);
   ctx.fillStyle = '#000';
   ctx.fill();
   ctx.restore();
 
+  // Crop : fraction de l'image source utilisée (cropX/Y = coin haut-gauche,
+  // cropW/H = largeur/hauteur, en fractions 0..1 de l'image originale).
+  const cropX = Math.min(0.9, Math.max(0, Number(p.cropX) || 0));
+  const cropY = Math.min(0.9, Math.max(0, Number(p.cropY) || 0));
+  const cropW = Math.min(1 - cropX, Math.max(0.1, p.cropW != null ? Number(p.cropW) : 1));
+  const cropH = Math.min(1 - cropY, Math.max(0.1, p.cropH != null ? Number(p.cropH) : 1));
+  const iw = p.img.naturalWidth;
+  const ih = p.img.naturalHeight;
+
   ctx.save();
-  roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
+  maskShapePath(ctx, shape, ox, oy, w, h, radius);
   ctx.clip();
-  ctx.drawImage(p.img, ox, oy, w, h);
+  ctx.filter = cssFiltreImage(p);
+  ctx.drawImage(p.img, cropX * iw, cropY * ih, cropW * iw, cropH * ih, ox, oy, w, h);
+  ctx.filter = 'none';
+  if (p.vignette) {
+    const grad = ctx.createRadialGradient(
+      ox + w / 2, oy + h / 2, Math.min(w, h) * 0.25,
+      ox + w / 2, oy + h / 2, Math.max(w, h) * 0.72
+    );
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, `rgba(0,0,0,${0.15 + (Number(p.vignetteStrength) || 0.5) * 0.55})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(ox, oy, w, h);
+  }
   ctx.restore();
 
-  ctx.lineWidth = Math.max(1, w * 0.003);
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
-  ctx.stroke();
+  if (p.borderActive !== false) {
+    ctx.save();
+    ctx.globalAlpha = 0.65;
+    ctx.lineWidth = Math.max(1, w * ((Number(p.borderWidth) || 3) / 1000));
+    ctx.strokeStyle = p.borderColor || '#ffffff';
+    maskShapePath(ctx, shape, ox, oy, w, h, radius);
+    ctx.stroke();
+    ctx.restore();
+  }
 
+  // Le contour Saber/spectre suit toujours un tracé rectangulaire arrondi
+  // (pointOnRoundRect), même si le masque de la photo est un cercle ou un
+  // hexagone : généraliser le tracé à ces formes est laissé pour plus tard.
   if (p.saberActive) {
     dessinerContourEnergetique(
-      ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.saberColor || '#00e5ff', tGlobal,
+      ctx, ox, oy, w, h, radius, p.saberColor || '#00e5ff', tGlobal,
       p.saberCount, p.saberSize
     );
   }
   if (p.spectrumActive) {
     dessinerSpectreAudio(
-      ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.spectrumColor || '#ff2d95', margeSpectre * 0.85,
+      ctx, ox, oy, w, h, radius, p.spectrumColor || '#ff2d95', margeSpectre * 0.85,
       p.spectrumCount, spectrumSizeMul
     );
   }
@@ -950,6 +1028,39 @@ function niveauAudioMoyen() {
   return somme / data.length / 255;
 }
 
+const DUREE_TRANSITION = 0.4; // secondes
+
+// Réinitialise le mesh d'un layer à son état "neutre" (opaque, pas de
+// décalage) — nécessaire car la transition précédente a pu laisser une
+// opacity/position altérée dessus.
+function resetTransitionLayer(layerName) {
+  const layer = EditorState.three.layers[layerName];
+  if (layer) layer.mesh.material.opacity = 1;
+}
+
+// Applique l'effet visuel d'une transition en cours sur le mesh d'un
+// layer photo : fondu (opacity), glissement (décalage horizontal) ou
+// zoom (échelle), selon EditorState.transitionType. `progress` va de 0
+// (segment pas encore commencé / sur le point de disparaître) à 1
+// (pleinement affiché), `direction` = 'in' | 'out'.
+function appliquerEffetTransition(layerName, progress, direction) {
+  const layer = EditorState.three.layers[layerName];
+  if (!layer || !layer.mesh.visible) return;
+  const type = EditorState.transitionType;
+  const mesh = layer.mesh;
+  if (type === 'fade' || type === 'none') {
+    mesh.material.opacity = type === 'none' ? 1 : progress;
+  } else if (type === 'slide') {
+    mesh.material.opacity = 1;
+    const decalage = (1 - progress) * EditorState.three.width * 0.5;
+    mesh.position.x += direction === 'in' ? decalage : -decalage;
+  } else if (type === 'zoom') {
+    mesh.material.opacity = progress;
+    const s = direction === 'in' ? 0.85 + progress * 0.15 : 1 + (1 - progress) * 0.15;
+    mesh.scale.multiplyScalar(s);
+  }
+}
+
 function renderEditorFrame() {
   const ts = EditorState.three;
   if (!ts) return;
@@ -958,7 +1069,22 @@ function renderEditorFrame() {
 
   const { segments, dureeTotale } = calculerTimeline();
   avancerPlayback(dureeTotale);
-  const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
+  const now = EditorState.playback.currentTime;
+  const segmentActif = segmentAuTemps(segments, now);
+  const idxActif = segments.indexOf(segmentActif);
+  const segmentSuivant = idxActif >= 0 ? segments[idxActif + 1] : null;
+
+  // Fenêtre de transition : les DUREE_TRANSITION dernières secondes du
+  // segment actif, s'il y a un segment suivant et qu'une transition est
+  // choisie. Le sortant s'estompe sur son layer habituel, l'entrant est
+  // pré-affiché en avance sur un second jeu de layers ('*-in').
+  const enTransition =
+    EditorState.transitionType !== 'none' &&
+    segmentActif &&
+    segmentSuivant &&
+    segmentActif.end - now < DUREE_TRANSITION;
+  const progressSortie = enTransition ? Math.max(0, (segmentActif.end - now) / DUREE_TRANSITION) : 1;
+  const progressEntree = enTransition ? 1 - progressSortie : 0;
 
   const tGlobal = performance.now() / 1000;
   let photoBox = null;
@@ -966,9 +1092,11 @@ function renderEditorFrame() {
     hideLayer('introLogo');
     hideLayer('introImg');
     hideLayer('introText');
-    photoBox = mettreAJourPhoto(segmentActif.data, tGlobal);
+    photoBox = mettreAJourPhoto(segmentActif.data, tGlobal, 'photo');
+    resetTransitionLayer('photo');
     mettreAJourLegende(segmentActif.data);
     mettreAJourParticules(segmentActif.data, photoBox, tGlobal);
+    if (enTransition) appliquerEffetTransition('photo', progressSortie, 'out');
   } else if (segmentActif) {
     hideLayer('photo');
     hideLayer('caption');
@@ -981,6 +1109,14 @@ function renderEditorFrame() {
     hideLayer('introImg');
     hideLayer('introText');
     mettreAJourParticules(null, null, tGlobal);
+  }
+
+  if (enTransition && segmentSuivant.type === 'photo') {
+    resetTransitionLayer('photo-in');
+    mettreAJourPhoto(segmentSuivant.data, tGlobal, 'photo-in');
+    appliquerEffetTransition('photo-in', progressEntree, 'in');
+  } else {
+    hideLayer('photo-in');
   }
 
   EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime);
@@ -1147,6 +1283,13 @@ function bindEditorInputs() {
 
   addTextBlockBtn.addEventListener('click', ajouterBlocTexte);
 
+  const transitionSelect = document.getElementById('editor-transition-type');
+  if (transitionSelect) {
+    transitionSelect.addEventListener('change', (e) => {
+      EditorState.transitionType = e.target.value;
+    });
+  }
+
   const bloomToggle = document.getElementById('editor-bloom-toggle');
   const bloomStrength = document.getElementById('editor-bloom-strength');
   if (bloomToggle) {
@@ -1199,9 +1342,9 @@ function markupFilePickerPhoto(inputId, filenameId) {
 
 function renderPhotoLayerHtml(p, index) {
   return `
-    <div class="editor-photo-layer">
+    <div class="editor-photo-layer" draggable="true" data-photo-drag="${p.id}">
       <div class="editor-photo-layer-head">
-        <span class="editor-photo-layer-title">Photo ${index + 1}</span>
+        <span class="editor-photo-layer-title" title="Glisser pour réordonner">&#9776; Photo ${index + 1}</span>
         <button type="button" class="editor-remove-btn" data-remove-photo="${p.id}" title="Supprimer cette photo">&times;</button>
       </div>
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
@@ -1210,6 +1353,61 @@ function renderPhotoLayerHtml(p, index) {
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
         <label class="editor-mini-label">Durée (s)<input type="number" data-duree-for="${p.id}" min="0.5" max="30" step="0.5" value="${p.duree}" style="max-width:80px;"></label>
       </div>
+
+      <details class="editor-accordion-nested">
+        <summary>Forme &amp; bordure</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <select data-shape-for="${p.id}">
+              <option value="rect" ${(!p.maskShape || p.maskShape === 'rect') ? 'selected' : ''}>Rectangle arrondi</option>
+              <option value="circle" ${p.maskShape === 'circle' ? 'selected' : ''}>Cercle / ellipse</option>
+              <option value="hexagon" ${p.maskShape === 'hexagon' ? 'selected' : ''}>Hexagone</option>
+            </select>
+          </div>
+          <div class="editor-row">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-border-for="${p.id}" ${p.borderActive !== false ? 'checked' : ''}><span>Bordure</span></label>
+            <input type="color" data-bordercolor-for="${p.id}" value="${p.borderColor || '#ffffff'}" title="Couleur de la bordure">
+            <label class="editor-mini-label">Épaisseur<input type="range" data-borderwidth-for="${p.id}" min="1" max="15" value="${p.borderWidth ?? 3}"></label>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Filtres image</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-mini-label">Luminosité<input type="range" data-brightness-for="${p.id}" min="40" max="180" value="${p.imgBrightness ?? 100}"></label>
+            <label class="editor-mini-label">Contraste<input type="range" data-contrast-for="${p.id}" min="40" max="180" value="${p.imgContrast ?? 100}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Saturation<input type="range" data-saturation-for="${p.id}" min="0" max="200" value="${p.imgSaturation ?? 100}"></label>
+            <label class="editor-mini-label">Flou<input type="range" data-blur-for="${p.id}" min="0" max="10" value="${p.imgBlur ?? 0}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-grayscale-for="${p.id}" ${p.imgGrayscale ? 'checked' : ''}><span>Noir &amp; blanc</span></label>
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-sepia-for="${p.id}" ${p.imgSepia ? 'checked' : ''}><span>Sépia</span></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-vignette-for="${p.id}" ${p.vignette ? 'checked' : ''}><span>Vignette</span></label>
+            <label class="editor-mini-label">Intensité<input type="range" data-vignettestrength-for="${p.id}" min="10" max="100" value="${Math.round((p.vignetteStrength ?? 0.5) * 100)}"></label>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Recadrage</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-mini-label">Haut<input type="range" data-cropy-for="${p.id}" min="0" max="80" value="${Math.round((p.cropY ?? 0) * 100)}"></label>
+            <label class="editor-mini-label">Gauche<input type="range" data-cropx-for="${p.id}" min="0" max="80" value="${Math.round((p.cropX ?? 0) * 100)}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Largeur<input type="range" data-cropw-for="${p.id}" min="20" max="100" value="${Math.round((p.cropW ?? 1) * 100)}"></label>
+            <label class="editor-mini-label">Hauteur<input type="range" data-croph-for="${p.id}" min="20" max="100" value="${Math.round((p.cropH ?? 1) * 100)}"></label>
+          </div>
+          <span class="form-hint">Haut/Gauche déplacent le point de départ du recadrage, Largeur/Hauteur ajustent la zone gardée de l'image originale.</span>
+        </div>
+      </details>
 
       <details class="editor-accordion-nested">
         <summary>Rotation 3D</summary>
@@ -1360,9 +1558,81 @@ function bindPhotoLayerEvents() {
         jump();
       });
     }
+    const shapeInput = document.querySelector(`[data-shape-for="${p.id}"]`);
+    if (shapeInput) shapeInput.addEventListener('change', (e) => (p.maskShape = e.target.value));
+
+    const borderInput = document.querySelector(`[data-border-for="${p.id}"]`);
+    if (borderInput) borderInput.addEventListener('change', (e) => (p.borderActive = e.target.checked));
+    const borderColorInput = document.querySelector(`[data-bordercolor-for="${p.id}"]`);
+    if (borderColorInput) borderColorInput.addEventListener('input', (e) => (p.borderColor = e.target.value));
+    const borderWidthInput = document.querySelector(`[data-borderwidth-for="${p.id}"]`);
+    if (borderWidthInput) borderWidthInput.addEventListener('input', (e) => (p.borderWidth = Number(e.target.value)));
+
+    const brightnessInput = document.querySelector(`[data-brightness-for="${p.id}"]`);
+    if (brightnessInput) brightnessInput.addEventListener('input', (e) => (p.imgBrightness = Number(e.target.value)));
+    const contrastInput = document.querySelector(`[data-contrast-for="${p.id}"]`);
+    if (contrastInput) contrastInput.addEventListener('input', (e) => (p.imgContrast = Number(e.target.value)));
+    const saturationInput = document.querySelector(`[data-saturation-for="${p.id}"]`);
+    if (saturationInput) saturationInput.addEventListener('input', (e) => (p.imgSaturation = Number(e.target.value)));
+    const blurInput = document.querySelector(`[data-blur-for="${p.id}"]`);
+    if (blurInput) blurInput.addEventListener('input', (e) => (p.imgBlur = Number(e.target.value)));
+    const grayscaleInput = document.querySelector(`[data-grayscale-for="${p.id}"]`);
+    if (grayscaleInput) grayscaleInput.addEventListener('change', (e) => (p.imgGrayscale = e.target.checked));
+    const sepiaInput = document.querySelector(`[data-sepia-for="${p.id}"]`);
+    if (sepiaInput) sepiaInput.addEventListener('change', (e) => (p.imgSepia = e.target.checked));
+    const vignetteInput = document.querySelector(`[data-vignette-for="${p.id}"]`);
+    if (vignetteInput) vignetteInput.addEventListener('change', (e) => (p.vignette = e.target.checked));
+    const vignetteStrengthInput = document.querySelector(`[data-vignettestrength-for="${p.id}"]`);
+    if (vignetteStrengthInput) {
+      vignetteStrengthInput.addEventListener('input', (e) => (p.vignetteStrength = Number(e.target.value) / 100));
+    }
+
+    const cropXInput = document.querySelector(`[data-cropx-for="${p.id}"]`);
+    if (cropXInput) cropXInput.addEventListener('input', (e) => (p.cropX = Number(e.target.value) / 100));
+    const cropYInput = document.querySelector(`[data-cropy-for="${p.id}"]`);
+    if (cropYInput) cropYInput.addEventListener('input', (e) => (p.cropY = Number(e.target.value) / 100));
+    const cropWInput = document.querySelector(`[data-cropw-for="${p.id}"]`);
+    if (cropWInput) cropWInput.addEventListener('input', (e) => (p.cropW = Number(e.target.value) / 100));
+    const cropHInput = document.querySelector(`[data-croph-for="${p.id}"]`);
+    if (cropHInput) cropHInput.addEventListener('input', (e) => (p.cropH = Number(e.target.value) / 100));
   });
   document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
+  });
+  bindPhotoDragReorder();
+}
+
+// Réordonnancement des photos par glisser-déposer dans la liste (affecte
+// l'ordre réel dans EditorState.photos, donc l'ordre de la timeline).
+function bindPhotoDragReorder() {
+  const container = document.getElementById('editor-photos-list');
+  if (!container) return;
+  let dragId = null;
+
+  container.querySelectorAll('[data-photo-drag]').forEach((el) => {
+    el.addEventListener('dragstart', (e) => {
+      dragId = Number(el.dataset.photoDrag);
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const targetId = Number(el.dataset.photoDrag);
+      if (dragId == null || targetId === dragId) return;
+      const fromIdx = EditorState.photos.findIndex((p) => p.id === dragId);
+      const toIdx = EditorState.photos.findIndex((p) => p.id === targetId);
+      if (fromIdx === -1 || toIdx === -1) return;
+      const [moved] = EditorState.photos.splice(fromIdx, 1);
+      EditorState.photos.splice(toIdx, 0, moved);
+      rafraichirListePhotos();
+    });
   });
 }
 
@@ -1400,6 +1670,22 @@ function ajouterCalquePhoto() {
     spectrumColor: '#ff2d95',
     spectrumCount: 48,
     spectrumSize: 1,
+    maskShape: 'rect',
+    borderActive: true,
+    borderColor: '#ffffff',
+    borderWidth: 3,
+    imgBrightness: 100,
+    imgContrast: 100,
+    imgSaturation: 100,
+    imgGrayscale: false,
+    imgSepia: false,
+    imgBlur: 0,
+    vignette: false,
+    vignetteStrength: 0.5,
+    cropX: 0,
+    cropY: 0,
+    cropW: 1,
+    cropH: 1,
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);

@@ -1307,6 +1307,16 @@ function viewEditeur() {
         <details class="editor-accordion">
           <summary>Photos</summary>
           <div class="editor-accordion-body">
+            <div class="editor-row">
+              <label class="editor-mini-label">Transition entre photos
+                <select id="editor-transition-type">
+                  <option value="none">Aucune (coupe franche)</option>
+                  <option value="fade">Fondu</option>
+                  <option value="slide">Glissement</option>
+                  <option value="zoom">Zoom</option>
+                </select>
+              </label>
+            </div>
             <div class="editor-row" style="justify-content:flex-end;">
               <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
             </div>
