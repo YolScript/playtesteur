@@ -1384,7 +1384,7 @@ function mettreAJourIntroOutro(seg) {
 
   if (seg.texte) {
     const layer = getOrCreateCanvasLayer('introText');
-    const size = Math.max(18, Math.round(width * 0.03));
+    const size = Math.max(18, Math.round(width * 0.048));
     const measureCtx = layer.ctx;
     measureCtx.font = `700 ${size}px ${famille}`;
     const lignes = wrapText(measureCtx, seg.texte, width * 0.8);
@@ -2675,6 +2675,10 @@ function renderTextBlockHtml(b, index) {
           <div class="editor-row">
             <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-bgpanel-for="${b.id}" ${b.bgPanelActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Fond derrière le texte</span></label>
           </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Largeur du cadre<input type="range" data-wrapwidth-for="${b.id}" min="15" max="90" value="${Math.round((b.wrapWidth ?? 0.85) * 100)}"></label>
+          </div>
+          <span class="form-hint">Un cadre plus étroit redispose automatiquement le texte sur plusieurs lignes (utile pour un texte "en liste" dans une marge latérale).</span>
         </div>
       </details>
 
@@ -2760,6 +2764,11 @@ function bindTextBlockEvents() {
     const bgPanelInput = document.querySelector(`[data-bgpanel-for="${b.id}"]`);
     if (bgPanelInput) bgPanelInput.addEventListener('change', (e) => (b.bgPanelActive = e.target.checked));
 
+    const wrapWidthInput = document.querySelector(`[data-wrapwidth-for="${b.id}"]`);
+    if (wrapWidthInput) {
+      wrapWidthInput.addEventListener('input', (e) => (b.wrapWidth = Number(e.target.value) / 100));
+    }
+
     const animInput = document.querySelector(`[data-anim-for="${b.id}"]`);
     if (animInput) animInput.addEventListener('change', (e) => (b.anim = e.target.value));
 
@@ -2843,6 +2852,7 @@ function creerTextBlockParDefaut(id, decalage) {
     saberCount: 26,
     saberSize: 1,
     particlesActive: false,
+    wrapWidth: 0.85,
   };
 }
 
