@@ -71,8 +71,100 @@ const EditorState = {
 };
 
 let editorRafId = null;
-let photoLayerCounter = 0;
-let textBlockCounter = 0;
+// Compteur PARTAGÉ entre calques photo et blocs texte (et non deux
+// compteurs séparés) : les deux types de calque réutilisent les mêmes
+// attributs data-*-for (data-saber-for, data-rotx-for, etc.) et les
+// fonctions de binding interrogent le DOM avec `document.querySelector`
+// non scopé à leur conteneur — si une photo et un texte avaient le même
+// id, le binding du second se raccrochait par erreur au premier élément
+// trouvé dans le DOM (celui de la photo), rendant ses propres contrôles
+// inopérants. Un compteur unique garantit des id uniques quel que soit le
+// type de calque.
+let elementIdCounter = 0;
+
+/* -------------------------------------------------------------------- */
+/* Historique (undo/redo)                                                */
+/* -------------------------------------------------------------------- */
+// Champs "données utilisateur" à suivre dans l'historique — exclut le
+// moteur three.js, les noeuds Web Audio, l'état de lecture/drag en cours,
+// etc. qui ne doivent pas être capturés ni restaurés.
+const CHAMPS_HISTORIQUE = [
+  'bgType', 'bgColor', 'bgGradient', 'bgAdjust', 'overlay', 'bgChromaKey',
+  'audioVolume', 'audioFadeIn', 'audioFadeOut', 'audioTrimStart', 'voiceVolume',
+  'fontFamily', 'intro', 'outro', 'photos', 'textBlocks', 'imageExportFormat',
+  'effects', 'transitionType',
+];
+// Références aux éléments média déjà chargés : à réattacher telles quelles
+// (jamais clonées, jamais recréées) lors d'une restauration.
+const CHAMPS_HISTORIQUE_REFS = ['bgVideoEl', 'bgImageEl', 'audioEl', 'voiceEl'];
+
+const Historique = { pile: [], index: -1, enPause: false };
+
+function cloneProfondSansDom(valeur) {
+  if (valeur === null || typeof valeur !== 'object') return valeur;
+  if (valeur instanceof Node) return valeur; // média déjà chargé : référence conservée
+  if (Array.isArray(valeur)) return valeur.map(cloneProfondSansDom);
+  const out = {};
+  for (const cle of Object.keys(valeur)) out[cle] = cloneProfondSansDom(valeur[cle]);
+  return out;
+}
+
+function capturerSnapshot() {
+  const snap = {};
+  for (const champ of CHAMPS_HISTORIQUE) snap[champ] = cloneProfondSansDom(EditorState[champ]);
+  for (const champ of CHAMPS_HISTORIQUE_REFS) snap[champ] = EditorState[champ];
+  return snap;
+}
+
+function majBoutonsHistorique() {
+  const btnUndo = document.getElementById('editor-undo-btn');
+  const btnRedo = document.getElementById('editor-redo-btn');
+  if (btnUndo) btnUndo.disabled = Historique.index <= 0;
+  if (btnRedo) btnRedo.disabled = Historique.index < 0 || Historique.index >= Historique.pile.length - 1;
+}
+
+// À appeler après toute mutation significative de l'état (édition d'un
+// champ, ajout/suppression de calque, fin de glisser-déposer…).
+function pousserHistorique() {
+  if (Historique.enPause) return;
+  if (Historique.index < Historique.pile.length - 1) {
+    Historique.pile = Historique.pile.slice(0, Historique.index + 1);
+  }
+  Historique.pile.push(capturerSnapshot());
+  if (Historique.pile.length > 60) Historique.pile.shift();
+  Historique.index = Historique.pile.length - 1;
+  majBoutonsHistorique();
+}
+
+function restaurerSnapshot(snap) {
+  Historique.enPause = true;
+  for (const champ of CHAMPS_HISTORIQUE) EditorState[champ] = cloneProfondSansDom(snap[champ]);
+  for (const champ of CHAMPS_HISTORIQUE_REFS) EditorState[champ] = snap[champ];
+  rafraichirListePhotos();
+  rafraichirListeTextBlocks();
+  rafraichirPanneauApresRestauration();
+  Historique.enPause = false;
+}
+
+function annulerHistorique() {
+  if (Historique.index <= 0) return;
+  Historique.index -= 1;
+  restaurerSnapshot(Historique.pile[Historique.index]);
+  majBoutonsHistorique();
+}
+
+function refaireHistorique() {
+  if (Historique.index < 0 || Historique.index >= Historique.pile.length - 1) return;
+  Historique.index += 1;
+  restaurerSnapshot(Historique.pile[Historique.index]);
+  majBoutonsHistorique();
+}
+
+function initHistorique() {
+  Historique.pile = [capturerSnapshot()];
+  Historique.index = 0;
+  majBoutonsHistorique();
+}
 
 const FONTS_DISPONIBLES = [
   { value: "'Space Grotesk', sans-serif", label: 'Space Grotesk' },
@@ -364,7 +456,19 @@ function getOrCreateCanvasLayer(name) {
   texture.colorSpace = THREE.SRGBColorSpace;
   const geometry = new THREE.PlaneGeometry(1, 1);
   const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+  // Les blocs de texte doivent toujours rester au tout premier plan, même
+  // quand une photo inclinée en 3D (rotation X/Y/Z) dépasse en profondeur
+  // devant eux : on désactive le test de profondeur et on force un
+  // renderOrder élevé plutôt que de compter sur leur seule position z, qui
+  // ne suffit plus à garantir l'ordre d'affichage dès qu'un autre calque
+  // est tourné dans l'espace.
+  const estTexte = name.startsWith('text-');
+  if (estTexte) {
+    material.depthTest = false;
+    material.depthWrite = false;
+  }
   const mesh = new THREE.Mesh(geometry, material);
+  if (estTexte) mesh.renderOrder = 1000;
   mesh.visible = false;
   scene.add(mesh);
   const layer = { mesh, canvas, ctx, texture };
@@ -1155,27 +1259,55 @@ function blocTexteActif(b, now) {
   return true;
 }
 
-function mettreAJourBlocsTexte(now) {
+function mettreAJourBlocsTexte(now, tGlobal) {
   const boxes = {};
   EditorState.textBlocks.forEach((b) => {
     const layerName = `text-${b.id}`;
     if (!b.texte || !blocTexteActif(b, now)) {
       hideLayer(layerName);
+      mettreAJourParticules(null, null, tGlobal, `text-particles-${b.id}`);
       return;
     }
-    const box = dessinerBlocTexte(b, layerName, now);
+    const box = dessinerBlocTexte(b, layerName, now, tGlobal);
     if (box) boxes[b.id] = box;
+    mettreAJourParticules(b, box, tGlobal, `text-particles-${b.id}`);
   });
-  // Masque les layers de blocs supprimés entre-temps.
+  // Masque les layers (et particules) des blocs supprimés entre-temps.
   Object.keys(EditorState.three.layers).forEach((name) => {
     if (name.startsWith('text-') && !EditorState.textBlocks.some((b) => `text-${b.id}` === name)) {
       hideLayer(name);
     }
   });
+  Object.keys(EditorState.three.particleSystems).forEach((key) => {
+    if (key.startsWith('text-particles-') && !EditorState.textBlocks.some((b) => `text-particles-${b.id}` === key)) {
+      EditorState.three.particleSystems[key].points.visible = false;
+    }
+  });
   return boxes;
 }
 
-function dessinerBlocTexte(b, layerName, now) {
+// Une passe de dessin du texte respectant l'animation en cours (machine à
+// écrire = révélation progressive des caractères, sinon alpha progressif
+// pour fondu/glissement/pop) — réutilisée pour le glow et le texte final.
+function dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress) {
+  if (anim === 'typewriter') {
+    const texteComplet = lignes.join('\n');
+    const nVisible = Math.round(progress * texteComplet.length);
+    let compte = 0;
+    lignes.forEach((ligne, i) => {
+      const restant = Math.max(0, nVisible - compte);
+      ctx.fillText(ligne.slice(0, restant), textX, padY + i * lineHeight);
+      compte += ligne.length;
+    });
+  } else {
+    const alphaAvant = ctx.globalAlpha;
+    ctx.globalAlpha = (anim === 'fade' || anim === 'slide' || anim === 'pop' ? progress : 1) * alphaAvant;
+    lignes.forEach((ligne, i) => ctx.fillText(ligne, textX, padY + i * lineHeight));
+    ctx.globalAlpha = alphaAvant;
+  }
+}
+
+function dessinerBlocTexte(b, layerName, now, tGlobal) {
   const { width, height } = EditorState.three;
   const layer = getOrCreateCanvasLayer(layerName);
   const size = Number(b.size) || 56;
@@ -1209,30 +1341,35 @@ function dessinerBlocTexte(b, layerName, now) {
   ctx.font = `${style} ${weight} ${size}px ${famille}`;
   ctx.textAlign = align;
   ctx.textBaseline = 'top';
-  ctx.fillStyle = b.color || '#ffffff';
-  ctx.shadowColor = 'rgba(0,0,0,0.5)';
-  ctx.shadowBlur = 8;
   const textX = align === 'left' ? padX : align === 'right' ? panelW - padX : panelW / 2;
 
   const anim = b.anim || 'none';
   const dureeAnim = 0.5;
   const progress = progressionAnimation(b.startTime, b.endTime, now, dureeAnim);
 
-  if (anim === 'typewriter') {
-    const texteComplet = lignes.join('\n');
-    const nVisible = Math.round(progress * texteComplet.length);
-    let compte = 0;
-    lignes.forEach((ligne, i) => {
-      const restant = Math.max(0, nVisible - compte);
-      ctx.fillText(ligne.slice(0, restant), textX, padY + i * lineHeight);
-      compte += ligne.length;
-    });
-  } else {
-    ctx.globalAlpha = anim === 'fade' || anim === 'slide' || anim === 'pop' ? progress : 1;
-    lignes.forEach((ligne, i) => ctx.fillText(ligne, textX, padY + i * lineHeight));
-    ctx.globalAlpha = 1;
+  if (b.glowActive) {
+    ctx.save();
+    ctx.fillStyle = b.glowColor || '#00e5ff';
+    ctx.shadowColor = b.glowColor || '#00e5ff';
+    ctx.shadowBlur = 32;
+    dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+    ctx.shadowBlur = 16;
+    dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+    ctx.restore();
   }
+
+  ctx.fillStyle = b.color || '#ffffff';
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 8;
+  dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
   ctx.shadowBlur = 0;
+
+  if (b.saberActive) {
+    dessinerContourEnergetique(
+      ctx, 0, 0, panelW, panelH, 18, b.saberColor || '#00e5ff', tGlobal || 0,
+      b.saberCount, b.saberSize
+    );
+  }
 
   let cx = b.x * width;
   let cy = b.y * height;
@@ -1243,7 +1380,10 @@ function dessinerBlocTexte(b, layerName, now) {
     scaleMul = 0.6 + 0.4 * progress;
   }
 
-  placerLayer(layer, cx, cy, b.z ?? 10, 0, 0, 0);
+  const rotX = ((b.rotX || 0) * Math.PI) / 180;
+  const rotY = ((b.rotY || 0) * Math.PI) / 180;
+  const rotZ = ((b.rotZ || 0) * Math.PI) / 180;
+  placerLayer(layer, cx, cy, b.z ?? 10, rotX, rotY, rotZ);
   layer.mesh.scale.set(panelW * scaleMul, panelH * scaleMul, 1);
 
   return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: b.z ?? 10 };
@@ -1268,10 +1408,10 @@ function getParticuleSprite(THREE) {
 // Particules énergétiques flottant autour de la carte active (effet
 // Saber additionnel). Positions relatives régénérées à chaque activation,
 // dérive lente + scintillement.
-function mettreAJourParticules(p, box, tGlobal) {
+function mettreAJourParticules(entity, box, tGlobal, key) {
   const ts = EditorState.three;
   const { THREE, scene } = ts;
-  const key = 'photoParticles';
+  const p = entity;
   const actif = !!(p && p.particlesActive && box);
 
   if (!actif) {
@@ -1439,20 +1579,20 @@ function renderEditorFrame() {
     photoBox = mettreAJourPhoto(segmentActif.data, tGlobal, 'photo');
     resetTransitionLayer('photo');
     mettreAJourLegende(segmentActif.data);
-    mettreAJourParticules(segmentActif.data, photoBox, tGlobal);
+    mettreAJourParticules(segmentActif.data, photoBox, tGlobal, 'photoParticles');
     if (enTransition) appliquerEffetTransition('photo', progressSortie, 'out');
   } else if (segmentActif) {
     hideLayer('photo');
     hideLayer('caption');
     mettreAJourIntroOutro(segmentActif.data);
-    mettreAJourParticules(null, null, tGlobal);
+    mettreAJourParticules(null, null, tGlobal, 'photoParticles');
   } else {
     hideLayer('photo');
     hideLayer('caption');
     hideLayer('introLogo');
     hideLayer('introImg');
     hideLayer('introText');
-    mettreAJourParticules(null, null, tGlobal);
+    mettreAJourParticules(null, null, tGlobal, 'photoParticles');
   }
 
   if (enTransition && segmentSuivant.type === 'photo') {
@@ -1463,7 +1603,7 @@ function renderEditorFrame() {
     hideLayer('photo-in');
   }
 
-  EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime);
+  EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime, tGlobal);
 
   ts.bloomPass.enabled = EditorState.effects.bloomActive;
   let strength = Number(EditorState.effects.bloomStrength) || 0;
@@ -2193,7 +2333,7 @@ function rafraichirListePhotos() {
 }
 
 function ajouterCalquePhoto() {
-  const id = ++photoLayerCounter;
+  const id = ++elementIdCounter;
   EditorState.photos.push({
     id,
     img: null,
@@ -2308,6 +2448,38 @@ function renderTextBlockHtml(b, index) {
           </div>
         </div>
       </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Rotation 3D</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-mini-label">Axe X<input type="range" data-rotx-for="${b.id}" min="-45" max="45" value="${b.rotX || 0}"></label>
+            <label class="editor-mini-label">Axe Y<input type="range" data-roty-for="${b.id}" min="-45" max="45" value="${b.rotY || 0}"></label>
+            <label class="editor-mini-label">Axe Z<input type="range" data-rotz-for="${b.id}" min="-45" max="45" value="${b.rotZ || 0}"></label>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Glow / Néon &amp; contour énergétique</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-glow-for="${b.id}" ${b.glowActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Glow néon</span></label>
+            <input type="color" data-glowcolor-for="${b.id}" value="${b.glowColor || '#00e5ff'}" title="Couleur du glow">
+          </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-saber-for="${b.id}" ${b.saberActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Contour énergétique</span></label>
+            <input type="color" data-sabercolor-for="${b.id}" value="${b.saberColor || '#00e5ff'}" title="Couleur du contour">
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Quantité<input type="range" data-sabercount-for="${b.id}" min="6" max="120" value="${b.saberCount ?? 26}"></label>
+            <label class="editor-mini-label">Taille<input type="range" data-sabersize-for="${b.id}" min="20" max="300" value="${Math.round((b.saberSize ?? 1) * 100)}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-particles-for="${b.id}" ${b.particlesActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Particules flottantes</span></label>
+          </div>
+        </div>
+      </details>
     </div>
   `;
 }
@@ -2350,6 +2522,32 @@ function bindTextBlockEvents() {
         b.endTime = e.target.value === '' ? null : Math.max(0, Number(e.target.value));
       });
     }
+
+    const rotXInput = document.querySelector(`[data-rotx-for="${b.id}"]`);
+    if (rotXInput) rotXInput.addEventListener('input', (e) => (b.rotX = Number(e.target.value)));
+    const rotYInput = document.querySelector(`[data-roty-for="${b.id}"]`);
+    if (rotYInput) rotYInput.addEventListener('input', (e) => (b.rotY = Number(e.target.value)));
+    const rotZInput = document.querySelector(`[data-rotz-for="${b.id}"]`);
+    if (rotZInput) rotZInput.addEventListener('input', (e) => (b.rotZ = Number(e.target.value)));
+
+    const glowInput = document.querySelector(`[data-glow-for="${b.id}"]`);
+    if (glowInput) glowInput.addEventListener('change', (e) => (b.glowActive = e.target.checked));
+    const glowColorInput = document.querySelector(`[data-glowcolor-for="${b.id}"]`);
+    if (glowColorInput) glowColorInput.addEventListener('input', (e) => (b.glowColor = e.target.value));
+
+    const saberInput = document.querySelector(`[data-saber-for="${b.id}"]`);
+    if (saberInput) saberInput.addEventListener('change', (e) => (b.saberActive = e.target.checked));
+    const saberColorInput = document.querySelector(`[data-sabercolor-for="${b.id}"]`);
+    if (saberColorInput) saberColorInput.addEventListener('input', (e) => (b.saberColor = e.target.value));
+    const saberCountInput = document.querySelector(`[data-sabercount-for="${b.id}"]`);
+    if (saberCountInput) saberCountInput.addEventListener('input', (e) => (b.saberCount = Number(e.target.value)));
+    const saberSizeInput = document.querySelector(`[data-sabersize-for="${b.id}"]`);
+    if (saberSizeInput) {
+      saberSizeInput.addEventListener('input', (e) => (b.saberSize = Number(e.target.value) / 100));
+    }
+
+    const particlesInput = document.querySelector(`[data-particles-for="${b.id}"]`);
+    if (particlesInput) particlesInput.addEventListener('change', (e) => (b.particlesActive = e.target.checked));
   });
   document.querySelectorAll('[data-remove-textblock]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerBlocTexte(Number(btn.dataset.removeTextblock)));
@@ -2366,7 +2564,7 @@ function rafraichirListeTextBlocks() {
 }
 
 function ajouterBlocTexte() {
-  const id = ++textBlockCounter;
+  const id = ++elementIdCounter;
   const decalage = (EditorState.textBlocks.length % 5) * 0.06;
   EditorState.textBlocks.push({
     id,
@@ -2383,6 +2581,16 @@ function ajouterBlocTexte() {
     anim: 'none',
     startTime: null,
     endTime: null,
+    rotX: 0,
+    rotY: 0,
+    rotZ: 0,
+    glowActive: false,
+    glowColor: '#00e5ff',
+    saberActive: false,
+    saberColor: '#00e5ff',
+    saberCount: 26,
+    saberSize: 1,
+    particlesActive: false,
   });
   rafraichirListeTextBlocks();
 }
@@ -2390,6 +2598,10 @@ function ajouterBlocTexte() {
 function supprimerBlocTexte(id) {
   EditorState.textBlocks = EditorState.textBlocks.filter((b) => b.id !== id);
   hideLayer(`text-${id}`);
+  const ts = EditorState.three;
+  if (ts && ts.particleSystems[`text-particles-${id}`]) {
+    ts.particleSystems[`text-particles-${id}`].points.visible = false;
+  }
   rafraichirListeTextBlocks();
 }
 
