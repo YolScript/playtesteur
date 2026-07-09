@@ -4,3 +4,12 @@ data/
 .env
 npm-debug.log
 *service-account*.json
+
+# Signature Android (jamais commitée)
+release.keystore
+keystore-info.txt
+android-app/out/
+android-app/out-aab/
+/*.apk
+/*.apk.idsig
+/*.aab

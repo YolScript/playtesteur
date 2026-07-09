@@ -21,6 +21,7 @@ function publicUser(user) {
     score_prochain_palier: scoreProchainPalier,
     derniere_date_test: user.derniere_date_test,
     fraud_warnings: user.fraud_warnings,
+    masquer_infos: !!user.masquer_infos,
     created_at: user.created_at,
   };
 }

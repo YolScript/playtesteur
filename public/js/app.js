@@ -255,14 +255,27 @@ function showFormError(message) {
    DASHBOARD
    ========================================================================== */
 async function viewDashboard() {
-  const { user } = await Api.get('/api/profile');
+  const { user, mails } = await Api.get('/api/profile');
   state.user = user;
 
   const pctScore = Math.round((user.score_global / 100) * 100);
   const pctMails = Math.round((user.mails_debloques / user.mails_max) * 100);
 
   const mailSlots = Array.from({ length: user.mails_max })
-    .map((_, i) => `<div class="mail-slot ${i < user.mails_debloques ? 'filled' : ''}">✉</div>`)
+    .map((_, i) => {
+      const mail = mails[i];
+      if (!mail) return '<div class="mail-slot">✉</div>';
+      const copiable = mail.statut_visuel === 'vert' || mail.statut_visuel === 'orange';
+      const titre =
+        mail.statut_visuel === 'rouge'
+          ? `${mail.nom_application} — accès retiré`
+          : mail.statut_visuel === 'orange'
+            ? `${mail.nom_application} — risque de suppression : ${mail.raison || 'non précisée'}`
+            : `${mail.nom_application} — actif`;
+      return copiable
+        ? `<button type="button" class="mail-slot filled ${mail.statut_visuel}" data-copy-mail="${escapeHtml(mail.google_group_email || '')}" title="${escapeHtml(titre)}">✉</button>`
+        : `<div class="mail-slot filled ${mail.statut_visuel}" title="${escapeHtml(titre)}">✉</div>`;
+    })
     .join('');
 
   viewRoot.innerHTML = `
@@ -275,11 +288,16 @@ async function viewDashboard() {
           ${avatarHtml(user, 'profile-avatar-big')}
           <div>
             <h2>${escapeHtml(user.pseudo)}</h2>
-            <div class="profile-email">${escapeHtml(user.email)}</div>
+            <div class="profile-email" id="profile-email-value">${user.masquer_infos ? '••••••••@••••••.•••' : escapeHtml(user.email)}</div>
           </div>
         </div>
         ${BADGE_PROFIL[user.statut_profil] || ''}
       </div>
+
+      <label class="editor-checkbox-row" style="margin-top:12px;">
+        <input type="checkbox" id="masquer-infos-toggle" ${user.masquer_infos ? 'checked' : ''}>
+        <span>Masquer mes informations personnelles (visuel uniquement, aussi masqué pour l'admin)</span>
+      </label>
 
       <div class="gauges-grid">
         <div>
@@ -319,11 +337,47 @@ async function viewDashboard() {
         <p class="app-card-desc">Créez un groupe de test et recrutez jusqu'à 12 testeurs.</p>
         <button class="btn-secondary" id="go-mesapps">Gérer mes applications</button>
       </div>
+      <div class="app-card">
+        <div class="app-card-title">📱 Application Android</div>
+        <p class="app-card-desc">Installez PlayTesteur directement sur votre téléphone.</p>
+        <a class="btn-secondary" href="/downloads/playtesteur.apk" download style="display:inline-block; text-align:center; text-decoration:none;">Télécharger l'APK</a>
+      </div>
     </div>
   `;
 
   document.getElementById('go-catalogue').addEventListener('click', () => (location.hash = '#/catalogue'));
   document.getElementById('go-mesapps').addEventListener('click', () => (location.hash = '#/mes-apps'));
+
+  document.querySelectorAll('[data-copy-mail]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const email = btn.dataset.copyMail;
+      if (!email) {
+        toast('Adresse indisponible pour ce mail.', 'error');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(email);
+        toast('Adresse copiée dans le presse-papier.', 'success');
+      } catch (err) {
+        toast("Impossible de copier l'adresse.", 'error');
+      }
+    });
+  });
+
+  document.getElementById('masquer-infos-toggle').addEventListener('change', async (e) => {
+    const masquer = e.target.checked;
+    try {
+      const { user: updated } = await Api.post('/api/profile/masquer-infos', { masquer });
+      state.user = updated;
+      document.getElementById('profile-email-value').textContent = updated.masquer_infos
+        ? '••••••••@••••••.•••'
+        : updated.email;
+      toast(masquer ? 'Informations personnelles masquées.' : 'Informations personnelles visibles.', 'success');
+    } catch (err) {
+      e.target.checked = !masquer;
+      toast(err.message, 'error');
+    }
+  });
 }
 
 /* ==========================================================================
@@ -968,7 +1022,7 @@ async function viewAdmin() {
       (u) => `
       <tr class="admin-user-row" id="user-row-${u.id}">
         <td data-label="Pseudo" class="row-summary">${escapeHtml(u.pseudo)}<span class="row-toggle-chevron">▾</span></td>
-        <td data-label="Email" class="row-detail">${escapeHtml(u.email)}</td>
+        <td data-label="Email" class="row-detail">${u.masquer_infos ? '<span class="form-hint" title="Masqué par l\'utilisateur">•••••••• (masqué)</span>' : escapeHtml(u.email)}</td>
         <td data-label="Statut" class="row-summary">${u.suspendu ? '<span class="badge badge-suspendu">Suspendu</span>' : BADGE_PROFIL[u.statut_profil] || ''}</td>
         <td data-label="Score" class="row-summary">${u.score_global}/100</td>
         <td data-label="Mails" class="row-detail">${u.mails_debloques}/${u.mails_max}</td>
@@ -1121,7 +1175,7 @@ async function viewAdmin() {
               .map(
                 (t) => `
               <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--border-color);">
-                <span>${escapeHtml(t.pseudo)} — ${escapeHtml(t.email)}</span>
+                <span>${escapeHtml(t.pseudo)} — ${t.masquer_infos ? '•••••••• (masqué)' : escapeHtml(t.email)}</span>
                 ${BADGE_HISTORIQUE[t.statut] || ''}
               </div>
             `

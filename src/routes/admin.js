@@ -162,7 +162,7 @@ router.get('/users/:id/logs', (req, res) => {
 router.get('/apps/:id/testeurs', (req, res) => {
   const rows = db
     .prepare(
-      `SELECT u.pseudo, u.email, h.statut, h.date_rejoint, h.date_action
+      `SELECT u.pseudo, u.email, u.masquer_infos, h.statut, h.date_rejoint, h.date_action
        FROM historique_tests h
        JOIN users u ON u.id = h.testeur_id
        WHERE h.application_id = ?

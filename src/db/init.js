@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
   derniere_date_test TEXT,
   fraud_warnings INTEGER NOT NULL DEFAULT 0,
   suspendu INTEGER NOT NULL DEFAULT 0,
+  masquer_infos INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -95,6 +96,11 @@ if (!colonnesApplications.includes('screenshots')) {
 }
 if (!colonnesApplications.includes('video_url')) {
   db.exec('ALTER TABLE applications ADD COLUMN video_url TEXT');
+}
+
+const colonnesUsers = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!colonnesUsers.includes('masquer_infos')) {
+  db.exec('ALTER TABLE users ADD COLUMN masquer_infos INTEGER NOT NULL DEFAULT 0');
 }
 
 module.exports = db;

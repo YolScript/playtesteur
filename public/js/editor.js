@@ -219,31 +219,37 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Échantillonne les pixels déjà dessinés sous une zone pour choisir une
-// couleur de texte (et une ombre) toujours lisible, que le fond à cet
-// endroit soit clair ou sombre.
-function couleurLisible(ctx, x, y, w, h) {
+// Panneau "verre dépoli" derrière un bloc de texte : coins arrondis,
+// flou du fond déjà dessiné à cet endroit, voile semi-transparent.
+// Rend le texte lisible sur n'importe quel fond sans dépendre de sa
+// couleur ou de sa complexité (photo, vidéo, dégradé...).
+function dessinerPanneauTexte(ctx, x, y, w, h, radius) {
+  if (w <= 0 || h <= 0) return;
+  const marge = 12;
   const iw = ctx.canvas.width;
   const ih = ctx.canvas.height;
-  const sx = Math.max(0, Math.min(Math.round(x), iw - 1));
-  const sy = Math.max(0, Math.min(Math.round(y), ih - 1));
-  const sw = Math.max(1, Math.min(Math.round(w), iw - sx));
-  const sh = Math.max(1, Math.min(Math.round(h), ih - sy));
+  const sx = Math.max(0, Math.round(x - marge));
+  const sy = Math.max(0, Math.round(y - marge));
+  const sw = Math.max(1, Math.min(Math.round(w + marge * 2), iw - sx));
+  const sh = Math.max(1, Math.min(Math.round(h + marge * 2), ih - sy));
+
+  ctx.save();
+  roundRectPath(ctx, x, y, w, h, radius);
+  ctx.clip();
   try {
-    const { data } = ctx.getImageData(sx, sy, sw, sh);
-    let total = 0;
-    let count = 0;
-    for (let i = 0; i < data.length; i += 4 * 23) {
-      total += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-      count++;
-    }
-    const luminance = count ? total / count : 128;
-    return luminance > 150
-      ? { texte: '#14171d', ombre: 'rgba(255,255,255,0.6)' }
-      : { texte: '#ffffff', ombre: 'rgba(0,0,0,0.65)' };
+    const off = document.createElement('canvas');
+    off.width = sw;
+    off.height = sh;
+    off.getContext('2d').drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    ctx.filter = 'blur(14px)';
+    ctx.drawImage(off, sx, sy, sw, sh);
+    ctx.filter = 'none';
   } catch (_) {
-    return { texte: '#ffffff', ombre: 'rgba(0,0,0,0.65)' };
+    // Fond non capturable (média cross-origin) : on garde juste le voile.
   }
+  ctx.fillStyle = 'rgba(8,10,14,0.42)';
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
 }
 
 // Photo "carte flottante" : coins arrondis, légère inclinaison et
@@ -309,16 +315,22 @@ function dessinerLegendePhoto(ctx, width, height, p) {
 
   const cx = (p.texteX ?? p.x) * width;
   const topY = (p.texteY ?? p.y) * height;
-  const boxX = cx - boxW / 2;
+  const padX = 18;
+  const padY = 12;
+  const boxX = cx - boxW / 2 - padX;
+  const boxY = topY - padY;
+  const panelW = boxW + padX * 2;
+  const panelH = boxH + padY * 2;
 
-  const { texte, ombre } = couleurLisible(ctx, boxX - 10, topY - 6, boxW + 20, boxH + 12);
-  ctx.fillStyle = texte;
-  ctx.shadowColor = ombre;
-  ctx.shadowBlur = 8;
+  dessinerPanneauTexte(ctx, boxX, boxY, panelW, panelH, 14);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 6;
   lignes.forEach((ligne, i) => ctx.fillText(ligne, cx, topY + i * lineHeight));
   ctx.shadowBlur = 0;
 
-  return { x: boxX - 10, y: topY - 6, w: boxW + 20, h: boxH + 12 };
+  return { x: boxX, y: boxY, w: panelW, h: panelH };
 }
 
 function dessinerIntroOutro(ctx, width, height, seg) {
@@ -336,14 +348,24 @@ function dessinerIntroOutro(ctx, width, height, seg) {
   if (seg.texte) {
     const size = Math.max(18, Math.round(width * 0.03));
     ctx.font = `700 ${size}px ${famille}`;
-    ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.7)';
-    ctx.shadowBlur = 10;
     const lignes = wrapText(ctx, seg.texte, width * 0.8);
     const lineHeight = size * 1.25;
-    const y0 = height * 0.86 - (lineHeight * lignes.length) / 2;
+    const totalHeight = lineHeight * lignes.length;
+    const y0 = height * 0.86 - totalHeight / 2;
+    let boxW = 0;
+    lignes.forEach((ligne) => {
+      boxW = Math.max(boxW, ctx.measureText(ligne).width);
+    });
+
+    const padX = 26;
+    const padY = 16;
+    dessinerPanneauTexte(ctx, width / 2 - boxW / 2 - padX, y0 - padY, boxW + padX * 2, totalHeight + padY * 2, 16);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 8;
     lignes.forEach((ligne, i) => ctx.fillText(ligne, width / 2, y0 + i * lineHeight));
     ctx.shadowBlur = 0;
   }
@@ -354,11 +376,8 @@ function dessinerTexteLibre(ctx, width, height) {
   const size = Number(EditorState.textStyle.size) || 56;
   const famille = EditorState.fontFamily ? `"${EditorState.fontFamily}"` : "'Space Grotesk', sans-serif";
   ctx.font = `700 ${size}px ${famille}`;
-  ctx.fillStyle = EditorState.textStyle.color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowColor = 'rgba(0,0,0,0.6)';
-  ctx.shadowBlur = 10;
 
   const maxWidth = width * 0.85;
   const lignes = wrapText(ctx, EditorState.text, maxWidth);
@@ -367,13 +386,28 @@ function dessinerTexteLibre(ctx, width, height) {
   const cx = EditorState.textStyle.x * width;
   const cy = EditorState.textStyle.y * height;
   let boxW = 0;
-  lignes.forEach((ligne, i) => {
+  lignes.forEach((ligne) => {
     boxW = Math.max(boxW, ctx.measureText(ligne).width);
+  });
+
+  const padX = 26;
+  const padY = 18;
+  const boxX = cx - boxW / 2 - padX;
+  const boxY = cy - totalHeight / 2 - padY;
+  const panelW = boxW + padX * 2;
+  const panelH = totalHeight + padY * 2;
+
+  dessinerPanneauTexte(ctx, boxX, boxY, panelW, panelH, 18);
+
+  ctx.fillStyle = EditorState.textStyle.color;
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 8;
+  lignes.forEach((ligne, i) => {
     ctx.fillText(ligne, cx, cy - totalHeight / 2 + lineHeight * (i + 0.5));
   });
   ctx.shadowBlur = 0;
 
-  return { x: cx - boxW / 2 - 10, y: cy - totalHeight / 2 - 10, w: boxW + 20, h: totalHeight + 20 };
+  return { x: boxX, y: boxY, w: panelW, h: panelH };
 }
 
 function drawEditorFrame(ctx, canvas) {
@@ -821,6 +855,13 @@ async function getFfmpeg() {
   await ffmpeg.load({
     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
     wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    // Sans ceci, le Worker interne pointe vers unpkg.com (import.meta.url du
+    // module chargé depuis le CDN) au lieu de l'origine du site, et le
+    // navigateur refuse sa construction (Worker cross-origin bloqué).
+    classWorkerURL: await toBlobURL(
+      'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js',
+      'text/javascript'
+    ),
   });
   ffmpegInstance = ffmpeg;
   return ffmpeg;
