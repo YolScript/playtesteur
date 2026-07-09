@@ -1187,6 +1187,19 @@ async function chargerConsoleActivite() {
 /* ==========================================================================
    ÉDITEUR (vidéo/photo promo)
    ========================================================================== */
+function renderFilePicker(inputId, accept, filenameId) {
+  return `
+    <div class="editor-file-picker-wrap">
+      <label class="editor-file-picker" for="${inputId}">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+        <span>Choisir un fichier</span>
+      </label>
+      <input type="file" id="${inputId}" accept="${accept}" class="editor-file-input">
+      <span class="editor-file-name" id="${filenameId}">Aucun fichier choisi</span>
+    </div>
+  `;
+}
+
 function viewEditeur() {
   viewRoot.innerHTML = `
     <h1 class="page-title">Éditeur</h1>
@@ -1205,22 +1218,22 @@ function viewEditeur() {
       <div class="editor-controls">
         <div class="editor-section">
           <label class="editor-label">Fond (vidéo MP4 ou image)</label>
-          <input type="file" id="editor-bg-input" accept="video/mp4,image/png,image/jpeg">
+          ${renderFilePicker('editor-bg-input', 'video/mp4,image/png,image/jpeg', 'editor-bg-filename')}
         </div>
         <div class="editor-section">
           <label class="editor-label">Musique de fond (MP3)</label>
-          <input type="file" id="editor-audio-input" accept="audio/mpeg,audio/mp3">
+          ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
         </div>
         <div class="editor-section">
           <label class="editor-label">Photo à superposer (PNG)</label>
-          <input type="file" id="editor-photo-input" accept="image/png">
+          ${renderFilePicker('editor-photo-input', 'image/png', 'editor-photo-filename')}
           <div class="editor-row">
             <label class="editor-mini-label">Taille<input type="range" id="editor-photo-scale" min="5" max="80" value="30"></label>
           </div>
         </div>
         <div class="editor-section">
           <label class="editor-label">Police d'écriture personnalisée</label>
-          <input type="file" id="editor-font-input" accept=".ttf,.otf,.woff,.woff2">
+          ${renderFilePicker('editor-font-input', '.ttf,.otf,.woff,.woff2', 'editor-font-filename')}
         </div>
         <div class="editor-section">
           <label class="editor-label">Texte</label>

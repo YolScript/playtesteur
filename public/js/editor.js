@@ -161,6 +161,11 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+function afficherNomFichier(spanId, file) {
+  const span = document.getElementById(spanId);
+  if (span) span.textContent = file ? file.name : 'Aucun fichier choisi';
+}
+
 function bindEditorInputs() {
   const bgInput = document.getElementById('editor-bg-input');
   const audioInput = document.getElementById('editor-audio-input');
@@ -176,6 +181,7 @@ function bindEditorInputs() {
   bgInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    afficherNomFichier('editor-bg-filename', file);
     const url = URL.createObjectURL(file);
     if (file.type.startsWith('video/')) {
       const video = document.createElement('video');
@@ -205,6 +211,7 @@ function bindEditorInputs() {
   audioInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    afficherNomFichier('editor-audio-filename', file);
     const audio = new Audio();
     audio.src = URL.createObjectURL(file);
     audio.loop = true;
@@ -216,6 +223,7 @@ function bindEditorInputs() {
   photoInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    afficherNomFichier('editor-photo-filename', file);
     const img = new Image();
     img.src = URL.createObjectURL(file);
     try {
@@ -227,6 +235,7 @@ function bindEditorInputs() {
   fontInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    afficherNomFichier('editor-font-filename', file);
     try {
       const buf = await file.arrayBuffer();
       const face = new FontFace('PolicePersonnalisee', buf);
