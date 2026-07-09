@@ -1530,7 +1530,10 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   ctx.clearRect(0, 0, panelW, panelH);
 
   const anim = b.anim || 'none';
-  const dureeAnim = 0.5;
+  // Durée de l'animation d'entrée/sortie — configurable par bloc
+  // (animDuree) car un long texte en 'typewriter' à 0.5s fixe défilerait
+  // bien trop vite pour être perçu comme un vrai effet machine à écrire.
+  const dureeAnim = Number(b.animDuree) || 0.5;
   const progress = progressionAnimation(b.startTime, b.endTime, now, dureeAnim);
 
   if (EditorState.modeContours) {
