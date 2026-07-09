@@ -27,15 +27,18 @@ function getAuthUrl() {
   return oauth2Client.generateAuthUrl({
     access_type: 'online',
     prompt: 'select_account',
-    scope: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/user.nickname.read'],
+    scope: ['openid', 'email', 'profile'],
   });
 }
 
 // Récupère le "Pseudo" configuré dans les paramètres du compte Google
 // (Infos personnelles > Nom > Pseudo). Ce champ n'est pas dans le id_token
 // OpenID standard (name/given_name/family_name) : il faut un appel séparé à
-// l'API Google People avec le scope user.nickname.read. Beaucoup
-// d'utilisateurs n'ont rien configuré -> retourne null dans ce cas.
+// l'API Google People. Il n'existe pas de scope OAuth dédié à ce champ
+// (user.nickname.read n'est pas un scope valide côté Google, cf. erreur
+// "invalid_scope") : on retente l'appel avec le scope "profile" déjà
+// accordé — Google le sert parfois pour people/me, sinon la requête
+// échoue proprement et on retombe sur le prénom.
 async function recupererPseudoGoogle(auth) {
   try {
     const { google } = require('googleapis');
