@@ -46,6 +46,15 @@ const EditorState = {
   textBlocks: [],
 
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
+  // État de l'export : quand `exporting` est actif, `avancerPlayback` freine
+  // l'avancée de la timeline (et des médias audio/vidéo) via
+  // `exportPlaybackRate` si le rendu réel n'arrive pas à suivre le FPS
+  // demandé, plutôt que de sacrifier des images — l'export prend alors
+  // plus de temps réel mais reste complet et fluide au FPS choisi.
+  exporting: false,
+  exportFps: 30,
+  exportPlaybackRate: 1,
+  _exportRafTs: null,
   _scrubbing: false,
 
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
@@ -185,7 +194,7 @@ function avancerPlayback(dureeTotale) {
   const now = performance.now();
   if (EditorState.playback.playing) {
     if (EditorState.playback.lastFrameTs != null) {
-      const delta = (now - EditorState.playback.lastFrameTs) / 1000;
+      const delta = ((now - EditorState.playback.lastFrameTs) / 1000) * (EditorState.exporting ? EditorState.exportPlaybackRate : 1);
       EditorState.playback.currentTime += delta;
       if (EditorState.playback.currentTime >= dureeTotale) {
         EditorState.playback.currentTime = dureeTotale > 0 ? dureeTotale - 0.001 : 0;
@@ -1363,9 +1372,41 @@ function appliquerEffetTransition(layerName, progress, direction) {
   }
 }
 
+// Applique le ralentissement d'export à tous les médias en cours de
+// lecture, pour qu'ils restent synchronisés avec la timeline freinée.
+function appliquerExportPlaybackRate(rate) {
+  const r = Math.max(0.1, Math.min(1, rate));
+  if (EditorState.audioEl) EditorState.audioEl.playbackRate = r;
+  if (EditorState.voiceEl) EditorState.voiceEl.playbackRate = r;
+  if (EditorState.bgVideoEl) EditorState.bgVideoEl.playbackRate = r;
+  EditorState.photos.forEach((p) => {
+    if (p.img && p.img.tagName === 'VIDEO') p.img.playbackRate = r;
+    if (p.bgOverrideVideoEl) p.bgOverrideVideoEl.playbackRate = r;
+  });
+}
+
+// Mesure, pendant un export, l'écart entre le temps réel écoulé entre deux
+// images et le budget du FPS demandé. Si le rendu (beaucoup de photos,
+// d'effets Saber/spectre, de bloom…) est plus lent que ce budget, réduit
+// `exportPlaybackRate` (lissé) pour ralentir la timeline et les médias en
+// conséquence — l'export dure alors plus longtemps en temps réel, mais
+// aucune image n'est sacrifiée et le FPS choisi est respecté.
+function ajusterCadenceExport() {
+  const nowRaf = performance.now();
+  if (EditorState._exportRafTs != null) {
+    const frameDelta = nowRaf - EditorState._exportRafTs;
+    const budget = 1000 / (Number(EditorState.exportFps) || 30);
+    const cible = Math.min(1, budget / Math.max(frameDelta, 0.001));
+    EditorState.exportPlaybackRate = EditorState.exportPlaybackRate * 0.85 + cible * 0.15;
+    appliquerExportPlaybackRate(EditorState.exportPlaybackRate);
+  }
+  EditorState._exportRafTs = nowRaf;
+}
+
 function renderEditorFrame() {
   const ts = EditorState.three;
   if (!ts) return;
+  if (EditorState.exporting) ajusterCadenceExport();
 
   const { segments, dureeTotale } = calculerTimeline();
   avancerPlayback(dureeTotale);
@@ -1543,6 +1584,7 @@ function bindEditorInputs() {
   const fontInput = document.getElementById('editor-font-input');
   const exportPngBtn = document.getElementById('editor-export-png');
   const exportMp4Btn = document.getElementById('editor-export-mp4');
+  const exportGifBtn = document.getElementById('editor-export-gif');
 
   bgInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -1742,6 +1784,7 @@ function bindEditorInputs() {
 
   exportPngBtn.addEventListener('click', exportEditeurPng);
   exportMp4Btn.addEventListener('click', exportEditeurMp4);
+  if (exportGifBtn) exportGifBtn.addEventListener('click', exportEditeurGif);
 }
 
 /* -------------------------------------------------------------------- */
@@ -2518,7 +2561,7 @@ async function getFfmpeg() {
   return ffmpeg;
 }
 
-async function transcoderEnMp4(webmBlob, onProgress) {
+async function transcoderEnMp4(webmBlob, fps, onProgress) {
   const ffmpeg = await getFfmpeg();
   const onFfmpegProgress = ({ progress }) => onProgress(Math.min(1, Math.max(0, progress)));
   ffmpeg.on('progress', onFfmpegProgress);
@@ -2526,10 +2569,11 @@ async function transcoderEnMp4(webmBlob, onProgress) {
     const donneesEntree = new Uint8Array(await webmBlob.arrayBuffer());
     await ffmpeg.writeFile('entree.webm', donneesEntree);
     // Preset "slow" + CRF bas : encodage plus lent mais meilleure qualité,
-    // conforme au 1920x1080/60fps de la capture.
+    // conforme au 1920x1080 et au FPS choisi par l'utilisateur pour la
+    // capture.
     await ffmpeg.exec([
       '-i', 'entree.webm',
-      '-r', '60',
+      '-r', String(fps || 60),
       '-c:v', 'libx264',
       '-preset', 'slow',
       '-crf', '18',
@@ -2540,6 +2584,29 @@ async function transcoderEnMp4(webmBlob, onProgress) {
     ]);
     const donneesSortie = await ffmpeg.readFile('sortie.mp4');
     return new Blob([donneesSortie.buffer], { type: 'video/mp4' });
+  } finally {
+    ffmpeg.off('progress', onFfmpegProgress);
+  }
+}
+
+// GIF avec palette optimisée (palettegen + paletteuse) : bien meilleure
+// qualité de couleurs qu'un GIF encodé directement en 256 couleurs fixes.
+// Largeur limitée à 720px pour garder un poids de fichier raisonnable.
+async function transcoderEnGif(webmBlob, fps, onProgress) {
+  const ffmpeg = await getFfmpeg();
+  const onFfmpegProgress = ({ progress }) => onProgress(Math.min(1, Math.max(0, progress)));
+  ffmpeg.on('progress', onFfmpegProgress);
+  try {
+    const donneesEntree = new Uint8Array(await webmBlob.arrayBuffer());
+    await ffmpeg.writeFile('entree.webm', donneesEntree);
+    await ffmpeg.exec([
+      '-i', 'entree.webm',
+      '-filter_complex',
+      `fps=${fps || 15},scale=w=720:h=-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer`,
+      'sortie.gif',
+    ]);
+    const donneesSortie = await ffmpeg.readFile('sortie.gif');
+    return new Blob([donneesSortie.buffer], { type: 'image/gif' });
   } finally {
     ffmpeg.off('progress', onFfmpegProgress);
   }
@@ -2652,9 +2719,112 @@ function dessinerWaveform() {
   }
 }
 
+function lireFpsExportChoisi() {
+  const select = document.getElementById('editor-export-fps');
+  return (select && Number(select.value)) || 30;
+}
+
+function basculerBoutonsExport(actifs) {
+  ['editor-export-mp4', 'editor-export-png', 'editor-export-gif'].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = !actifs;
+  });
+}
+
+// Capture la timeline en webm (vidéo + audio) au FPS demandé, en freinant
+// automatiquement la lecture (voir `ajusterCadenceExport`) si le rendu réel
+// n'arrive pas à suivre — l'export dure alors plus longtemps en temps réel
+// plutôt que de perdre des images. Réutilisé par les exports MP4 et GIF.
+async function capturerFluxWebm({ fps, setProgress }) {
+  const { dureeTotale } = calculerTimeline();
+  let audioCtx = null;
+  const canvas = document.getElementById('editor-canvas');
+  const canvasStream = canvas.captureStream(fps);
+  const tracks = [...canvasStream.getVideoTracks()];
+
+  if (EditorState.audioEl || EditorState.bgVideoEl || EditorState.voiceEl) {
+    audioCtx = getSharedAudioCtx();
+    const dest = audioCtx.createMediaStreamDestination();
+    // Se brancher sur le GainNode (volume/fade) déjà en place plutôt que
+    // sur la source brute, sinon l'export ignore ces réglages.
+    if (EditorState.audioGainNode) EditorState.audioGainNode.connect(dest);
+    else if (EditorState.audioEl) getOrCreateSourceNode(audioCtx, EditorState.audioEl).connect(dest);
+    if (EditorState.voiceGainNode) EditorState.voiceGainNode.connect(dest);
+    else if (EditorState.voiceEl) getOrCreateSourceNode(audioCtx, EditorState.voiceEl).connect(dest);
+    if (EditorState.bgVideoEl) getOrCreateSourceNode(audioCtx, EditorState.bgVideoEl).connect(dest);
+    tracks.push(...dest.stream.getAudioTracks());
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+  }
+
+  const finalStream = new MediaStream(tracks);
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    ? 'video/webm;codecs=vp9,opus'
+    : 'video/webm';
+  const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: 12_000_000 });
+  const chunks = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size) chunks.push(e.data);
+  };
+
+  if (EditorState.bgVideoEl) {
+    EditorState.bgVideoEl.currentTime = 0;
+    await EditorState.bgVideoEl.play().catch(() => {});
+  }
+  if (EditorState.audioEl) {
+    EditorState.audioEl.currentTime = EditorState.audioTrimStart;
+    await EditorState.audioEl.play().catch(() => {});
+  }
+  if (EditorState.voiceEl) {
+    EditorState.voiceEl.currentTime = 0;
+    await EditorState.voiceEl.play().catch(() => {});
+  }
+
+  EditorState.exporting = true;
+  EditorState.exportFps = fps;
+  EditorState.exportPlaybackRate = 1;
+  EditorState._exportRafTs = null;
+  EditorState.playback.currentTime = 0;
+  EditorState.playback.lastFrameTs = null;
+  EditorState.playback.playing = true;
+
+  const finEnregistrement = new Promise((resolve) => {
+    recorder.onstop = resolve;
+  });
+  recorder.start();
+
+  const tick = setInterval(() => {
+    const frac = dureeTotale > 0 ? EditorState.playback.currentTime / dureeTotale : 0;
+    const ralenti = EditorState.exportPlaybackRate < 0.92;
+    setProgress(
+      Math.min(0.5, frac * 0.5),
+      ralenti
+        ? `Rendu en cours (ralenti pour garder ${fps} im/s)… ${Math.round(frac * 100)}%`
+        : undefined
+    );
+  }, 100);
+
+  await new Promise((resolve) => {
+    const attendreFin = () => {
+      if (!EditorState.playback.playing) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(attendreFin);
+    };
+    requestAnimationFrame(attendreFin);
+  });
+  clearInterval(tick);
+  recorder.stop();
+  if (EditorState.audioEl) EditorState.audioEl.pause();
+  if (EditorState.voiceEl) EditorState.voiceEl.pause();
+  EditorState.exporting = false;
+  appliquerExportPlaybackRate(1);
+  await finEnregistrement;
+
+  return new Blob(chunks, { type: 'video/webm' });
+}
+
 async function exportEditeurMp4() {
-  const btnMp4 = document.getElementById('editor-export-mp4');
-  const btnPng = document.getElementById('editor-export-png');
   const progressWrap = document.getElementById('editor-export-progress');
   const fill = document.getElementById('editor-progress-fill');
   const label = document.getElementById('editor-progress-label');
@@ -2671,80 +2841,16 @@ async function exportEditeurMp4() {
     label.textContent = texte || `Export en cours… ${pct}%`;
   };
 
-  btnMp4.disabled = true;
-  btnPng.disabled = true;
+  basculerBoutonsExport(false);
   progressWrap.classList.remove('hidden');
   setProgress(0, 'Préparation…');
 
-  let audioCtx = null;
   try {
-    const canvas = document.getElementById('editor-canvas');
-    const canvasStream = canvas.captureStream(60);
-    const tracks = [...canvasStream.getVideoTracks()];
-
-    if (EditorState.audioEl || EditorState.bgVideoEl || EditorState.voiceEl) {
-      audioCtx = getSharedAudioCtx();
-      const dest = audioCtx.createMediaStreamDestination();
-      // Se brancher sur le GainNode (volume/fade) déjà en place plutôt que
-      // sur la source brute, sinon l'export ignore ces réglages.
-      if (EditorState.audioGainNode) EditorState.audioGainNode.connect(dest);
-      else if (EditorState.audioEl) getOrCreateSourceNode(audioCtx, EditorState.audioEl).connect(dest);
-      if (EditorState.voiceGainNode) EditorState.voiceGainNode.connect(dest);
-      else if (EditorState.voiceEl) getOrCreateSourceNode(audioCtx, EditorState.voiceEl).connect(dest);
-      if (EditorState.bgVideoEl) getOrCreateSourceNode(audioCtx, EditorState.bgVideoEl).connect(dest);
-      tracks.push(...dest.stream.getAudioTracks());
-      if (audioCtx.state === 'suspended') await audioCtx.resume();
-    }
-
-    const finalStream = new MediaStream(tracks);
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-      ? 'video/webm;codecs=vp9,opus'
-      : 'video/webm';
-    const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: 12_000_000 });
-    const chunks = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size) chunks.push(e.data);
-    };
-
-    if (EditorState.bgVideoEl) {
-      EditorState.bgVideoEl.currentTime = 0;
-      await EditorState.bgVideoEl.play().catch(() => {});
-    }
-    if (EditorState.audioEl) {
-      EditorState.audioEl.currentTime = EditorState.audioTrimStart;
-      await EditorState.audioEl.play().catch(() => {});
-    }
-    if (EditorState.voiceEl) {
-      EditorState.voiceEl.currentTime = 0;
-      await EditorState.voiceEl.play().catch(() => {});
-    }
-
-    EditorState.playback.currentTime = 0;
-    EditorState.playback.lastFrameTs = null;
-    EditorState.playback.playing = true;
-
-    const finEnregistrement = new Promise((resolve) => {
-      recorder.onstop = resolve;
-    });
-    recorder.start();
-
-    const debut = Date.now();
-    const tick = setInterval(() => {
-      const ecoule = (Date.now() - debut) / 1000;
-      setProgress(Math.min(0.5, (ecoule / dureeTotale) * 0.5));
-    }, 100);
-
-    await new Promise((resolve) => setTimeout(resolve, dureeTotale * 1000));
-    clearInterval(tick);
-    EditorState.playback.playing = false;
-    recorder.stop();
-    if (EditorState.audioEl) EditorState.audioEl.pause();
-    if (EditorState.voiceEl) EditorState.voiceEl.pause();
-    await finEnregistrement;
+    const fps = lireFpsExportChoisi();
+    const webmBlob = await capturerFluxWebm({ fps, setProgress });
 
     setProgress(0.5, 'Conversion en MP4 (qualité haute, encodage lent)…');
-    const webmBlob = new Blob(chunks, { type: 'video/webm' });
-    const mp4Blob = await transcoderEnMp4(webmBlob, (p) =>
+    const mp4Blob = await transcoderEnMp4(webmBlob, fps, (p) =>
       setProgress(0.5 + p * 0.5, `Conversion en MP4… ${Math.round(p * 100)}%`)
     );
 
@@ -2755,7 +2861,49 @@ async function exportEditeurMp4() {
     toast("Échec de l'export MP4 : " + err.message, 'error');
   } finally {
     setTimeout(() => progressWrap.classList.add('hidden'), 1200);
-    btnMp4.disabled = false;
-    btnPng.disabled = false;
+    basculerBoutonsExport(true);
+  }
+}
+
+async function exportEditeurGif() {
+  const progressWrap = document.getElementById('editor-export-progress');
+  const fill = document.getElementById('editor-progress-fill');
+  const label = document.getElementById('editor-progress-label');
+
+  const { dureeTotale } = calculerTimeline();
+  if (dureeTotale <= 0) {
+    toast("Ajoutez au moins une intro, une photo ou une outro avant d'exporter.", 'error');
+    return;
+  }
+
+  const setProgress = (frac, texte) => {
+    const pct = Math.round(frac * 100);
+    fill.style.width = `${pct}%`;
+    label.textContent = texte || `Export en cours… ${pct}%`;
+  };
+
+  basculerBoutonsExport(false);
+  progressWrap.classList.remove('hidden');
+  setProgress(0, 'Préparation…');
+
+  try {
+    // Un GIF n'a pas d'intérêt à dépasser ~20 im/s (poids du fichier), même
+    // si un FPS plus élevé a été choisi pour la vidéo.
+    const fps = Math.min(20, lireFpsExportChoisi());
+    const webmBlob = await capturerFluxWebm({ fps, setProgress });
+
+    setProgress(0.5, 'Conversion en GIF (palette optimisée)…');
+    const gifBlob = await transcoderEnGif(webmBlob, fps, (p) =>
+      setProgress(0.5 + p * 0.5, `Conversion en GIF… ${Math.round(p * 100)}%`)
+    );
+
+    setProgress(1, 'Terminé !');
+    downloadBlob(gifBlob, `${obtenirNomExport('playtesteur-promo')}.gif`);
+  } catch (err) {
+    console.error('[editeur] export GIF échoué', err);
+    toast("Échec de l'export GIF : " + err.message, 'error');
+  } finally {
+    setTimeout(() => progressWrap.classList.add('hidden'), 1200);
+    basculerBoutonsExport(true);
   }
 }

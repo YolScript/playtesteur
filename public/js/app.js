@@ -1445,12 +1445,22 @@ function viewEditeur() {
               <label class="editor-label">Nom du fichier</label>
               <input type="text" id="editor-filename" placeholder="playtesteur-promo" maxlength="80">
             </div>
+            <div class="editor-section">
+              <label class="editor-label">Images par seconde (vidéo/GIF)</label>
+              <select id="editor-export-fps">
+                <option value="24">24 im/s (le plus rapide à exporter)</option>
+                <option value="30" selected>30 im/s (recommandé)</option>
+                <option value="60">60 im/s (le plus fluide)</option>
+              </select>
+              <span class="form-hint">Un projet avec beaucoup de photos/effets peut rendre l'export plus long que la durée de la vidéo : c'est normal, l'éditeur ralentit le rendu pour garder le nombre d'images par seconde choisi plutôt que de perdre en fluidité.</span>
+            </div>
           </div>
         </details>
 
         <div class="editor-actions">
           <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG</button>
-          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080, 60 im/s)</button>
+          <button id="editor-export-gif" class="btn-secondary" type="button">Exporter en GIF</button>
+          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080)</button>
         </div>
       </div>
     </div>
