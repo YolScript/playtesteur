@@ -33,6 +33,8 @@ const EditorState = {
 
   imageExportFormat: 'playstore', // 'playstore' (1080x1920) | 'square' (1080x1080)
 
+  effects: { bloomActive: false, bloomStrength: 1.1 },
+
   dragging: null, // null | 'text' | { type:'photo', id } | { type:'caption', id }
   _textBox: null,
   audioCtx: null,
@@ -196,18 +198,44 @@ async function initMoteur3D(canvas) {
   dirLight.position.set(0.4, 0.6, 1);
   scene.add(dirLight);
 
+  // Le fond est placé en retrait (z=-bgDepth) pour rester derrière tous
+  // les calques quelle que soit leur profondeur. Avec une caméra en
+  // perspective, un plan plus loin de la caméra couvre un champ de vision
+  // plus large à taille égale : sans compenser, un plan simplement mis à
+  // l'échelle width x height (calibrée pour z=0) apparaît plus petit que
+  // le cadre, laissant des bandes noires sur les bords.
+  const bgDepth = 500;
   const bgGeo = new THREE.PlaneGeometry(1, 1);
   const bgMat = new THREE.MeshBasicMaterial({ color: 0x12151c });
   const bgMesh = new THREE.Mesh(bgGeo, bgMat);
-  bgMesh.position.z = -500;
-  bgMesh.scale.set(width, height, 1);
+  bgMesh.position.z = -bgDepth;
+  const bgScale = (distance + bgDepth) / distance;
+  bgMesh.scale.set(width * bgScale, height * bgScale, 1);
   scene.add(bgMesh);
+
+  // Post-processing "glow" (effet Saber / halo énergétique) : bloom sur
+  // toute la scène, désactivable (coût de perf) et réglable en intensité.
+  // Les zones lumineuses des calques (contours énergétiques, texte blanc,
+  // particules) sont amplifiées en halo diffus.
+  const { EffectComposer } = await import('/vendor/three/jsm/postprocessing/EffectComposer.js');
+  const { RenderPass } = await import('/vendor/three/jsm/postprocessing/RenderPass.js');
+  const { UnrealBloomPass } = await import('/vendor/three/jsm/postprocessing/UnrealBloomPass.js');
+  const { OutputPass } = await import('/vendor/three/jsm/postprocessing/OutputPass.js');
+
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.1, 0.55, 0.15);
+  bloomPass.enabled = false;
+  composer.addPass(bloomPass);
+  composer.addPass(new OutputPass());
 
   EditorState.three = {
     THREE,
     renderer,
     scene,
     camera,
+    composer,
+    bloomPass,
     width,
     height,
     distance,
@@ -215,6 +243,7 @@ async function initMoteur3D(canvas) {
     bgTexture: null,
     bgSourceEl: null,
     raycaster: new THREE.Raycaster(),
+    particleSystems: {},
     layers: {
       photo: null, // { mesh, canvas, ctx, texture, id }
       caption: null,
@@ -271,6 +300,19 @@ function sizeLayerCanvas(layer, w, h) {
   if (layer.canvas.width !== w || layer.canvas.height !== h) {
     layer.canvas.width = w;
     layer.canvas.height = h;
+    // Recrée la texture GPU plutôt que de muter les dimensions d'une
+    // texture déjà uploadée : en cas de redimensionnements rapprochés du
+    // canvas source (ex. frappe clavier rapide dans une légende), le
+    // rendu WebGL restait figé sur une frame précédente (texte tronqué à
+    // la première lettre) alors que le canvas source et l'état étaient
+    // déjà corrects — un objet CanvasTexture neuf par changement de
+    // taille évite ce désync.
+    const { THREE } = EditorState.three;
+    layer.texture.dispose();
+    layer.texture = new THREE.CanvasTexture(layer.canvas);
+    layer.texture.colorSpace = THREE.SRGBColorSpace;
+    layer.mesh.material.map = layer.texture;
+    layer.mesh.material.needsUpdate = true;
   }
   layer.mesh.scale.set(w, h, 1);
 }
@@ -376,6 +418,70 @@ function ajusterCoverUV(texture, mw, mh, dw, dh) {
   texture.offset.set((1 - repeatX) / 2, (1 - repeatY) / 2);
 }
 
+// Point à la fraction t (0..1) du périmètre d'un rectangle à coins
+// arrondis, en parcourant les 4 côtés + 4 arcs dans le sens horaire à
+// partir du milieu du bord supérieur. Sert à faire "courir" une tête
+// lumineuse le long du contour pour l'effet Saber.
+function pointOnRoundRect(x, y, w, h, r, t) {
+  const straightTop = w / 2 - r;
+  const arc = (Math.PI / 2) * r;
+  const straightSide = h - 2 * r;
+  const straightBottom = w - 2 * r;
+  const total = 2 * straightTop + straightBottom + 2 * straightSide + 4 * arc;
+  let d = ((t % 1) + 1) % 1 * total;
+
+  const seg = (len) => {
+    if (d <= len) return true;
+    d -= len;
+    return false;
+  };
+
+  if (seg(straightTop)) return { px: x + w / 2 + d, py: y };
+  if (seg(arc)) {
+    const a = -Math.PI / 2 + (d / arc) * (Math.PI / 2);
+    return { px: x + w - r + r * Math.cos(a), py: y + r + r * Math.sin(a) };
+  }
+  if (seg(straightSide)) return { px: x + w, py: y + r + d };
+  if (seg(arc)) {
+    const a = (d / arc) * (Math.PI / 2);
+    return { px: x + w - r + r * Math.cos(a), py: y + h - r + r * Math.sin(a) };
+  }
+  if (seg(straightBottom)) return { px: x + w - r - d, py: y + h };
+  if (seg(arc)) {
+    const a = Math.PI / 2 + (d / arc) * (Math.PI / 2);
+    return { px: x + r + r * Math.cos(a), py: y + h - r + r * Math.sin(a) };
+  }
+  if (seg(straightSide)) return { px: x, py: y + h - r - d };
+  if (seg(arc)) {
+    const a = Math.PI + (d / arc) * (Math.PI / 2);
+    return { px: x + r + r * Math.cos(a), py: y + r + r * Math.sin(a) };
+  }
+  return { px: x + w / 2, py: y };
+}
+
+// Effet "Saber" : traînée lumineuse qui court le long du contour arrondi
+// de la carte, tête vive + queue qui s'estompe, glow amplifié ensuite par
+// le bloom global si activé.
+function dessinerContourEnergetique(ctx, x, y, w, h, r, color, tGlobal) {
+  const nQueue = 26;
+  const vitesse = 0.18; // tours par seconde
+  ctx.save();
+  for (let i = 0; i < nQueue; i++) {
+    const tTete = (tGlobal * vitesse - i * 0.012) % 1;
+    const { px, py } = pointOnRoundRect(x, y, w, h, r, tTete);
+    const alpha = (1 - i / nQueue) * 0.9;
+    const radius = Math.max(1.5, Math.min(w, h) * 0.018) * (1 - i / nQueue * 0.5);
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = radius * 6;
+    ctx.arc(px, py, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // Photo "carte flottante" : coins arrondis, ombre douce, contour clair —
 // composés sur un canvas hors-écran (comme avant) puis texturés sur un
 // plan 3D. Flottement + tilt automatiques, plus rotation manuelle sur
@@ -418,6 +524,10 @@ function mettreAJourPhoto(p, tGlobal) {
   ctx.strokeStyle = 'rgba(255,255,255,0.3)';
   roundRectPath(ctx, ox, oy, w, h, Math.min(w, h) * 0.06);
   ctx.stroke();
+
+  if (p.saberActive) {
+    dessinerContourEnergetique(ctx, ox, oy, w, h, Math.min(w, h) * 0.06, p.saberColor || '#00e5ff', tGlobal);
+  }
 
   const phase = (p.id % 7) * 0.9;
   const floatY = Math.sin(tGlobal * 1.1 + phase) * h * 0.035;
@@ -603,6 +713,83 @@ function mettreAJourTexteLibre() {
   return { x: cx - panelW / 2, y: cy - panelH / 2, w: panelW, h: panelH, cx, cy, z: 3 };
 }
 
+let particuleSpriteTexture = null;
+function getParticuleSprite(THREE) {
+  if (particuleSpriteTexture) return particuleSpriteTexture;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const cx = c.getContext('2d');
+  const grad = cx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  cx.fillStyle = grad;
+  cx.fillRect(0, 0, 64, 64);
+  particuleSpriteTexture = new THREE.CanvasTexture(c);
+  return particuleSpriteTexture;
+}
+
+// Particules énergétiques flottant autour de la carte active (effet
+// Saber additionnel). Positions relatives régénérées à chaque activation,
+// dérive lente + scintillement.
+function mettreAJourParticules(p, box, tGlobal) {
+  const ts = EditorState.three;
+  const { THREE, scene } = ts;
+  const key = 'photoParticles';
+  const actif = !!(p && p.particlesActive && box);
+
+  if (!actif) {
+    if (ts.particleSystems[key]) ts.particleSystems[key].points.visible = false;
+    return;
+  }
+
+  let sys = ts.particleSystems[key];
+  const count = 60;
+  if (!sys) {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    const seeds = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      seeds[i * 3] = Math.random() * Math.PI * 2;
+      seeds[i * 3 + 1] = 0.6 + Math.random() * 0.8;
+      seeds[i * 3 + 2] = Math.random();
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+      size: 18,
+      map: getParticuleSprite(THREE),
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      color: 0x66e5ff,
+    });
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
+    sys = { points, seeds, count };
+    ts.particleSystems[key] = sys;
+  }
+
+  sys.points.visible = true;
+  sys.points.material.color.set(p.saberColor || '#66e5ff');
+  const positions = sys.points.geometry.attributes.position.array;
+  const radiusX = box.w * 0.62;
+  const radiusY = box.h * 0.62;
+  for (let i = 0; i < sys.count; i++) {
+    const baseAngle = sys.seeds[i * 3];
+    const speed = sys.seeds[i * 3 + 1];
+    const offset = sys.seeds[i * 3 + 2];
+    const angle = baseAngle + tGlobal * speed * 0.4;
+    const bob = Math.sin(tGlobal * speed + offset * 10) * 14;
+    const px = box.cx + Math.cos(angle) * radiusX * (0.7 + 0.3 * Math.sin(offset * 6.28));
+    const py = box.cy + Math.sin(angle) * radiusY * (0.7 + 0.3 * Math.cos(offset * 6.28)) + bob;
+    const world = pxToWorld(px, py, box.z + 6);
+    positions[i * 3] = world.x;
+    positions[i * 3 + 1] = world.y;
+    positions[i * 3 + 2] = world.z;
+  }
+  sys.points.geometry.attributes.position.needsUpdate = true;
+}
+
 function renderEditorFrame() {
   const ts = EditorState.three;
   if (!ts) return;
@@ -614,27 +801,39 @@ function renderEditorFrame() {
   const segmentActif = segmentAuTemps(segments, EditorState.playback.currentTime);
 
   const tGlobal = performance.now() / 1000;
+  let photoBox = null;
   if (segmentActif && segmentActif.type === 'photo') {
     hideLayer('introLogo');
     hideLayer('introImg');
     hideLayer('introText');
-    mettreAJourPhoto(segmentActif.data, tGlobal);
+    photoBox = mettreAJourPhoto(segmentActif.data, tGlobal);
     mettreAJourLegende(segmentActif.data);
+    mettreAJourParticules(segmentActif.data, photoBox, tGlobal);
   } else if (segmentActif) {
     hideLayer('photo');
     hideLayer('caption');
     mettreAJourIntroOutro(segmentActif.data);
+    mettreAJourParticules(null, null, tGlobal);
   } else {
     hideLayer('photo');
     hideLayer('caption');
     hideLayer('introLogo');
     hideLayer('introImg');
     hideLayer('introText');
+    mettreAJourParticules(null, null, tGlobal);
   }
 
   EditorState._textBox = mettreAJourTexteLibre();
 
-  ts.renderer.render(ts.scene, ts.camera);
+  ts.bloomPass.enabled = EditorState.effects.bloomActive;
+  ts.bloomPass.strength = Number(EditorState.effects.bloomStrength) || 0;
+  if (EditorState.effects.bloomActive) {
+    ts.composer.setSize(ts.width, ts.height);
+    ts.composer.render();
+  } else {
+    ts.renderer.setSize(ts.width, ts.height, false);
+    ts.renderer.render(ts.scene, ts.camera);
+  }
   mettreAJourUiTimeline(dureeTotale);
 }
 
@@ -793,6 +992,19 @@ function bindEditorInputs() {
     EditorState.textStyle.size = Number(e.target.value);
   });
 
+  const bloomToggle = document.getElementById('editor-bloom-toggle');
+  const bloomStrength = document.getElementById('editor-bloom-strength');
+  if (bloomToggle) {
+    bloomToggle.addEventListener('change', (e) => {
+      EditorState.effects.bloomActive = e.target.checked;
+    });
+  }
+  if (bloomStrength) {
+    bloomStrength.addEventListener('input', (e) => {
+      EditorState.effects.bloomStrength = Number(e.target.value) / 10;
+    });
+  }
+
   document.querySelectorAll('input[name="editor-img-format"]').forEach((radio) => {
     radio.addEventListener('change', (e) => {
       if (e.target.checked) EditorState.imageExportFormat = e.target.value;
@@ -836,6 +1048,11 @@ function renderPhotoLayerHtml(p, index) {
         <label class="editor-mini-label">Rotation X<input type="range" data-rotx-for="${p.id}" min="-45" max="45" value="${p.rotX || 0}"></label>
         <label class="editor-mini-label">Rotation Y<input type="range" data-roty-for="${p.id}" min="-45" max="45" value="${p.rotY || 0}"></label>
         <label class="editor-mini-label">Rotation Z<input type="range" data-rotz-for="${p.id}" min="-45" max="45" value="${p.rotZ || 0}"></label>
+      </div>
+      <div class="editor-row">
+        <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-saber-for="${p.id}" ${p.saberActive ? 'checked' : ''}><span>Contour énergétique</span></label>
+        <input type="color" data-sabercolor-for="${p.id}" value="${p.saberColor || '#00e5ff'}" title="Couleur de l'effet">
+        <label class="editor-checkbox-row" style="margin:0;"><input type="checkbox" data-particles-for="${p.id}" ${p.particlesActive ? 'checked' : ''}><span>Particules</span></label>
       </div>
     </div>
   `;
@@ -884,6 +1101,26 @@ function bindPhotoLayerEvents() {
         jump();
       });
     });
+    const saberInput = document.querySelector(`[data-saber-for="${p.id}"]`);
+    if (saberInput) {
+      saberInput.addEventListener('change', (e) => {
+        p.saberActive = e.target.checked;
+        jump();
+      });
+    }
+    const saberColorInput = document.querySelector(`[data-sabercolor-for="${p.id}"]`);
+    if (saberColorInput) {
+      saberColorInput.addEventListener('input', (e) => {
+        p.saberColor = e.target.value;
+      });
+    }
+    const particlesInput = document.querySelector(`[data-particles-for="${p.id}"]`);
+    if (particlesInput) {
+      particlesInput.addEventListener('change', (e) => {
+        p.particlesActive = e.target.checked;
+        jump();
+      });
+    }
   });
   document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
@@ -915,6 +1152,9 @@ function ajouterCalquePhoto() {
     duree: 3,
     texteX: 0.5,
     texteY: 0.72,
+    saberActive: false,
+    saberColor: '#00e5ff',
+    particlesActive: false,
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);

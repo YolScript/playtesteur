@@ -13,6 +13,13 @@
 
     <link rel="icon" type="image/png" href="favicon.png">
     <link rel="stylesheet" href="css/styles.css">
+
+    <!-- Les addons three.js (postprocessing) importent "three" en bare
+         specifier ; cette import map le résout vers le fichier vendoré
+         sans dépendre d'un bundler. -->
+    <script type="importmap">
+    { "imports": { "three": "/vendor/three/three.module.min.js" } }
+    </script>
 </head>
 <body>
     <div id="toast-container"></div>

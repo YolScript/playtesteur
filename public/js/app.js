@@ -1330,6 +1330,12 @@ function viewEditeur() {
           </div>
         </div>
         <div class="editor-section">
+          <label class="editor-label">Effets lumineux (glow)</label>
+          <label class="editor-checkbox-row"><input type="checkbox" id="editor-bloom-toggle"><span>Activer le halo lumineux</span></label>
+          <label class="editor-mini-label">Intensité<input type="range" id="editor-bloom-strength" min="0" max="30" value="11"></label>
+          <span class="form-hint">Amplifie les contours énergétiques et particules activés sur une photo. Coûteux en performance.</span>
+        </div>
+        <div class="editor-section">
           <label class="editor-label">Format des images exportées</label>
           <div class="editor-row">
             <label class="editor-radio-row"><input type="radio" name="editor-img-format" value="playstore" checked> Vertical Play Store (1080×1920)</label>
