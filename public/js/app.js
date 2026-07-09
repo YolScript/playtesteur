@@ -1267,6 +1267,8 @@ function viewEditeur() {
           <button type="button" id="editor-play-btn" class="editor-play-btn" title="Lecture / Pause">▶</button>
           <input type="range" id="editor-scrubber" min="0" max="100" step="0.5" value="0">
           <span class="editor-time-label" id="editor-time-label">0.0s / 0.0s</span>
+          <button type="button" id="editor-undo-btn" class="btn-secondary" title="Annuler (Ctrl+Z)" disabled>↺</button>
+          <button type="button" id="editor-redo-btn" class="btn-secondary" title="Rétablir (Ctrl+Y)" disabled>↻</button>
         </div>
         <div class="editor-progress hidden" id="editor-export-progress">
           <div class="editor-progress-bar"><div class="editor-progress-fill" id="editor-progress-fill"></div></div>

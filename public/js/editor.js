@@ -166,6 +166,71 @@ function initHistorique() {
   majBoutonsHistorique();
 }
 
+// Resynchronise les champs du panneau qui ne sont pas régénérés depuis
+// zéro (contrairement aux listes photos/textBlocks) après une restauration
+// d'historique — sinon la valeur affichée dans l'input diverge de
+// EditorState tant que l'utilisateur n'y touche pas lui-même.
+function rafraichirPanneauApresRestauration() {
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
+  const setChecked = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = !!val;
+  };
+  const toggleHidden = (id, hidden) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', hidden);
+  };
+
+  const bgMode = EditorState.bgType === 'color' ? 'color' : EditorState.bgType === 'gradient' ? 'gradient' : 'media';
+  setVal('editor-bg-type', bgMode);
+  toggleHidden('editor-bg-media-panel', bgMode !== 'media');
+  toggleHidden('editor-bg-color-panel', bgMode !== 'color');
+  toggleHidden('editor-bg-gradient-panel', bgMode !== 'gradient');
+  setVal('editor-bg-color', EditorState.bgColor);
+  setVal('editor-bg-gradient1', EditorState.bgGradient.color1);
+  setVal('editor-bg-gradient2', EditorState.bgGradient.color2);
+  setVal('editor-bg-gradient-angle', EditorState.bgGradient.angle);
+  setVal('editor-bg-brightness', EditorState.bgAdjust.brightness);
+  setVal('editor-bg-blur', EditorState.bgAdjust.blur);
+  setVal('editor-overlay-type', EditorState.overlay.type);
+  setVal('editor-overlay-strength', Math.round(EditorState.overlay.strength * 100));
+  setChecked('editor-bg-chromakey-toggle', EditorState.bgChromaKey.active);
+  setVal('editor-bg-chromakey-color', EditorState.bgChromaKey.color);
+  setVal('editor-bg-chromakey-tolerance', Math.round(EditorState.bgChromaKey.tolerance * 100));
+
+  setVal('editor-audio-volume', Math.round(EditorState.audioVolume * 100));
+  setVal('editor-audio-fadein', EditorState.audioFadeIn);
+  setVal('editor-audio-fadeout', EditorState.audioFadeOut);
+  setVal('editor-audio-trim', EditorState.audioTrimStart);
+  setVal('editor-voice-volume', Math.round(EditorState.voiceVolume * 100));
+
+  ['intro', 'outro'].forEach((prefix) => {
+    const seg = EditorState[prefix];
+    setChecked(`editor-${prefix}-toggle`, seg.active);
+    toggleHidden(`editor-${prefix}-panel`, !seg.active);
+    setVal(`editor-${prefix}-text`, seg.texte || '');
+    setVal(`editor-${prefix}-duree`, seg.duree);
+  });
+
+  setVal('editor-transition-type', EditorState.transitionType);
+  setChecked('editor-bloom-toggle', EditorState.effects.bloomActive);
+  setVal('editor-bloom-strength', Math.round(EditorState.effects.bloomStrength * 20));
+  setChecked('editor-bloom-audioreactive', EditorState.effects.bloomAudioReactive);
+
+  const formatRadio = document.querySelector(`input[name="editor-img-format"][value="${EditorState.imageExportFormat}"]`);
+  if (formatRadio) formatRadio.checked = true;
+
+  document.querySelectorAll('.editor-controls input[type="range"]').forEach((input) => {
+    const min = Number(input.min) || 0;
+    const max = Number(input.max) || 100;
+    const pct = ((Number(input.value) - min) / (max - min || 1)) * 100;
+    input.style.setProperty('--range-progress', `${pct}%`);
+  });
+}
+
 const FONTS_DISPONIBLES = [
   { value: "'Space Grotesk', sans-serif", label: 'Space Grotesk' },
   { value: "'Roboto', sans-serif", label: 'Roboto' },
@@ -223,6 +288,29 @@ function bindAccordionUx() {
     panel.querySelectorAll('input[type="range"]').forEach(majProgress);
   }).observe(panel, { childList: true, subtree: true });
   panel.querySelectorAll('input[type="range"]').forEach(majProgress);
+
+  // Historique (undo/redo) : capture un instantané ~500ms après la
+  // dernière modification faite via le panneau, plutôt qu'à chaque frappe
+  // (un slider glissé ou un texte tapé produiraient sinon des dizaines
+  // d'états intermédiaires inutiles).
+  let debounceHistorique = null;
+  panel.addEventListener(
+    'input',
+    () => {
+      clearTimeout(debounceHistorique);
+      debounceHistorique = setTimeout(pousserHistorique, 500);
+    },
+    true
+  );
+  panel.addEventListener(
+    'change',
+    (e) => {
+      if (e.target.type === 'range') return; // déjà couvert par 'input' au relâchement
+      clearTimeout(debounceHistorique);
+      debounceHistorique = setTimeout(pousserHistorique, 500);
+    },
+    true
+  );
 }
 
 async function initEditeur() {
@@ -232,6 +320,7 @@ async function initEditeur() {
   bindEditorInputs();
   bindTimelineControls();
   bindAccordionUx();
+  bindHistoriqueUx();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
 
@@ -239,10 +328,48 @@ async function initEditeur() {
   await initMoteur3D(canvas);
   bindEditorDrag3D(canvas);
 
+  // L'historique lui-même (pile de snapshots) est un état de session, pas
+  // de DOM : ne l'initialiser qu'une fois, sinon revenir sur la vue
+  // éditeur (SPA) effacerait l'undo/redo en cours.
+  if (Historique.pile.length === 0) initHistorique();
+  else majBoutonsHistorique();
+
   (function loop() {
     renderEditorFrame();
     editorRafId = requestAnimationFrame(loop);
   })();
+}
+
+function bindHistoriqueUx() {
+  const btnUndo = document.getElementById('editor-undo-btn');
+  const btnRedo = document.getElementById('editor-redo-btn');
+  if (btnUndo && !btnUndo.dataset.bound) {
+    btnUndo.dataset.bound = '1';
+    btnUndo.addEventListener('click', annulerHistorique);
+  }
+  if (btnRedo && !btnRedo.dataset.bound) {
+    btnRedo.dataset.bound = '1';
+    btnRedo.addEventListener('click', refaireHistorique);
+  }
+  if (!window._playtesteurHistoryKeysBound) {
+    window._playtesteurHistoryKeysBound = true;
+    document.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (!document.getElementById('editor-canvas')) return; // pas sur la vue éditeur
+      const cible = document.activeElement;
+      const dansChampTexte =
+        cible && (cible.tagName === 'INPUT' || cible.tagName === 'TEXTAREA' || cible.isContentEditable);
+      if (dansChampTexte) return; // laisser l'undo natif du champ agir
+      const touche = e.key.toLowerCase();
+      if (touche === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        annulerHistorique();
+      } else if (touche === 'y' || (touche === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        refaireHistorique();
+      }
+    });
+  }
 }
 
 /* -------------------------------------------------------------------- */
@@ -2383,11 +2510,13 @@ function ajouterCalquePhoto() {
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);
+  pousserHistorique();
 }
 
 function supprimerCalquePhoto(id) {
   EditorState.photos = EditorState.photos.filter((p) => p.id !== id);
   rafraichirListePhotos();
+  pousserHistorique();
 }
 
 /* -------------------------------------------------------------------- */
@@ -2593,6 +2722,7 @@ function ajouterBlocTexte() {
     particlesActive: false,
   });
   rafraichirListeTextBlocks();
+  pousserHistorique();
 }
 
 function supprimerBlocTexte(id) {
@@ -2603,6 +2733,7 @@ function supprimerBlocTexte(id) {
     ts.particleSystems[`text-particles-${id}`].points.visible = false;
   }
   rafraichirListeTextBlocks();
+  pousserHistorique();
 }
 
 /* -------------------------------------------------------------------- */
@@ -2698,6 +2829,7 @@ function bindEditorDrag3D(canvas) {
 
   ['pointerup', 'pointercancel', 'pointerleave'].forEach((evtName) => {
     canvas.addEventListener(evtName, () => {
+      if (EditorState.dragging) pousserHistorique();
       EditorState.dragging = null;
       canvas.style.cursor = 'default';
     });
