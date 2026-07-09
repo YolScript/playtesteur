@@ -105,9 +105,12 @@ button { font-family: var(--font-sans); }
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 24px 0;
-    border-bottom: 1px solid var(--border-color);
-    margin-bottom: 28px;
+    padding: 16px 20px;
+    margin: 0 -20px 28px;
+    border-radius: var(--radius-lg);
+    background: rgba(8, 10, 13, 0.55);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--border-color);
     flex-wrap: wrap;
     gap: 16px;
 }
