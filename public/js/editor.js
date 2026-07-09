@@ -15,9 +15,13 @@
    ========================================================================== */
 
 const EditorState = {
-  bgType: null, // 'video' | 'image' | null
+  bgType: null, // 'video' | 'image' | 'color' | 'gradient' | null
   bgVideoEl: null,
   bgImageEl: null,
+  bgColor: '#12151c',
+  bgGradient: { color1: '#0f2027', color2: '#2c5364', angle: 135 },
+  bgAdjust: { brightness: 100, blur: 0 }, // brightness: 40-160%, blur: 0-15px
+  overlay: { type: 'none', strength: 0.5 }, // type: 'none' | 'grain' | 'vignette'
   audioEl: null,
   fontFamily: null,
 
@@ -455,39 +459,205 @@ function maskShapePath(ctx, shape, x, y, w, h, r) {
 // Fond : texture vidéo/image "cover" appliquée directement sur le plan
 // de fond (pas besoin de composition hors-écran, three.js gère la
 // texture vidéo nativement).
-function mettreAJourFond() {
+// Dessine un média (vidéo/image) en mode "cover" dans un canvas 2D.
+function drawCoverOnCanvas(ctx, media, dw, dh) {
+  const mw = media.videoWidth || media.naturalWidth || media.width || 0;
+  const mh = media.videoHeight || media.naturalHeight || media.height || 0;
+  if (!mw || !mh) return;
+  const scale = Math.max(dw / mw, dh / mh);
+  const w = mw * scale;
+  const h = mh * scale;
+  ctx.drawImage(media, (dw - w) / 2, (dh - h) / 2, w, h);
+}
+
+// Résout la source de fond effective pour le segment actif : l'override
+// de la photo en cours s'il en a un, sinon le fond global.
+function resoudreFondEffectif(segmentActif) {
+  if (segmentActif && segmentActif.type === 'photo') {
+    const p = segmentActif.data;
+    if (p.bgOverrideType && p.bgOverrideType !== 'none') {
+      return {
+        type: p.bgOverrideType,
+        videoEl: p.bgOverrideVideoEl,
+        imageEl: p.bgOverrideImageEl,
+        color: p.bgOverrideColor,
+      };
+    }
+  }
+  return {
+    type: EditorState.bgType,
+    videoEl: EditorState.bgVideoEl,
+    imageEl: EditorState.bgImageEl,
+    color: EditorState.bgColor,
+  };
+}
+
+function mettreAJourFond(segmentActif) {
   const ts = EditorState.three;
   const { THREE } = ts;
+  const fond = resoudreFondEffectif(segmentActif);
+  const brightness = Number(EditorState.bgAdjust.brightness) || 100;
+  const blur = Number(EditorState.bgAdjust.blur) || 0;
+  const needsAdjustCanvas = (fond.type === 'video' || fond.type === 'image') && (brightness !== 100 || blur > 0);
 
-  if (EditorState.bgType === 'video' && EditorState.bgVideoEl && EditorState.bgVideoEl.readyState >= 2) {
-    if (ts.bgSourceEl !== EditorState.bgVideoEl) {
-      ts.bgTexture = new THREE.VideoTexture(EditorState.bgVideoEl);
-      ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
+  if (fond.type === 'video' && fond.videoEl && fond.videoEl.readyState >= 2) {
+    if (needsAdjustCanvas) {
+      appliquerFondAjuste(ts, fond.videoEl, brightness, blur);
+    } else {
+      if (ts.bgSourceEl !== fond.videoEl || ts.bgSourceKind !== 'video') {
+        ts.bgTexture = new THREE.VideoTexture(fond.videoEl);
+        ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
+        ts.bgMesh.material.map = ts.bgTexture;
+        ts.bgMesh.material.color.set(0xffffff);
+        ts.bgMesh.material.needsUpdate = true;
+        ts.bgSourceEl = fond.videoEl;
+        ts.bgSourceKind = 'video';
+      }
+      ajusterCoverUV(ts.bgTexture, fond.videoEl.videoWidth, fond.videoEl.videoHeight, ts.width, ts.height);
+    }
+  } else if (fond.type === 'image' && fond.imageEl) {
+    if (needsAdjustCanvas) {
+      appliquerFondAjuste(ts, fond.imageEl, brightness, blur);
+    } else {
+      if (ts.bgSourceEl !== fond.imageEl || ts.bgSourceKind !== 'image') {
+        ts.bgTexture = new THREE.Texture(fond.imageEl);
+        ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
+        ts.bgTexture.needsUpdate = true;
+        ts.bgMesh.material.map = ts.bgTexture;
+        ts.bgMesh.material.color.set(0xffffff);
+        ts.bgMesh.material.needsUpdate = true;
+        ts.bgSourceEl = fond.imageEl;
+        ts.bgSourceKind = 'image';
+      }
+      ajusterCoverUV(ts.bgTexture, fond.imageEl.naturalWidth, fond.imageEl.naturalHeight, ts.width, ts.height);
+    }
+  } else if (fond.type === 'gradient') {
+    const key = `gradient:${EditorState.bgGradient.color1}:${EditorState.bgGradient.color2}:${EditorState.bgGradient.angle}`;
+    if (ts.bgSourceEl !== key) {
+      ts.bgTexture = creerTextureDegrade(THREE, EditorState.bgGradient);
       ts.bgMesh.material.map = ts.bgTexture;
       ts.bgMesh.material.color.set(0xffffff);
       ts.bgMesh.material.needsUpdate = true;
-      ts.bgSourceEl = EditorState.bgVideoEl;
+      ts.bgSourceEl = key;
+      ts.bgSourceKind = 'gradient';
     }
-    const mw = EditorState.bgVideoEl.videoWidth;
-    const mh = EditorState.bgVideoEl.videoHeight;
-    ajusterCoverUV(ts.bgTexture, mw, mh, ts.width, ts.height);
-  } else if (EditorState.bgType === 'image' && EditorState.bgImageEl) {
-    if (ts.bgSourceEl !== EditorState.bgImageEl) {
-      ts.bgTexture = new THREE.Texture(EditorState.bgImageEl);
-      ts.bgTexture.colorSpace = THREE.SRGBColorSpace;
-      ts.bgTexture.needsUpdate = true;
-      ts.bgMesh.material.map = ts.bgTexture;
-      ts.bgMesh.material.color.set(0xffffff);
-      ts.bgMesh.material.needsUpdate = true;
-      ts.bgSourceEl = EditorState.bgImageEl;
-    }
-    ajusterCoverUV(ts.bgTexture, EditorState.bgImageEl.naturalWidth, EditorState.bgImageEl.naturalHeight, ts.width, ts.height);
+  } else if (fond.type === 'color') {
+    ts.bgMesh.material.map = null;
+    ts.bgMesh.material.color.set(fond.color || '#12151c');
+    ts.bgMesh.material.needsUpdate = true;
+    ts.bgSourceEl = null;
+    ts.bgSourceKind = 'color';
   } else {
     ts.bgMesh.material.map = null;
     ts.bgMesh.material.color.set(0x12151c);
     ts.bgMesh.material.needsUpdate = true;
     ts.bgSourceEl = null;
+    ts.bgSourceKind = null;
   }
+
+  mettreAJourOverlay(ts, THREE);
+}
+
+// Compose le fond (vidéo/image) sur un canvas 2D hors-écran avec un
+// filtre CSS (luminosité/flou), redessiné chaque frame — nécessaire pour
+// une vidéo, acceptable en coût vu la résolution réduite du canvas.
+function appliquerFondAjuste(ts, media, brightness, blur) {
+  if (!ts.bgAdjustCanvas) {
+    ts.bgAdjustCanvas = document.createElement('canvas');
+    ts.bgAdjustCanvas.width = 960;
+    ts.bgAdjustCanvas.height = 540;
+    ts.bgAdjustCtx = ts.bgAdjustCanvas.getContext('2d');
+  }
+  const ctx = ts.bgAdjustCtx;
+  ctx.filter = `brightness(${brightness}%) blur(${blur}px)`;
+  ctx.clearRect(0, 0, ts.bgAdjustCanvas.width, ts.bgAdjustCanvas.height);
+  drawCoverOnCanvas(ctx, media, ts.bgAdjustCanvas.width, ts.bgAdjustCanvas.height);
+  ctx.filter = 'none';
+
+  if (ts.bgSourceKind !== 'adjust-canvas') {
+    ts.bgTexture = new ts.THREE.CanvasTexture(ts.bgAdjustCanvas);
+    ts.bgTexture.colorSpace = ts.THREE.SRGBColorSpace;
+    ts.bgMesh.material.map = ts.bgTexture;
+    ts.bgMesh.material.color.set(0xffffff);
+    ts.bgMesh.material.needsUpdate = true;
+    ts.bgSourceEl = media;
+    ts.bgSourceKind = 'adjust-canvas';
+  }
+  ts.bgTexture.needsUpdate = true;
+}
+
+function creerTextureDegrade(THREE, grad) {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 512;
+  const ctx = c.getContext('2d');
+  const rad = (grad.angle * Math.PI) / 180;
+  const dx = Math.cos(rad);
+  const dy = Math.sin(rad);
+  const g = ctx.createLinearGradient(
+    256 - dx * 256, 256 - dy * 256,
+    256 + dx * 256, 256 + dy * 256
+  );
+  g.addColorStop(0, grad.color1);
+  g.addColorStop(1, grad.color2);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 512, 512);
+  const texture = new THREE.CanvasTexture(c);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+// Overlay global (grain ou vignette) sur un plan juste devant le fond.
+let overlayTextureCache = {};
+function mettreAJourOverlay(ts, THREE) {
+  if (!ts.overlayMesh) {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 1 });
+    ts.overlayMesh = new THREE.Mesh(geo, mat);
+    ts.overlayMesh.position.z = -450;
+    ts.overlayMesh.scale.set(ts.width * 1.3, ts.height * 1.3, 1);
+    ts.scene.add(ts.overlayMesh);
+  }
+  const type = EditorState.overlay.type;
+  if (type === 'none') {
+    ts.overlayMesh.visible = false;
+    return;
+  }
+  ts.overlayMesh.visible = true;
+  const strength = Number(EditorState.overlay.strength) || 0.5;
+  const cacheKey = `${type}:${Math.round(strength * 20)}`;
+  if (!overlayTextureCache[cacheKey]) {
+    overlayTextureCache[cacheKey] = creerTextureOverlay(THREE, type, strength);
+  }
+  ts.overlayMesh.material.map = overlayTextureCache[cacheKey];
+  ts.overlayMesh.material.needsUpdate = true;
+}
+
+function creerTextureOverlay(THREE, type, strength) {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 512;
+  const ctx = c.getContext('2d');
+  if (type === 'vignette') {
+    const g = ctx.createRadialGradient(256, 256, 100, 256, 256, 380);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, `rgba(0,0,0,${0.35 + strength * 0.5})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 512, 512);
+  } else if (type === 'grain') {
+    const imgData = ctx.createImageData(512, 512);
+    for (let i = 0; i < imgData.data.length; i += 4) {
+      const v = Math.random() * 255;
+      imgData.data[i] = v;
+      imgData.data[i + 1] = v;
+      imgData.data[i + 2] = v;
+      imgData.data[i + 3] = strength * 90;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+  const texture = new THREE.CanvasTexture(c);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  return texture;
 }
 
 // Ajuste le repeat/offset UV d'une texture pour un rendu "cover" (comme
@@ -1119,14 +1289,14 @@ function renderEditorFrame() {
   const ts = EditorState.three;
   if (!ts) return;
 
-  mettreAJourFond();
-
   const { segments, dureeTotale } = calculerTimeline();
   avancerPlayback(dureeTotale);
   const now = EditorState.playback.currentTime;
   const segmentActif = segmentAuTemps(segments, now);
   const idxActif = segments.indexOf(segmentActif);
   const segmentSuivant = idxActif >= 0 ? segments[idxActif + 1] : null;
+
+  mettreAJourFond(segmentActif);
 
   // Fenêtre de transition : les DUREE_TRANSITION dernières secondes du
   // segment actif, s'il y a un segment suivant et qu'une transition est
@@ -1301,6 +1471,42 @@ function bindEditorInputs() {
     }
   });
 
+  const bgTypeSelect = document.getElementById('editor-bg-type');
+  const bgMediaPanel = document.getElementById('editor-bg-media-panel');
+  const bgColorPanel = document.getElementById('editor-bg-color-panel');
+  const bgGradientPanel = document.getElementById('editor-bg-gradient-panel');
+  if (bgTypeSelect) {
+    bgTypeSelect.addEventListener('change', (e) => {
+      const mode = e.target.value;
+      bgMediaPanel.classList.toggle('hidden', mode !== 'media');
+      bgColorPanel.classList.toggle('hidden', mode !== 'color');
+      bgGradientPanel.classList.toggle('hidden', mode !== 'gradient');
+      if (mode === 'color') EditorState.bgType = 'color';
+      else if (mode === 'gradient') EditorState.bgType = 'gradient';
+      else EditorState.bgType = EditorState.bgVideoEl ? 'video' : EditorState.bgImageEl ? 'image' : null;
+    });
+  }
+  const bgColorInput = document.getElementById('editor-bg-color');
+  if (bgColorInput) bgColorInput.addEventListener('input', (e) => (EditorState.bgColor = e.target.value));
+  const bgGradient1 = document.getElementById('editor-bg-gradient1');
+  if (bgGradient1) bgGradient1.addEventListener('input', (e) => (EditorState.bgGradient.color1 = e.target.value));
+  const bgGradient2 = document.getElementById('editor-bg-gradient2');
+  if (bgGradient2) bgGradient2.addEventListener('input', (e) => (EditorState.bgGradient.color2 = e.target.value));
+  const bgGradientAngle = document.getElementById('editor-bg-gradient-angle');
+  if (bgGradientAngle) {
+    bgGradientAngle.addEventListener('input', (e) => (EditorState.bgGradient.angle = Number(e.target.value)));
+  }
+  const bgBrightness = document.getElementById('editor-bg-brightness');
+  if (bgBrightness) bgBrightness.addEventListener('input', (e) => (EditorState.bgAdjust.brightness = Number(e.target.value)));
+  const bgBlur = document.getElementById('editor-bg-blur');
+  if (bgBlur) bgBlur.addEventListener('input', (e) => (EditorState.bgAdjust.blur = Number(e.target.value)));
+  const overlayType = document.getElementById('editor-overlay-type');
+  if (overlayType) overlayType.addEventListener('change', (e) => (EditorState.overlay.type = e.target.value));
+  const overlayStrength = document.getElementById('editor-overlay-strength');
+  if (overlayStrength) {
+    overlayStrength.addEventListener('input', (e) => (EditorState.overlay.strength = Number(e.target.value) / 100));
+  }
+
   audioInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1460,6 +1666,28 @@ function renderPhotoLayerHtml(p, index) {
             <label class="editor-mini-label">Hauteur<input type="range" data-croph-for="${p.id}" min="20" max="100" value="${Math.round((p.cropH ?? 1) * 100)}"></label>
           </div>
           <span class="form-hint">Haut/Gauche déplacent le point de départ du recadrage, Largeur/Hauteur ajustent la zone gardée de l'image originale.</span>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Fond de cette photo</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <select data-bgoverride-for="${p.id}">
+              <option value="none" ${(!p.bgOverrideType || p.bgOverrideType === 'none') ? 'selected' : ''}>Fond global</option>
+              <option value="video" ${p.bgOverrideType === 'video' ? 'selected' : ''}>Vidéo propre à cette photo</option>
+              <option value="image" ${p.bgOverrideType === 'image' ? 'selected' : ''}>Image propre à cette photo</option>
+              <option value="color" ${p.bgOverrideType === 'color' ? 'selected' : ''}>Couleur unie</option>
+            </select>
+          </div>
+          <div class="editor-row">
+            <input type="file" data-bgoverridefile-for="${p.id}" accept="video/mp4,image/png,image/jpeg" class="editor-file-input" id="editor-bgoverride-file-${p.id}">
+            <label class="editor-file-picker" for="editor-bgoverride-file-${p.id}">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+              <span>Choisir un fichier</span>
+            </label>
+            <input type="color" data-bgoverridecolor-for="${p.id}" value="${p.bgOverrideColor || '#12151c'}">
+          </div>
         </div>
       </details>
 
@@ -1649,6 +1877,45 @@ function bindPhotoLayerEvents() {
     if (cropWInput) cropWInput.addEventListener('input', (e) => (p.cropW = Number(e.target.value) / 100));
     const cropHInput = document.querySelector(`[data-croph-for="${p.id}"]`);
     if (cropHInput) cropHInput.addEventListener('input', (e) => (p.cropH = Number(e.target.value) / 100));
+
+    const bgOverrideSelect = document.querySelector(`[data-bgoverride-for="${p.id}"]`);
+    if (bgOverrideSelect) {
+      bgOverrideSelect.addEventListener('change', (e) => {
+        p.bgOverrideType = e.target.value;
+        jump();
+      });
+    }
+    const bgOverrideFile = document.querySelector(`[data-bgoverridefile-for="${p.id}"]`);
+    if (bgOverrideFile) {
+      bgOverrideFile.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.type.startsWith('video/')) {
+          const video = document.createElement('video');
+          video.src = URL.createObjectURL(file);
+          video.muted = true;
+          video.loop = true;
+          video.playsInline = true;
+          video.crossOrigin = 'anonymous';
+          try {
+            await video.play();
+          } catch (_) {}
+          p.bgOverrideVideoEl = video;
+          p.bgOverrideType = 'video';
+        } else {
+          p.bgOverrideImageEl = await chargerImage(file);
+          p.bgOverrideType = 'image';
+        }
+        if (bgOverrideSelect) bgOverrideSelect.value = p.bgOverrideType;
+        jump();
+      });
+    }
+    const bgOverrideColor = document.querySelector(`[data-bgoverridecolor-for="${p.id}"]`);
+    if (bgOverrideColor) {
+      bgOverrideColor.addEventListener('input', (e) => {
+        p.bgOverrideColor = e.target.value;
+      });
+    }
   });
   document.querySelectorAll('[data-remove-photo]').forEach((btn) => {
     btn.addEventListener('click', () => supprimerCalquePhoto(Number(btn.dataset.removePhoto)));
@@ -1740,6 +2007,10 @@ function ajouterCalquePhoto() {
     cropY: 0,
     cropW: 1,
     cropH: 1,
+    bgOverrideType: 'none', // 'none' | 'video' | 'image' | 'color'
+    bgOverrideVideoEl: null,
+    bgOverrideImageEl: null,
+    bgOverrideColor: '#12151c',
   });
   rafraichirListePhotos();
   allerAuSegment((s) => s.type === 'photo' && s.data.id === id);

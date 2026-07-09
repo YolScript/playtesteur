@@ -1279,9 +1279,50 @@ function viewEditeur() {
           <summary>Fond &amp; musique</summary>
           <div class="editor-accordion-body">
             <div class="editor-section">
+              <label class="editor-label">Type de fond</label>
+              <div class="editor-row">
+                <select id="editor-bg-type">
+                  <option value="media">Vidéo / image</option>
+                  <option value="color">Couleur unie</option>
+                  <option value="gradient">Dégradé</option>
+                </select>
+              </div>
+            </div>
+            <div class="editor-section" id="editor-bg-media-panel">
               <label class="editor-label">Fond (vidéo MP4 ou image)</label>
               ${renderFilePicker('editor-bg-input', 'video/mp4,image/png,image/jpeg', 'editor-bg-filename')}
             </div>
+            <div class="editor-section hidden" id="editor-bg-color-panel">
+              <label class="editor-label">Couleur du fond</label>
+              <input type="color" id="editor-bg-color" value="#12151c">
+            </div>
+            <div class="editor-section hidden" id="editor-bg-gradient-panel">
+              <label class="editor-label">Dégradé du fond</label>
+              <div class="editor-row">
+                <input type="color" id="editor-bg-gradient1" value="#0f2027" title="Couleur 1">
+                <input type="color" id="editor-bg-gradient2" value="#2c5364" title="Couleur 2">
+                <label class="editor-mini-label">Angle<input type="range" id="editor-bg-gradient-angle" min="0" max="360" value="135"></label>
+              </div>
+            </div>
+            <details class="editor-accordion-nested">
+              <summary>Réglages &amp; overlay</summary>
+              <div class="editor-accordion-nested-body">
+                <div class="editor-row">
+                  <label class="editor-mini-label">Luminosité<input type="range" id="editor-bg-brightness" min="30" max="160" value="100"></label>
+                  <label class="editor-mini-label">Flou<input type="range" id="editor-bg-blur" min="0" max="15" value="0"></label>
+                </div>
+                <div class="editor-row">
+                  <label class="editor-mini-label">Overlay
+                    <select id="editor-overlay-type">
+                      <option value="none">Aucun</option>
+                      <option value="vignette">Vignette</option>
+                      <option value="grain">Grain</option>
+                    </select>
+                  </label>
+                  <label class="editor-mini-label">Intensité<input type="range" id="editor-overlay-strength" min="10" max="100" value="50"></label>
+                </div>
+              </div>
+            </details>
             <div class="editor-section">
               <label class="editor-label">Musique de fond (MP3)</label>
               ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
