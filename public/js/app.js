@@ -1326,6 +1326,25 @@ function viewEditeur() {
             <div class="editor-section">
               <label class="editor-label">Musique de fond (MP3)</label>
               ${renderFilePicker('editor-audio-input', 'audio/mpeg,audio/mp3', 'editor-audio-filename')}
+              <canvas id="editor-waveform" width="600" height="44" style="width:100%; height:44px; border-radius:var(--radius-sm); background:var(--bg-darker);"></canvas>
+            </div>
+            <details class="editor-accordion-nested">
+              <summary>Volume, fondu &amp; extrait</summary>
+              <div class="editor-accordion-nested-body">
+                <div class="editor-row">
+                  <label class="editor-mini-label">Volume<input type="range" id="editor-audio-volume" min="0" max="100" value="80"></label>
+                  <label class="editor-mini-label">Départ dans la piste (s)<input type="number" id="editor-audio-trim" min="0" step="0.5" value="0" style="max-width:80px;"></label>
+                </div>
+                <div class="editor-row">
+                  <label class="editor-mini-label">Fondu entrée (s)<input type="number" id="editor-audio-fadein" min="0" max="10" step="0.5" value="0" style="max-width:80px;"></label>
+                  <label class="editor-mini-label">Fondu sortie (s)<input type="number" id="editor-audio-fadeout" min="0" max="10" step="0.5" value="0" style="max-width:80px;"></label>
+                </div>
+              </div>
+            </details>
+            <div class="editor-section">
+              <label class="editor-label">Voix off (optionnelle, jouée une fois)</label>
+              ${renderFilePicker('editor-voice-input', 'audio/mpeg,audio/mp3', 'editor-voice-filename')}
+              <label class="editor-mini-label">Volume<input type="range" id="editor-voice-volume" min="0" max="100" value="100"></label>
             </div>
           </div>
         </details>

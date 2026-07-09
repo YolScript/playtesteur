@@ -23,6 +23,15 @@ const EditorState = {
   bgAdjust: { brightness: 100, blur: 0 }, // brightness: 40-160%, blur: 0-15px
   overlay: { type: 'none', strength: 0.5 }, // type: 'none' | 'grain' | 'vignette'
   audioEl: null,
+  audioGainNode: null,
+  audioVolume: 0.8,
+  audioFadeIn: 0,
+  audioFadeOut: 0,
+  audioTrimStart: 0,
+  audioWaveform: null, // Float32Array de niveaux RMS normalisés, pour l'affichage
+  voiceEl: null,
+  voiceGainNode: null,
+  voiceVolume: 1,
   fontFamily: null,
 
   intro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
@@ -1297,6 +1306,7 @@ function renderEditorFrame() {
   const segmentSuivant = idxActif >= 0 ? segments[idxActif + 1] : null;
 
   mettreAJourFond(segmentActif);
+  appliquerFadeAudio(now, dureeTotale);
 
   // Fenêtre de transition : les DUREE_TRANSITION dernières secondes du
   // segment actif, s'il y a un segment suivant et qu'une transition est
@@ -1515,10 +1525,57 @@ function bindEditorInputs() {
     audio.src = URL.createObjectURL(file);
     audio.loop = true;
     audio.crossOrigin = 'anonymous';
+    audio.currentTime = EditorState.audioTrimStart;
     EditorState.audioEl = audio;
     audio.play().catch(() => {});
     brancherAnalyseurAudio(audio);
+    calculerWaveform(file);
   });
+
+  const voiceInput = document.getElementById('editor-voice-input');
+  if (voiceInput) {
+    voiceInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      afficherNomFichier('editor-voice-filename', file);
+      const voice = new Audio();
+      voice.src = URL.createObjectURL(file);
+      voice.loop = false;
+      voice.crossOrigin = 'anonymous';
+      EditorState.voiceEl = voice;
+      voice.play().catch(() => {});
+      brancherVoixOff(voice);
+    });
+  }
+
+  const audioVolumeInput = document.getElementById('editor-audio-volume');
+  if (audioVolumeInput) {
+    audioVolumeInput.addEventListener('input', (e) => {
+      EditorState.audioVolume = Number(e.target.value) / 100;
+    });
+  }
+  const audioFadeInInput = document.getElementById('editor-audio-fadein');
+  if (audioFadeInInput) {
+    audioFadeInInput.addEventListener('input', (e) => (EditorState.audioFadeIn = Number(e.target.value)));
+  }
+  const audioFadeOutInput = document.getElementById('editor-audio-fadeout');
+  if (audioFadeOutInput) {
+    audioFadeOutInput.addEventListener('input', (e) => (EditorState.audioFadeOut = Number(e.target.value)));
+  }
+  const audioTrimInput = document.getElementById('editor-audio-trim');
+  if (audioTrimInput) {
+    audioTrimInput.addEventListener('input', (e) => {
+      EditorState.audioTrimStart = Math.max(0, Number(e.target.value) || 0);
+      if (EditorState.audioEl) EditorState.audioEl.currentTime = EditorState.audioTrimStart;
+    });
+  }
+  const voiceVolumeInput = document.getElementById('editor-voice-volume');
+  if (voiceVolumeInput) {
+    voiceVolumeInput.addEventListener('input', (e) => {
+      EditorState.voiceVolume = Number(e.target.value) / 100;
+      if (EditorState.voiceGainNode) EditorState.voiceGainNode.gain.value = EditorState.voiceVolume;
+    });
+  }
 
   bindSegmentControls(EditorState.intro, 'intro', 'intro');
   bindSegmentControls(EditorState.outro, 'outro', 'outro');
@@ -2382,12 +2439,88 @@ function getOrCreateSourceNode(ctx, mediaEl) {
 function brancherAnalyseurAudio(mediaEl) {
   const audioCtx = getSharedAudioCtx();
   const source = getOrCreateSourceNode(audioCtx, mediaEl);
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.value = EditorState.audioVolume;
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 512; // 256 bins de fréquence, assez pour jusqu'à ~300 barres sans motif trop répétitif
   analyser.smoothingTimeConstant = 0.75;
-  source.connect(analyser);
-  source.connect(audioCtx.destination);
+  source.connect(gainNode);
+  gainNode.connect(analyser);
+  gainNode.connect(audioCtx.destination);
+  EditorState.audioGainNode = gainNode;
   EditorState.audioAnalyser = { analyser, dataArray: new Uint8Array(analyser.frequencyBinCount) };
+}
+
+// Piste voix-off : indépendante de la musique de fond, pas de bouclage,
+// son propre GainNode pour le volume, pas connectée à l'analyser (le
+// spectre audio suit uniquement la musique).
+function brancherVoixOff(mediaEl) {
+  const audioCtx = getSharedAudioCtx();
+  const source = getOrCreateSourceNode(audioCtx, mediaEl);
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.value = EditorState.voiceVolume;
+  source.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  EditorState.voiceGainNode = gainNode;
+}
+
+// Fade in/out de la musique de fond sur la durée totale de la timeline
+// (pas de la piste elle-même, qui boucle) : à appeler chaque frame.
+function appliquerFadeAudio(now, dureeTotale) {
+  if (!EditorState.audioGainNode) return;
+  let mul = 1;
+  const fadeIn = Number(EditorState.audioFadeIn) || 0;
+  const fadeOut = Number(EditorState.audioFadeOut) || 0;
+  if (fadeIn > 0 && now < fadeIn) mul = Math.min(mul, now / fadeIn);
+  if (fadeOut > 0 && dureeTotale - now < fadeOut) mul = Math.min(mul, (dureeTotale - now) / fadeOut);
+  EditorState.audioGainNode.gain.value = EditorState.audioVolume * Math.max(0, mul);
+}
+
+// Décode la piste pour en tirer une waveform simplifiée (niveaux RMS par
+// segment), affichée sous la timeline.
+async function calculerWaveform(file) {
+  try {
+    const audioCtx = getSharedAudioCtx();
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const data = audioBuffer.getChannelData(0);
+    const buckets = 200;
+    const bucketSize = Math.floor(data.length / buckets);
+    const levels = new Float32Array(buckets);
+    let max = 0;
+    for (let i = 0; i < buckets; i++) {
+      let sum = 0;
+      const start = i * bucketSize;
+      for (let j = 0; j < bucketSize; j++) {
+        const v = data[start + j] || 0;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / bucketSize);
+      levels[i] = rms;
+      if (rms > max) max = rms;
+    }
+    if (max > 0) for (let i = 0; i < buckets; i++) levels[i] /= max;
+    EditorState.audioWaveform = levels;
+    dessinerWaveform();
+  } catch (err) {
+    console.error('[editeur] décodage waveform échoué', err);
+  }
+}
+
+function dessinerWaveform() {
+  const canvas = document.getElementById('editor-waveform');
+  const levels = EditorState.audioWaveform;
+  if (!canvas || !levels) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const barW = w / levels.length;
+  ctx.fillStyle = 'rgba(0,230,118,0.55)';
+  for (let i = 0; i < levels.length; i++) {
+    const barH = Math.max(1, levels[i] * h);
+    ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 1), barH);
+  }
 }
 
 async function exportEditeurMp4() {
@@ -2420,10 +2553,15 @@ async function exportEditeurMp4() {
     const canvasStream = canvas.captureStream(60);
     const tracks = [...canvasStream.getVideoTracks()];
 
-    if (EditorState.audioEl || EditorState.bgVideoEl) {
+    if (EditorState.audioEl || EditorState.bgVideoEl || EditorState.voiceEl) {
       audioCtx = getSharedAudioCtx();
       const dest = audioCtx.createMediaStreamDestination();
-      if (EditorState.audioEl) getOrCreateSourceNode(audioCtx, EditorState.audioEl).connect(dest);
+      // Se brancher sur le GainNode (volume/fade) déjà en place plutôt que
+      // sur la source brute, sinon l'export ignore ces réglages.
+      if (EditorState.audioGainNode) EditorState.audioGainNode.connect(dest);
+      else if (EditorState.audioEl) getOrCreateSourceNode(audioCtx, EditorState.audioEl).connect(dest);
+      if (EditorState.voiceGainNode) EditorState.voiceGainNode.connect(dest);
+      else if (EditorState.voiceEl) getOrCreateSourceNode(audioCtx, EditorState.voiceEl).connect(dest);
       if (EditorState.bgVideoEl) getOrCreateSourceNode(audioCtx, EditorState.bgVideoEl).connect(dest);
       tracks.push(...dest.stream.getAudioTracks());
       if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -2444,8 +2582,12 @@ async function exportEditeurMp4() {
       await EditorState.bgVideoEl.play().catch(() => {});
     }
     if (EditorState.audioEl) {
-      EditorState.audioEl.currentTime = 0;
+      EditorState.audioEl.currentTime = EditorState.audioTrimStart;
       await EditorState.audioEl.play().catch(() => {});
+    }
+    if (EditorState.voiceEl) {
+      EditorState.voiceEl.currentTime = 0;
+      await EditorState.voiceEl.play().catch(() => {});
     }
 
     EditorState.playback.currentTime = 0;
@@ -2468,6 +2610,7 @@ async function exportEditeurMp4() {
     EditorState.playback.playing = false;
     recorder.stop();
     if (EditorState.audioEl) EditorState.audioEl.pause();
+    if (EditorState.voiceEl) EditorState.voiceEl.pause();
     await finEnregistrement;
 
     setProgress(0.5, 'Conversion en MP4 (qualité haute, encodage lent)…');
