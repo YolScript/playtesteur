@@ -3408,7 +3408,6 @@ function renderPhotoLayerHtml(p, index) {
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
       ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`, p.img)}
-      <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres s'affichent EN MÊME TEMPS par-dessus (composite), réglables séparément ci-dessous.</span>
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
@@ -3418,7 +3417,7 @@ function renderPhotoLayerHtml(p, index) {
       <details class="editor-accordion-nested" ${(p.sousMedias && p.sousMedias.length) ? 'open' : ''}>
         <summary>Médias superposés (même visuel)${p.sousMedias && p.sousMedias.length ? ` — ${p.sousMedias.length}` : ''}</summary>
         <div class="editor-accordion-nested-body">
-          <span class="form-hint">S'affichent EN MÊME TEMPS que le média principal ci-dessus, chacun avec sa propre position, taille et ses propres réglages — utile pour composer plusieurs images/vidéos sur un même visuel (ex : incruster une capture d'écran sur une illustration).</span>
+          <span class="form-hint">Ctrl+clic sur plusieurs fichiers ci-dessus pour en ajouter d'un coup. Chacun s'affiche EN MÊME TEMPS que le média principal, avec sa propre position/taille/réglages (ex : incruster une capture d'écran sur une illustration).</span>
           <div class="editor-row" style="justify-content:flex-end;">
             <label class="editor-file-picker editor-file-picker-mini" for="editor-sousmedia-add-input-${p.id}">+ Ajouter un média superposé</label>
             <input type="file" id="editor-sousmedia-add-input-${p.id}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input" multiple>
