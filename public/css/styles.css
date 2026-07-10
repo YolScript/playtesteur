@@ -1214,6 +1214,11 @@ tbody tr:hover { background: var(--bg-card-hover); }
 .editor-photo-layer[draggable="true"] { transition: opacity 0.12s ease, transform 0.12s ease; }
 .editor-photo-layer.dragging { opacity: 0.4; }
 .editor-photo-layer.verrouille { border-color: rgba(255, 193, 7, 0.4); }
+.editor-photo-layer-flash { animation: editor-flash 0.8s ease 2; }
+@keyframes editor-flash {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 0 2px var(--primary), 0 0 18px rgba(0, 230, 118, 0.5); }
+}
 
 .editor-calque-nom {
     flex: 1 1 auto;

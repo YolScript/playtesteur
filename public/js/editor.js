@@ -2231,22 +2231,24 @@ function mettreAJourBlocsTexte(now, tGlobal) {
 
 // Une passe de dessin du texte respectant l'animation en cours (machine à
 // écrire = révélation progressive des caractères, sinon alpha progressif
-// pour fondu/glissement/pop) — réutilisée pour le glow et le texte final.
-function dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress) {
+// pour fondu/glissement/pop) — réutilisée pour le glow, le contour et le
+// texte final. `mode` = 'fill' (défaut) ou 'stroke' pour le contour.
+function dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress, mode) {
+  const dessinerTexte = mode === 'stroke' ? (t, x, y) => ctx.strokeText(t, x, y) : (t, x, y) => ctx.fillText(t, x, y);
   if (anim === 'typewriter') {
     const texteComplet = lignes.join('\n');
     const nVisible = Math.round(progress * texteComplet.length);
     let compte = 0;
     lignes.forEach((ligne, i) => {
       const restant = Math.max(0, nVisible - compte);
-      ctx.fillText(ligne.slice(0, restant), textX, padY + i * lineHeight);
+      dessinerTexte(ligne.slice(0, restant), textX, padY + i * lineHeight);
       compte += ligne.length;
     });
   } else {
     const animsAvecFondu = ['fade', 'slide', 'pop', 'rotate3d', 'blur'];
     const alphaAvant = ctx.globalAlpha;
     ctx.globalAlpha = (animsAvecFondu.includes(anim) ? progress : 1) * alphaAvant;
-    lignes.forEach((ligne, i) => ctx.fillText(ligne, textX, padY + i * lineHeight));
+    lignes.forEach((ligne, i) => dessinerTexte(ligne, textX, padY + i * lineHeight));
     ctx.globalAlpha = alphaAvant;
   }
 }
@@ -2255,7 +2257,7 @@ function dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress
 // (centerX, centerY). `rayon` positif courbe le texte vers le haut (comme
 // un sourire inversé, lettres suivant le haut du cercle), négatif vers le
 // bas. Chaque caractère est positionné et pivoté selon sa tangente à l'arc.
-function dessinerTexteCourbe(ctx, texte, centerX, centerY, rayon) {
+function dessinerTexteCourbe(ctx, texte, centerX, centerY, rayon, mode) {
   const rayonAbs = Math.max(60, Math.abs(rayon));
   const sens = rayon < 0 ? -1 : 1;
   const caracteres = [...texte];
@@ -2275,7 +2277,8 @@ function dessinerTexteCourbe(ctx, texte, centerX, centerY, rayon) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle * sens);
-    ctx.fillText(car, 0, 0);
+    if (mode === 'stroke') ctx.strokeText(car, 0, 0);
+    else ctx.fillText(car, 0, 0);
     ctx.restore();
     angle += demiPas;
   });
@@ -2369,15 +2372,16 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   // Sur un texte courbe, l'alignement gauche/centre/droite et la révélation
   // caractère par caractère (typewriter) n'ont pas de sens applicables tels
   // quels : on garde juste le fondu de progression, comme fade/slide/pop.
-  const dessinerPasse = () => {
+  // `mode` = 'fill' (défaut) ou 'stroke' pour le contour.
+  const dessinerPasse = (mode) => {
     if (!estCourbe) {
-      dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+      dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress, mode);
       return;
     }
     const animsAvecFondu = ['fade', 'slide', 'pop', 'rotate3d', 'blur', 'typewriter'];
     const alphaAvant = ctx.globalAlpha;
     ctx.globalAlpha = (animsAvecFondu.includes(anim) ? progress : 1) * alphaAvant;
-    dessinerTexteCourbe(ctx, texteCourbe, centerXCourbe, centerYCourbe, rayonCourbe);
+    dessinerTexteCourbe(ctx, texteCourbe, centerXCourbe, centerYCourbe, rayonCourbe, mode);
     ctx.globalAlpha = alphaAvant;
   };
 
@@ -2392,7 +2396,18 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
     ctx.restore();
   }
 
-  ctx.fillStyle = b.color || '#ffffff';
+  if (b.strokeActive) {
+    ctx.save();
+    ctx.strokeStyle = b.strokeColor || '#000000';
+    ctx.lineWidth = Number(b.strokeWidth) || 4;
+    ctx.lineJoin = 'round';
+    dessinerPasse('stroke');
+    ctx.restore();
+  }
+
+  ctx.fillStyle = b.gradientActive
+    ? creerDegradeTexte(ctx, panelW, panelH, b.gradientColor1 || '#00e5ff', b.gradientColor2 || '#ff2d95', b.gradientAngle ?? 90)
+    : b.color || '#ffffff';
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 8;
   dessinerPasse();
@@ -3095,6 +3110,7 @@ function renderPhotoLayerHtml(p, index) {
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
       ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
+      <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres créent de nouvelles cartes juste en dessous.</span>
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
@@ -3465,15 +3481,26 @@ function bindPhotoLayerEvents() {
         // d'un coup plutôt que de cliquer "+ Ajouter" pour chacune.
         if (autres.length) {
           let indexInsertion = EditorState.photos.indexOf(p);
+          let dernierAjoutId = null;
           for (const file of autres) {
             const nouvelle = creerPhotoParDefaut(++elementIdCounter);
             nouvelle.img = await chargerMediaPhoto(file);
             indexInsertion += 1;
             EditorState.photos.splice(indexInsertion, 0, nouvelle);
+            dernierAjoutId = nouvelle.id;
           }
           rafraichirListePhotos();
           pousserHistorique();
-          toast(`${autres.length} photo(s)/vidéo(s) supplémentaire(s) ajoutée(s).`, 'success');
+          toast(`${autres.length} photo(s)/vidéo(s) supplémentaire(s) ajoutée(s) juste en dessous — faites défiler pour les voir.`, 'success');
+          // Repère visuellement la dernière carte ajoutée (sélection multiple
+          // = plusieurs nouvelles cartes d'un coup, faciles à manquer si on
+          // ne fait pas défiler la liste).
+          const dernierCard = document.querySelector(`[data-photo-drag="${dernierAjoutId}"]`);
+          if (dernierCard) {
+            dernierCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            dernierCard.classList.add('editor-photo-layer-flash');
+            setTimeout(() => dernierCard.classList.remove('editor-photo-layer-flash'), 1600);
+          }
         }
       });
     }
