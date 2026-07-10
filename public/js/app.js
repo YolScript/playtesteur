@@ -1563,6 +1563,27 @@ function viewEditeur() {
         </details>
 
         <details class="editor-accordion">
+          <summary>Cadre décoratif</summary>
+          <div class="editor-accordion-body">
+            <span class="form-hint">Bordure fixe superposée à tout le montage (au-dessus des photos, textes et effets).</span>
+            <div class="editor-row">
+              <select id="editor-cadre-type">
+                <option value="none">Aucun</option>
+                <option value="simple">Bordure simple</option>
+                <option value="double">Bordure double</option>
+                <option value="coins">Coins (repères d'angle)</option>
+                <option value="pellicule">Pellicule (bandes + perforations)</option>
+                <option value="polaroid">Polaroid</option>
+              </select>
+            </div>
+            <div class="editor-row">
+              <input type="color" id="editor-cadre-couleur" value="#ffffff" title="Couleur du cadre">
+              <label class="editor-mini-label">Épaisseur<input type="range" id="editor-cadre-epaisseur" min="4" max="80" value="24"></label>
+            </div>
+          </div>
+        </details>
+
+        <details class="editor-accordion">
           <summary>Effets lumineux (glow)</summary>
           <div class="editor-accordion-body">
             <label class="editor-toggle-row"><input type="checkbox" id="editor-bloom-toggle"><span class="editor-toggle-switch"></span><span>Activer le halo lumineux</span></label>

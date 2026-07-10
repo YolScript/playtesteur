@@ -246,7 +246,7 @@ const CHAMPS_HISTORIQUE = [
   'bgType', 'bgColor', 'bgGradient', 'bgAdjust', 'overlay', 'bgChromaKey',
   'audioVolume', 'audioFadeIn', 'audioFadeOut', 'audioTrimStart', 'voiceVolume',
   'fontFamily', 'intro', 'outro', 'photos', 'textBlocks', 'shapes', 'drawings',
-  'imageExportFormat', 'effects', 'transitionType',
+  'cadreDecoratif', 'imageExportFormat', 'effects', 'transitionType',
 ];
 // Références aux éléments média déjà chargés : à réattacher telles quelles
 // (jamais clonées, jamais recréées) lors d'une restauration.
@@ -1010,6 +1010,9 @@ function rafraichirPanneauApresRestauration() {
   setChecked('editor-bloom-toggle', EditorState.effects.bloomActive);
   setVal('editor-bloom-strength', Math.round(EditorState.effects.bloomStrength * 20));
   setChecked('editor-bloom-audioreactive', EditorState.effects.bloomAudioReactive);
+  setVal('editor-cadre-type', EditorState.cadreDecoratif.type);
+  setVal('editor-cadre-couleur', EditorState.cadreDecoratif.couleur);
+  setVal('editor-cadre-epaisseur', EditorState.cadreDecoratif.epaisseur);
 
   const formatRadio = document.querySelector(`input[name="editor-img-format"][value="${EditorState.imageExportFormat}"]`);
   if (formatRadio) formatRadio.checked = true;
@@ -1158,6 +1161,7 @@ async function initEditeur() {
   rafraichirListeTextBlocks();
   rafraichirListeFormes();
   bindModeDessin();
+  bindCadreDecoratif();
 
   arreterEditeur();
   await initMoteur3D(canvas);
@@ -2596,6 +2600,91 @@ function mettreAJourDessins(now) {
   });
 }
 
+// Cadre décoratif plein cadre, dessiné par-dessus tout le reste (z le plus
+// élevé de la scène) — bordure simple/double, coins, pellicule ou polaroid.
+function dessinerCadreDecoratif() {
+  const { width, height } = EditorState.three;
+  const layer = getOrCreateCanvasLayer('cadre-decoratif');
+  sizeLayerCanvas(layer, width, height);
+  const ctx = layer.ctx;
+  ctx.clearRect(0, 0, width, height);
+  const cfg = EditorState.cadreDecoratif;
+  const couleur = cfg.couleur || '#ffffff';
+  const ep = Math.max(2, Number(cfg.epaisseur) || 24);
+
+  if (cfg.type === 'simple') {
+    ctx.strokeStyle = couleur;
+    ctx.lineWidth = ep;
+    ctx.strokeRect(ep / 2, ep / 2, width - ep, height - ep);
+  } else if (cfg.type === 'double') {
+    const gap = ep * 0.8;
+    const lw = Math.max(2, ep * 0.35);
+    ctx.strokeStyle = couleur;
+    ctx.lineWidth = lw;
+    ctx.strokeRect(lw / 2, lw / 2, width - lw, height - lw);
+    ctx.strokeRect(gap + lw / 2, gap + lw / 2, width - (gap + lw) * 2 + lw, height - (gap + lw) * 2 + lw);
+  } else if (cfg.type === 'coins') {
+    const long = Math.max(30, ep * 3);
+    const m = ep * 0.6;
+    ctx.strokeStyle = couleur;
+    ctx.lineWidth = ep * 0.4;
+    ctx.lineCap = 'square';
+    ctx.beginPath();
+    ctx.moveTo(m, m + long);
+    ctx.lineTo(m, m);
+    ctx.lineTo(m + long, m);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(width - m - long, m);
+    ctx.lineTo(width - m, m);
+    ctx.lineTo(width - m, m + long);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(m, height - m - long);
+    ctx.lineTo(m, height - m);
+    ctx.lineTo(m + long, height - m);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(width - m - long, height - m);
+    ctx.lineTo(width - m, height - m);
+    ctx.lineTo(width - m, height - m - long);
+    ctx.stroke();
+  } else if (cfg.type === 'pellicule') {
+    const bandeW = Math.max(30, ep * 2.2);
+    ctx.fillStyle = couleur;
+    ctx.fillRect(0, 0, bandeW, height);
+    ctx.fillRect(width - bandeW, 0, bandeW, height);
+    const trouTaille = bandeW * 0.4;
+    const pas = trouTaille * 2.2;
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    for (let y = pas / 2; y < height; y += pas) {
+      roundRectPath(ctx, bandeW / 2 - trouTaille / 2, y - trouTaille / 2, trouTaille, trouTaille, trouTaille * 0.2);
+      ctx.fill();
+      roundRectPath(ctx, width - bandeW / 2 - trouTaille / 2, y - trouTaille / 2, trouTaille, trouTaille, trouTaille * 0.2);
+      ctx.fill();
+    }
+  } else if (cfg.type === 'polaroid') {
+    const bordure = Math.max(16, ep);
+    const bas = bordure * 3.2;
+    ctx.fillStyle = couleur;
+    ctx.fillRect(0, 0, width, bordure);
+    ctx.fillRect(0, 0, bordure, height);
+    ctx.fillRect(width - bordure, 0, bordure, height);
+    ctx.fillRect(0, height - bas, width, bas);
+  }
+
+  placerLayer(layer, width / 2, height / 2, 25, 0, 0, 0);
+  layer.mesh.scale.set(width, height, 1);
+}
+
+function mettreAJourCadreDecoratif() {
+  if (!EditorState.cadreDecoratif || EditorState.cadreDecoratif.type === 'none') {
+    hideLayer('cadre-decoratif');
+    return;
+  }
+  dessinerCadreDecoratif();
+}
+
 function mettreAJourBlocsTexte(now, tGlobal) {
   const boxes = {};
   EditorState.textBlocks.forEach((b) => {
@@ -3030,6 +3119,7 @@ function renderEditorFrame() {
   EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime, tGlobal);
   mettreAJourFormes(EditorState.playback.currentTime);
   mettreAJourDessins(EditorState.playback.currentTime);
+  mettreAJourCadreDecoratif();
 
   ts.bloomPass.enabled = EditorState.effects.bloomActive;
   let strength = Number(EditorState.effects.bloomStrength) || 0;
@@ -5062,6 +5152,26 @@ function bindModeDessin() {
   const clearBtn = document.getElementById('editor-dessin-clear');
   if (clearBtn) clearBtn.addEventListener('click', effacerTousLesDessins);
   rafraichirPanneauDessin();
+}
+
+function bindCadreDecoratif() {
+  const typeSelect = document.getElementById('editor-cadre-type');
+  if (typeSelect) {
+    typeSelect.value = EditorState.cadreDecoratif.type;
+    typeSelect.addEventListener('change', (e) => {
+      EditorState.cadreDecoratif.type = e.target.value;
+    });
+  }
+  const couleurInput = document.getElementById('editor-cadre-couleur');
+  if (couleurInput) {
+    couleurInput.value = EditorState.cadreDecoratif.couleur;
+    couleurInput.addEventListener('input', (e) => (EditorState.cadreDecoratif.couleur = e.target.value));
+  }
+  const epaisseurInput = document.getElementById('editor-cadre-epaisseur');
+  if (epaisseurInput) {
+    epaisseurInput.value = EditorState.cadreDecoratif.epaisseur;
+    epaisseurInput.addEventListener('input', (e) => (EditorState.cadreDecoratif.epaisseur = Number(e.target.value)));
+  }
 }
 
 /* -------------------------------------------------------------------- */
