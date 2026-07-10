@@ -882,6 +882,8 @@ function rafraichirPanneauApresRestauration() {
   });
 }
 
+// Polices déjà chargées statiquement dans index.html (disponibles dès le
+// premier rendu, sans requête réseau supplémentaire).
 const FONTS_DISPONIBLES = [
   { value: "'Space Grotesk', sans-serif", label: 'Space Grotesk' },
   { value: "'Roboto', sans-serif", label: 'Roboto' },
@@ -890,6 +892,41 @@ const FONTS_DISPONIBLES = [
   { value: "'Caveat', cursive", label: 'Caveat (manuscrite)' },
   { value: "'Playfair Display', serif", label: 'Playfair Display' },
 ];
+
+// Polices Google Fonts supplémentaires, chargées à la demande (voir
+// chargerGoogleFontsEtendues()) uniquement quand l'éditeur s'ouvre, pour ne
+// pas alourdir le chargement des autres pages du site avec des polices
+// qu'elles n'utilisent jamais.
+const FONTS_ETENDUES = [
+  { famille: 'Montserrat', poids: '400;700;900', value: "'Montserrat', sans-serif", label: 'Montserrat' },
+  { famille: 'Oswald', poids: '400;700', value: "'Oswald', sans-serif", label: 'Oswald (condensée)' },
+  { famille: 'Poppins', poids: '400;600;800', value: "'Poppins', sans-serif", label: 'Poppins' },
+  { famille: 'Raleway', poids: '400;700;900', value: "'Raleway', sans-serif", label: 'Raleway' },
+  { famille: 'Inter', poids: '400;700;900', value: "'Inter', sans-serif", label: 'Inter' },
+  { famille: 'Archivo+Black', poids: '400', value: "'Archivo Black', sans-serif", label: 'Archivo Black (impact)' },
+  { famille: 'Bungee', poids: '400', value: "'Bungee', sans-serif", label: 'Bungee' },
+  { famille: 'Righteous', poids: '400', value: "'Righteous', sans-serif", label: 'Righteous' },
+  { famille: 'Permanent+Marker', poids: '400', value: "'Permanent Marker', cursive", label: 'Permanent Marker (feutre)' },
+  { famille: 'Pacifico', poids: '400', value: "'Pacifico', cursive", label: 'Pacifico (manuscrite)' },
+  { famille: 'Shrikhand', poids: '400', value: "'Shrikhand', cursive", label: 'Shrikhand' },
+  { famille: 'Merriweather', poids: '400;700;900', value: "'Merriweather', serif", label: 'Merriweather' },
+  { famille: 'Abril+Fatface', poids: '400', value: "'Abril Fatface', serif", label: 'Abril Fatface' },
+  { famille: 'Cormorant+Garamond', poids: '400;600;700', value: "'Cormorant Garamond', serif", label: 'Cormorant Garamond' },
+  { famille: 'Amatic+SC', poids: '400;700', value: "'Amatic SC', cursive", label: 'Amatic SC' },
+  { famille: 'Comfortaa', poids: '400;700', value: "'Comfortaa', sans-serif", label: 'Comfortaa (arrondie)' },
+  { famille: 'Fira+Code', poids: '400;700', value: "'Fira Code', monospace", label: 'Fira Code (monospace)' },
+];
+
+let _googleFontsEtenduesChargees = false;
+function chargerGoogleFontsEtendues() {
+  if (_googleFontsEtenduesChargees) return;
+  _googleFontsEtenduesChargees = true;
+  const familles = FONTS_ETENDUES.map((f) => `family=${f.famille}:wght@${f.poids}`).join('&');
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = `https://fonts.googleapis.com/css2?${familles}&display=swap`;
+  document.head.appendChild(link);
+}
 
 function arreterEditeur() {
   if (editorRafId) {
@@ -975,6 +1012,7 @@ async function initEditeur() {
   bindReglagesIa();
   bindGestionProjet();
   bindBarreSelectionGroupee();
+  chargerGoogleFontsEtendues();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
 
@@ -3978,10 +4016,54 @@ function dupliquerCalquePhoto(id) {
 /* -------------------------------------------------------------------- */
 /* Blocs de texte multiples (police, style, animation, fenêtre de temps) */
 /* -------------------------------------------------------------------- */
+// Presets de style texte : combinaisons de réglages prêtes à l'emploi
+// (police, taille, couleur, contour/glow/dégradé...) appliquées d'un coup,
+// comme point de départ à ajuster ensuite plutôt qu'à régler un par un.
+const PRESETS_STYLE_TEXTE = {
+  impact: {
+    label: 'Titre impact',
+    style: { fontFamily: "'Archivo Black', sans-serif", size: 84, bold: true, italic: false, color: '#ffffff', strokeActive: true, strokeColor: '#000000', strokeWidth: 6, gradientActive: false, glowActive: false, bgPanelActive: false },
+  },
+  neon: {
+    label: 'Néon',
+    style: { fontFamily: "'Righteous', sans-serif", size: 64, bold: true, italic: false, color: '#ffffff', glowActive: true, glowColor: '#00e5ff', strokeActive: false, gradientActive: false, bgPanelActive: false },
+  },
+  elegant: {
+    label: 'Élégant',
+    style: { fontFamily: "'Cormorant Garamond', serif", size: 60, bold: false, italic: true, color: '#f5e9da', strokeActive: false, glowActive: false, gradientActive: false, bgPanelActive: true },
+  },
+  manuscrit: {
+    label: 'Manuscrit',
+    style: { fontFamily: "'Pacifico', cursive", size: 56, bold: false, italic: false, color: '#ffffff', strokeActive: false, glowActive: false, gradientActive: false, bgPanelActive: false },
+  },
+  degrade: {
+    label: 'Dégradé vibrant',
+    style: { fontFamily: "'Poppins', sans-serif", size: 68, bold: true, italic: false, gradientActive: true, gradientColor1: '#ff2d95', gradientColor2: '#00e5ff', gradientAngle: 90, strokeActive: false, glowActive: false, bgPanelActive: false },
+  },
+  minimal: {
+    label: 'Minimal',
+    style: { fontFamily: "'Inter', sans-serif", size: 40, bold: false, italic: false, color: '#ffffff', strokeActive: false, glowActive: false, gradientActive: false, bgPanelActive: false },
+  },
+};
+
+function optionsPresetsStyleHtml() {
+  return Object.entries(PRESETS_STYLE_TEXTE)
+    .map(([cle, preset]) => `<option value="${cle}">${preset.label}</option>`)
+    .join('');
+}
+
 function optionsFontsHtml(selected) {
-  return FONTS_DISPONIBLES.map(
+  const base = FONTS_DISPONIBLES.map(
     (f) => `<option value="${f.value}" ${f.value === selected ? 'selected' : ''}>${f.label}</option>`
-  ).join('') + `<option value="custom" ${selected === 'custom' ? 'selected' : ''}>Police importée</option>`;
+  ).join('');
+  const etendues = FONTS_ETENDUES.map(
+    (f) => `<option value="${f.value}" ${f.value === selected ? 'selected' : ''}>${f.label}</option>`
+  ).join('');
+  return (
+    base +
+    `<optgroup label="Plus de polices (Google Fonts)">${etendues}</optgroup>` +
+    `<option value="custom" ${selected === 'custom' ? 'selected' : ''}>Police importée</option>`
+  );
 }
 
 function renderTextBlockHtml(b, index) {
@@ -3993,6 +4075,13 @@ function renderTextBlockHtml(b, index) {
       <details class="editor-accordion-nested">
         <summary>Style</summary>
         <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <select data-preset-for="${b.id}">
+              <option value="">Preset de style...</option>
+              ${optionsPresetsStyleHtml()}
+            </select>
+            <button type="button" class="editor-add-btn" data-preset-appliquer-for="${b.id}">Appliquer</button>
+          </div>
           <div class="editor-row">
             <select data-font-for="${b.id}">${optionsFontsHtml(b.fontFamily)}</select>
             <input type="color" data-color-for="${b.id}" value="${b.color || '#ffffff'}" title="Couleur du texte">
@@ -4110,6 +4199,19 @@ function renderTextBlockHtml(b, index) {
 function bindTextBlockEvents() {
   EditorState.textBlocks.forEach((b) => {
     bindCalqueHeadEvents(b, rafraichirListeTextBlocks, dupliquerBlocTexte, 'textblock');
+
+    const presetSelect = document.querySelector(`[data-preset-for="${b.id}"]`);
+    const presetBtn = document.querySelector(`[data-preset-appliquer-for="${b.id}"]`);
+    if (presetBtn && presetSelect) {
+      presetBtn.addEventListener('click', () => {
+        const preset = PRESETS_STYLE_TEXTE[presetSelect.value];
+        if (!preset) return;
+        Object.assign(b, cloneProfondSansDom(preset.style));
+        rafraichirListeTextBlocks();
+        pousserHistorique();
+        toast(`Style "${preset.label}" appliqué.`, 'success');
+      });
+    }
 
     const texteInput = document.querySelector(`[data-texte-for="${b.id}"]`);
     if (texteInput) texteInput.addEventListener('input', (e) => (b.texte = e.target.value));
