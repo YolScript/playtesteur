@@ -2251,6 +2251,38 @@ function dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress
   }
 }
 
+// Dessine `texte` (une seule ligne) le long d'un arc de cercle centré sur
+// (centerX, centerY). `rayon` positif courbe le texte vers le haut (comme
+// un sourire inversé, lettres suivant le haut du cercle), négatif vers le
+// bas. Chaque caractère est positionné et pivoté selon sa tangente à l'arc.
+function dessinerTexteCourbe(ctx, texte, centerX, centerY, rayon) {
+  const rayonAbs = Math.max(60, Math.abs(rayon));
+  const sens = rayon < 0 ? -1 : 1;
+  const caracteres = [...texte];
+  const largeurs = caracteres.map((c) => ctx.measureText(c).width);
+  const largeurTotale = largeurs.reduce((a, v) => a + v, 0);
+  const angleTotal = largeurTotale / rayonAbs;
+  let angle = -angleTotal / 2;
+  const alignAvant = ctx.textAlign;
+  const baselineAvant = ctx.textBaseline;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  caracteres.forEach((car, i) => {
+    const demiPas = largeurs[i] / 2 / rayonAbs;
+    angle += demiPas;
+    const x = centerX + Math.sin(angle) * rayonAbs;
+    const y = centerY - sens * Math.cos(angle) * rayonAbs;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle * sens);
+    ctx.fillText(car, 0, 0);
+    ctx.restore();
+    angle += demiPas;
+  });
+  ctx.textAlign = alignAvant;
+  ctx.textBaseline = baselineAvant;
+}
+
 function dessinerBlocTexte(b, layerName, now, tGlobal) {
   const { width, height } = EditorState.three;
   const layer = getOrCreateCanvasLayer(layerName);
@@ -2261,18 +2293,44 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
 
   const measureCtx = layer.ctx;
   measureCtx.font = `${style} ${weight} ${size}px ${famille}`;
-  const maxWidth = width * (b.wrapWidth || 0.85);
-  const lignes = wrapText(measureCtx, b.texte, maxWidth);
-  const lineHeight = size * 1.2;
-  const totalHeight = lineHeight * lignes.length;
-  let boxW = 0;
-  lignes.forEach((ligne) => {
-    boxW = Math.max(boxW, measureCtx.measureText(ligne).width);
-  });
   const padX = 26;
   const padY = 18;
-  const panelW = boxW + padX * 2;
-  const panelH = totalHeight + padY * 2;
+  const lineHeight = size * 1.2;
+
+  // Texte courbe : une seule ligne (les retours à la ligne n'ont pas de
+  // sens sur un arc), dimensionnée d'après la sagittale de l'arc plutôt
+  // que le pavé rectangulaire habituel.
+  const estCourbe = !!b.texteCourbe;
+  let lignes = [];
+  let panelW;
+  let panelH;
+  let texteCourbe = '';
+  let rayonCourbe = 0;
+  let centerXCourbe = 0;
+  let centerYCourbe = 0;
+
+  if (estCourbe) {
+    texteCourbe = (b.texte || '').replace(/\s*\n+\s*/g, ' ').trim();
+    rayonCourbe = Number(b.courbeRayon) || 220;
+    const rayonAbs = Math.max(60, Math.abs(rayonCourbe));
+    const largeurTexte = [...texteCourbe].reduce((acc, c) => acc + measureCtx.measureText(c).width, 0);
+    const angleTotal = Math.min(Math.PI * 1.8, largeurTexte / rayonAbs);
+    const sagitta = rayonAbs * (1 - Math.cos(angleTotal / 2));
+    panelW = largeurTexte + padX * 2 + size;
+    panelH = size + sagitta + padY * 2;
+    centerXCourbe = panelW / 2;
+    centerYCourbe = rayonCourbe >= 0 ? padY + size / 2 + rayonAbs : panelH - padY - size / 2 - rayonAbs;
+  } else {
+    const maxWidth = width * (b.wrapWidth || 0.85);
+    lignes = wrapText(measureCtx, b.texte, maxWidth);
+    const totalHeight = lineHeight * lignes.length;
+    let boxW = 0;
+    lignes.forEach((ligne) => {
+      boxW = Math.max(boxW, measureCtx.measureText(ligne).width);
+    });
+    panelW = boxW + padX * 2;
+    panelH = totalHeight + padY * 2;
+  }
 
   sizeLayerCanvas(layer, panelW, panelH);
   const ctx = layer.ctx;
@@ -2308,21 +2366,36 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   // plein affichage (entrée ou sortie).
   ctx.filter = anim === 'blur' ? `blur(${Math.max(0, (1 - progress) * 10)}px)` : 'none';
 
+  // Sur un texte courbe, l'alignement gauche/centre/droite et la révélation
+  // caractère par caractère (typewriter) n'ont pas de sens applicables tels
+  // quels : on garde juste le fondu de progression, comme fade/slide/pop.
+  const dessinerPasse = () => {
+    if (!estCourbe) {
+      dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+      return;
+    }
+    const animsAvecFondu = ['fade', 'slide', 'pop', 'rotate3d', 'blur', 'typewriter'];
+    const alphaAvant = ctx.globalAlpha;
+    ctx.globalAlpha = (animsAvecFondu.includes(anim) ? progress : 1) * alphaAvant;
+    dessinerTexteCourbe(ctx, texteCourbe, centerXCourbe, centerYCourbe, rayonCourbe);
+    ctx.globalAlpha = alphaAvant;
+  };
+
   if (b.glowActive) {
     ctx.save();
     ctx.fillStyle = b.glowColor || '#00e5ff';
     ctx.shadowColor = b.glowColor || '#00e5ff';
     ctx.shadowBlur = 32;
-    dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+    dessinerPasse();
     ctx.shadowBlur = 16;
-    dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+    dessinerPasse();
     ctx.restore();
   }
 
   ctx.fillStyle = b.color || '#ffffff';
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 8;
-  dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress);
+  dessinerPasse();
   ctx.shadowBlur = 0;
 
   if (b.saberActive) {
@@ -3823,6 +3896,11 @@ function renderTextBlockHtml(b, index) {
             <label class="editor-mini-label">Largeur du cadre<input type="range" data-wrapwidth-for="${b.id}" min="15" max="90" value="${Math.round((b.wrapWidth ?? 0.85) * 100)}"></label>
           </div>
           <span class="form-hint">Un cadre plus étroit redispose automatiquement le texte sur plusieurs lignes (utile pour un texte "en liste" dans une marge latérale).</span>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-textecourbe-for="${b.id}" ${b.texteCourbe ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Texte le long d'une courbe</span></label>
+            <label class="editor-mini-label">Courbure<input type="range" data-courberayon-for="${b.id}" min="-400" max="400" step="10" value="${b.courbeRayon ?? 220}"></label>
+          </div>
+          <span class="form-hint">Positif = arc vers le haut, négatif = vers le bas. Sur une seule ligne (les retours à la ligne et l'alignement gauche/droite sont ignorés en mode courbe).</span>
         </div>
       </details>
 
@@ -3928,6 +4006,10 @@ function bindTextBlockEvents() {
     if (wrapWidthInput) {
       wrapWidthInput.addEventListener('input', (e) => (b.wrapWidth = Number(e.target.value) / 100));
     }
+    const texteCourbeInput = document.querySelector(`[data-textecourbe-for="${b.id}"]`);
+    if (texteCourbeInput) texteCourbeInput.addEventListener('change', (e) => (b.texteCourbe = e.target.checked));
+    const courbeRayonInput = document.querySelector(`[data-courberayon-for="${b.id}"]`);
+    if (courbeRayonInput) courbeRayonInput.addEventListener('input', (e) => (b.courbeRayon = Number(e.target.value)));
 
     const animInput = document.querySelector(`[data-anim-for="${b.id}"]`);
     if (animInput) animInput.addEventListener('change', (e) => (b.anim = e.target.value));
@@ -4023,6 +4105,8 @@ function creerTextBlockParDefaut(id, decalage) {
     saberSize: 1,
     particlesActive: false,
     wrapWidth: 0.85,
+    texteCourbe: false,
+    courbeRayon: 220,
   };
 }
 
