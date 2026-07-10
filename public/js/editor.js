@@ -2986,7 +2986,10 @@ function renderPhotoLayerHtml(p, index) {
             <label class="editor-mini-label">Largeur<input type="range" data-cropw-for="${p.id}" min="20" max="100" value="${Math.round((p.cropW ?? 1) * 100)}"></label>
             <label class="editor-mini-label">Hauteur<input type="range" data-croph-for="${p.id}" min="20" max="100" value="${Math.round((p.cropH ?? 1) * 100)}"></label>
           </div>
-          <span class="form-hint">Haut/Gauche déplacent le point de départ du recadrage, Largeur/Hauteur ajustent la zone gardée de l'image originale.</span>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-cropratiolock-for="${p.id}" ${p.cropRatioVerrouille ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Verrouiller le ratio largeur/hauteur</span></label>
+          </div>
+          <span class="form-hint">Haut/Gauche déplacent le point de départ du recadrage, Largeur/Hauteur ajustent la zone gardée de l'image originale. Le verrou garde les proportions actuelles quand vous ajustez l'un des deux curseurs.</span>
         </div>
       </details>
 
@@ -3073,9 +3076,10 @@ function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn) {
   }
   const nomInput = document.querySelector(`[data-calquenom-for="${item.id}"]`);
   if (nomInput) {
+    // Pas de pousserHistorique() ici : l'écouteur délégué sur .editor-controls
+    // (bindAccordionUx) capture déjà tout événement "change" du panneau.
     nomInput.addEventListener('change', (e) => {
       item.nom = e.target.value.trim() || null;
-      pousserHistorique();
     });
   }
   const lockBtn = document.querySelector(`[data-calquelock-for="${item.id}"]`);
@@ -3254,9 +3258,29 @@ function bindPhotoLayerEvents() {
     const cropYInput = document.querySelector(`[data-cropy-for="${p.id}"]`);
     if (cropYInput) cropYInput.addEventListener('input', (e) => (p.cropY = Number(e.target.value) / 100));
     const cropWInput = document.querySelector(`[data-cropw-for="${p.id}"]`);
-    if (cropWInput) cropWInput.addEventListener('input', (e) => (p.cropW = Number(e.target.value) / 100));
     const cropHInput = document.querySelector(`[data-croph-for="${p.id}"]`);
-    if (cropHInput) cropHInput.addEventListener('input', (e) => (p.cropH = Number(e.target.value) / 100));
+    if (cropWInput) {
+      cropWInput.addEventListener('input', (e) => {
+        const ratio = p.cropH > 0 ? p.cropW / p.cropH : 1;
+        p.cropW = Number(e.target.value) / 100;
+        if (p.cropRatioVerrouille) {
+          p.cropH = Math.min(1, Math.max(0.2, p.cropW / ratio));
+          if (cropHInput) cropHInput.value = Math.round(p.cropH * 100);
+        }
+      });
+    }
+    if (cropHInput) {
+      cropHInput.addEventListener('input', (e) => {
+        const ratio = p.cropH > 0 ? p.cropW / p.cropH : 1;
+        p.cropH = Number(e.target.value) / 100;
+        if (p.cropRatioVerrouille) {
+          p.cropW = Math.min(1, Math.max(0.2, p.cropH * ratio));
+          if (cropWInput) cropWInput.value = Math.round(p.cropW * 100);
+        }
+      });
+    }
+    const cropRatioLockInput = document.querySelector(`[data-cropratiolock-for="${p.id}"]`);
+    if (cropRatioLockInput) cropRatioLockInput.addEventListener('change', (e) => (p.cropRatioVerrouille = e.target.checked));
 
     const bgOverrideSelect = document.querySelector(`[data-bgoverride-for="${p.id}"]`);
     if (bgOverrideSelect) {
@@ -3391,6 +3415,7 @@ function creerPhotoParDefaut(id) {
     cropY: 0,
     cropW: 1,
     cropH: 1,
+    cropRatioVerrouille: false,
     bgOverrideType: 'none', // 'none' | 'video' | 'image' | 'color'
     bgOverrideVideoEl: null,
     bgOverrideImageEl: null,
