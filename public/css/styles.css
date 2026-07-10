@@ -1197,10 +1197,38 @@ tbody tr:hover { background: var(--bg-card-hover); }
     flex-direction: column;
     gap: 8px;
 }
-.editor-photo-layer-head { display: flex; justify-content: space-between; align-items: center; }
-.editor-photo-layer-title { font-size: 12px; font-weight: 700; color: var(--text-white); cursor: grab; }
+.editor-photo-layer-head { display: flex; align-items: center; gap: 6px; }
+.editor-photo-layer-title { font-size: 12px; font-weight: 700; color: var(--text-white); cursor: grab; flex-shrink: 0; }
 .editor-photo-layer[draggable="true"] { transition: opacity 0.12s ease, transform 0.12s ease; }
 .editor-photo-layer.dragging { opacity: 0.4; }
+.editor-photo-layer.verrouille { border-color: rgba(255, 193, 7, 0.4); }
+
+.editor-calque-nom {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-white);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 6px;
+}
+.editor-calque-nom:hover, .editor-calque-nom:focus { border-color: var(--border-color); background: var(--bg-darker); }
+.editor-calque-head-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.editor-icon-btn {
+    background: none;
+    border: none;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    opacity: 0.6;
+    transition: var(--transition-fast);
+}
+.editor-icon-btn:hover { opacity: 1; background: rgba(255,255,255,0.06); }
+.editor-icon-btn.active { opacity: 1; background: rgba(255, 193, 7, 0.15); }
 .editor-remove-btn {
     background: none;
     border: none;
@@ -1213,6 +1241,8 @@ tbody tr:hover { background: var(--bg-card-hover); }
     transition: var(--transition-fast);
 }
 .editor-remove-btn:hover { color: var(--color-danger); background: rgba(255, 23, 68, 0.12); }
+.editor-remove-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.editor-remove-btn:disabled:hover { color: var(--text-muted); background: none; }
 
 .editor-projet-liste { display: flex; flex-direction: column; gap: 8px; }
 .editor-projet-item {

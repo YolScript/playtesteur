@@ -1037,6 +1037,7 @@ function calculerTimeline() {
     t += duree;
   }
   EditorState.photos.forEach((p) => {
+    if (p.visible === false) return; // calque masqué : exclu de la timeline, comme une piste muette
     const duree = Math.max(0.5, Number(p.duree) || 3);
     segments.push({ type: 'photo', start: t, end: t + duree, data: p });
     t += duree;
@@ -2098,6 +2099,7 @@ function progressionAnimation(start, end, now, dureeAnim) {
 }
 
 function blocTexteActif(b, now) {
+  if (b.visible === false) return false;
   if (b.startTime != null && now < b.startTime) return false;
   if (b.endTime != null && now > b.endTime) return false;
   return true;
@@ -2811,13 +2813,31 @@ function markupFilePickerPhoto(inputId, filenameId) {
   `;
 }
 
+// En-tête commun aux calques (photo ou bloc de texte) : nom éditable,
+// verrouillage, visibilité, duplication et suppression. `typeRemove` fixe
+// l'attribut data-remove-* correct pour rester compatible avec les
+// gestionnaires de suppression déjà en place pour chaque type de calque.
+function renderCalqueHeadHtml(item, nomParDefaut, typeRemove) {
+  const estVerrouille = !!item.verrouille;
+  const estCache = item.visible === false;
+  return `
+    <div class="editor-photo-layer-head">
+      <span class="editor-photo-layer-title" title="Glisser pour réordonner">&#9776;</span>
+      <input type="text" class="editor-calque-nom" data-calquenom-for="${item.id}" value="${escapeHtml(item.nom || '')}" placeholder="${escapeHtml(nomParDefaut)}" title="Renommer ce calque">
+      <div class="editor-calque-head-actions">
+        <button type="button" class="editor-icon-btn ${estVerrouille ? 'active' : ''}" data-calquelock-for="${item.id}" title="${estVerrouille ? 'Déverrouiller (autoriser le déplacement)' : 'Verrouiller (empêcher déplacement et suppression)'}">${estVerrouille ? '🔒' : '🔓'}</button>
+        <button type="button" class="editor-icon-btn ${estCache ? 'active' : ''}" data-calquevisible-for="${item.id}" title="${estCache ? 'Afficher ce calque' : 'Masquer ce calque (exclu de la timeline)'}">${estCache ? '🚫' : '👁'}</button>
+        <button type="button" class="editor-icon-btn" data-calqueduplique-for="${item.id}" title="Dupliquer ce calque">⧉</button>
+        <button type="button" class="editor-remove-btn" data-remove-${typeRemove}="${item.id}" title="Supprimer" ${estVerrouille ? 'disabled' : ''}>&times;</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderPhotoLayerHtml(p, index) {
   return `
-    <div class="editor-photo-layer" draggable="true" data-photo-drag="${p.id}">
-      <div class="editor-photo-layer-head">
-        <span class="editor-photo-layer-title" title="Glisser pour réordonner">&#9776; Photo ${index + 1}</span>
-        <button type="button" class="editor-remove-btn" data-remove-photo="${p.id}" title="Supprimer cette photo">&times;</button>
-      </div>
+    <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
+      ${renderCalqueHeadHtml(p, `Photo ${index + 1}`, 'photo')}
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
@@ -2962,9 +2982,41 @@ function renderPhotoLayerHtml(p, index) {
   `;
 }
 
+// Boutons communs de l'en-tête d'un calque (renommer, verrouiller, masquer,
+// dupliquer) — `rafraichirFn` reconstruit la liste (pour mettre à jour les
+// icônes), `dupliquerFn` clone le calque juste après lui.
+function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn) {
+  const nomInput = document.querySelector(`[data-calquenom-for="${item.id}"]`);
+  if (nomInput) {
+    nomInput.addEventListener('change', (e) => {
+      item.nom = e.target.value.trim() || null;
+      pousserHistorique();
+    });
+  }
+  const lockBtn = document.querySelector(`[data-calquelock-for="${item.id}"]`);
+  if (lockBtn) {
+    lockBtn.addEventListener('click', () => {
+      item.verrouille = !item.verrouille;
+      rafraichirFn();
+      pousserHistorique();
+    });
+  }
+  const visibleBtn = document.querySelector(`[data-calquevisible-for="${item.id}"]`);
+  if (visibleBtn) {
+    visibleBtn.addEventListener('click', () => {
+      item.visible = item.visible === false ? true : false;
+      rafraichirFn();
+      pousserHistorique();
+    });
+  }
+  const dupliqueBtn = document.querySelector(`[data-calqueduplique-for="${item.id}"]`);
+  if (dupliqueBtn) dupliqueBtn.addEventListener('click', () => dupliquerFn(item.id));
+}
+
 function bindPhotoLayerEvents() {
   EditorState.photos.forEach((p) => {
     const jump = () => allerAuSegment((s) => s.type === 'photo' && s.data.id === p.id);
+    bindCalqueHeadEvents(p, rafraichirListePhotos, dupliquerCalquePhoto);
 
     const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
     if (fileInput) {
@@ -3212,6 +3264,9 @@ function rafraichirListePhotos() {
 function creerPhotoParDefaut(id) {
   return {
     id,
+    nom: null, // null = nom par défaut ("Photo N"), sinon renommé par l'utilisateur
+    verrouille: false, // empêche le déplacement sur le canvas et la suppression accidentelle
+    visible: true, // false = exclu de la timeline (comme une piste "muette") sans être supprimé
     img: null,
     x: 0.5,
     y: 0.45,
@@ -3269,7 +3324,19 @@ function ajouterCalquePhoto() {
 }
 
 function supprimerCalquePhoto(id) {
-  EditorState.photos = EditorState.photos.filter((p) => p.id !== id);
+  const p = EditorState.photos.find((ph) => ph.id === id);
+  if (p && p.verrouille) return; // sécurité : le bouton est déjà désactivé, mais on se protège d'un appel programmatique
+  EditorState.photos = EditorState.photos.filter((ph) => ph.id !== id);
+  rafraichirListePhotos();
+  pousserHistorique();
+}
+
+function dupliquerCalquePhoto(id) {
+  const index = EditorState.photos.findIndex((p) => p.id === id);
+  if (index === -1) return;
+  const original = EditorState.photos[index];
+  const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null, verrouille: false };
+  EditorState.photos.splice(index + 1, 0, copie);
   rafraichirListePhotos();
   pousserHistorique();
 }
@@ -3285,11 +3352,8 @@ function optionsFontsHtml(selected) {
 
 function renderTextBlockHtml(b, index) {
   return `
-    <div class="editor-photo-layer">
-      <div class="editor-photo-layer-head">
-        <span class="editor-photo-layer-title">Texte ${index + 1}</span>
-        <button type="button" class="editor-remove-btn" data-remove-textblock="${b.id}" title="Supprimer ce texte">&times;</button>
-      </div>
+    <div class="editor-photo-layer ${b.verrouille ? 'verrouille' : ''}">
+      ${renderCalqueHeadHtml(b, `Texte ${index + 1}`, 'textblock')}
       <textarea data-texte-for="${b.id}" rows="2" placeholder="Votre texte...">${b.texte || ''}</textarea>
 
       <details class="editor-accordion-nested">
@@ -3377,6 +3441,8 @@ function renderTextBlockHtml(b, index) {
 
 function bindTextBlockEvents() {
   EditorState.textBlocks.forEach((b) => {
+    bindCalqueHeadEvents(b, rafraichirListeTextBlocks, dupliquerBlocTexte);
+
     const texteInput = document.querySelector(`[data-texte-for="${b.id}"]`);
     if (texteInput) texteInput.addEventListener('input', (e) => (b.texte = e.target.value));
 
@@ -3465,6 +3531,9 @@ function rafraichirListeTextBlocks() {
 function creerTextBlockParDefaut(id, decalage) {
   return {
     id,
+    nom: null,
+    verrouille: false,
+    visible: true,
     texte: '',
     x: 0.5,
     y: 0.2 + (decalage || 0),
@@ -3502,12 +3571,24 @@ function ajouterBlocTexte() {
 }
 
 function supprimerBlocTexte(id) {
-  EditorState.textBlocks = EditorState.textBlocks.filter((b) => b.id !== id);
+  const b = EditorState.textBlocks.find((tb) => tb.id === id);
+  if (b && b.verrouille) return;
+  EditorState.textBlocks = EditorState.textBlocks.filter((tb) => tb.id !== id);
   hideLayer(`text-${id}`);
   const ts = EditorState.three;
   if (ts && ts.particleSystems[`text-particles-${id}`]) {
     ts.particleSystems[`text-particles-${id}`].points.visible = false;
   }
+  rafraichirListeTextBlocks();
+  pousserHistorique();
+}
+
+function dupliquerBlocTexte(id) {
+  const index = EditorState.textBlocks.findIndex((b) => b.id === id);
+  if (index === -1) return;
+  const original = EditorState.textBlocks[index];
+  const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null, verrouille: false };
+  EditorState.textBlocks.splice(index + 1, 0, copie);
   rafraichirListeTextBlocks();
   pousserHistorique();
 }
@@ -3560,13 +3641,14 @@ function bindEditorDrag3D(canvas) {
     const textHit = raycastLayer(canvas, e, textLayerNames);
     if (textHit) {
       const id = Number(textLayerNames.find((n) => layers[n] && layers[n].mesh === textHit.object).replace('text-', ''));
-      EditorState.dragging = { type: 'textblock', id };
+      const b = EditorState.textBlocks.find((tb) => tb.id === id);
+      if (b && !b.verrouille) EditorState.dragging = { type: 'textblock', id };
     } else if (layers.caption && layers.caption.mesh.visible && raycastLayer(canvas, e, ['caption'])) {
       const p = calquePhotoActif();
-      if (p) EditorState.dragging = { type: 'caption', id: p.id };
+      if (p && !p.verrouille) EditorState.dragging = { type: 'caption', id: p.id };
     } else if (layers.photo && layers.photo.mesh.visible && raycastLayer(canvas, e, ['photo'])) {
       const p = calquePhotoActif();
-      if (p) EditorState.dragging = { type: 'photo', id: p.id };
+      if (p && !p.verrouille) EditorState.dragging = { type: 'photo', id: p.id };
     }
     if (EditorState.dragging) canvas.setPointerCapture(e.pointerId);
   });
