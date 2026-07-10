@@ -14,18 +14,19 @@ const insertUser = db.prepare(`
   VALUES (?, ?, ?, ?, ?)
 `);
 const majProfilGoogle = db.prepare(
-  'UPDATE users SET google_id = ?, avatar_url = ?, pseudo = ?, pseudo_play_store = ? WHERE id = ?'
+  'UPDATE users SET google_id = ?, avatar_url = ?, pseudo_play_store = ? WHERE id = ?'
 );
 
 // Crée le compte au premier login Google, ou relie google_id à un compte
 // existant retrouvé par email (cas d'un compte créé avant liaison Google).
-// Le pseudo et le pseudo Play Store sont resynchronisés avec le nom du compte
-// Google à CHAQUE connexion (non modifiables manuellement) : c'est ce pseudo
-// que le serveur recherche pour valider les tests quotidiens.
+// Le pseudo Play Store est resynchronisé avec le nom du compte Google à CHAQUE
+// connexion (non modifiable manuellement) : c'est ce pseudo que le serveur
+// recherche pour valider les tests quotidiens. Le pseudo visuel (pseudo), lui,
+// n'est défini qu'à la création et peut ensuite être personnalisé.
 function connecterOuCreer(profile) {
   const existant = findByGoogleId.get(profile.googleId) || findByEmail.get(profile.email);
   if (existant) {
-    majProfilGoogle.run(profile.googleId, profile.avatarUrl, profile.pseudo, profile.pseudo, existant.id);
+    majProfilGoogle.run(profile.googleId, profile.avatarUrl, profile.pseudo, existant.id);
     return findById.get(existant.id);
   }
   const info = insertUser.run(profile.pseudo, profile.email, profile.googleId, profile.avatarUrl, profile.pseudo);

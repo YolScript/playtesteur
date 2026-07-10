@@ -7,6 +7,7 @@ const router = express.Router();
 
 const findById = db.prepare('SELECT * FROM users WHERE id = ?');
 const majMasquerInfos = db.prepare('UPDATE users SET masquer_infos = ? WHERE id = ?');
+const majPseudo = db.prepare('UPDATE users SET pseudo = ? WHERE id = ?');
 
 const mailsDuTesteur = db.prepare(`
   SELECT h.id, h.statut, h.date_rejoint, h.date_action,
@@ -61,6 +62,19 @@ router.get('/', requireAuth, (req, res) => {
 router.post('/masquer-infos', requireAuth, (req, res) => {
   const masquer = !!req.body?.masquer;
   majMasquerInfos.run(masquer ? 1 : 0, req.session.userId);
+  res.json({ user: publicUser(findById.get(req.session.userId)) });
+});
+
+// Modification visuelle du pseudo par l'utilisateur
+router.post('/pseudo', requireAuth, (req, res) => {
+  const pseudo = req.body?.pseudo?.trim();
+  if (!pseudo) {
+    return res.status(400).json({ erreur: 'Le pseudo ne peut pas être vide.' });
+  }
+  if (pseudo.length > 50) {
+    return res.status(400).json({ erreur: 'Le pseudo ne peut pas dépasser 50 caractères.' });
+  }
+  majPseudo.run(pseudo, req.session.userId);
   res.json({ user: publicUser(findById.get(req.session.userId)) });
 });
 

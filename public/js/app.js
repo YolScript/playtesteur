@@ -287,7 +287,12 @@ async function viewDashboard() {
         <div class="profile-identity">
           ${avatarHtml(user, 'profile-avatar-big')}
           <div>
-            <h2>${escapeHtml(user.pseudo)}</h2>
+            <div id="profile-pseudo-wrapper">
+              <h2 style="display: flex; align-items: center; gap: 8px;">
+                <span id="profile-pseudo-text">${escapeHtml(user.pseudo)}</span>
+                <button id="edit-pseudo-btn" style="background: none; border: none; cursor: pointer; padding: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.6; transition: opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Modifier le pseudo">✏️</button>
+              </h2>
+            </div>
             <div class="profile-email" id="profile-email-value">${user.masquer_infos ? '••••••••@••••••.•••' : escapeHtml(user.email)}</div>
           </div>
         </div>
@@ -378,6 +383,74 @@ async function viewDashboard() {
       toast(err.message, 'error');
     }
   });
+
+  const setupEditPseudo = (wrapper) => {
+    const editBtn = document.getElementById('edit-pseudo-btn');
+    if (!editBtn) return;
+    editBtn.addEventListener('click', () => {
+      const currentPseudo = state.user.pseudo;
+      wrapper.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+          <input type="text" id="edit-pseudo-input" value="${escapeHtml(currentPseudo)}" maxlength="50" style="padding:6px 10px; font-size:14px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-sm); color:var(--text-white); outline:none; width:180px;">
+          <button id="save-pseudo-btn" class="btn-primary" style="padding:6px 10px; font-size:12px; height:auto; line-height:1;">Enregistrer</button>
+          <button id="cancel-pseudo-btn" class="btn-secondary" style="padding:6px 10px; font-size:12px; height:auto; line-height:1;">Annuler</button>
+        </div>
+      `;
+
+      const input = document.getElementById('edit-pseudo-input');
+      input.focus();
+      input.select();
+
+      const cancelBtn = document.getElementById('cancel-pseudo-btn');
+      cancelBtn.addEventListener('click', () => {
+        wrapper.innerHTML = `
+          <h2 style="display: flex; align-items: center; gap: 8px;">
+            <span id="profile-pseudo-text">${escapeHtml(currentPseudo)}</span>
+            <button id="edit-pseudo-btn" style="background: none; border: none; cursor: pointer; padding: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.6; transition: opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Modifier le pseudo">✏️</button>
+          </h2>
+        `;
+        setupEditPseudo(wrapper);
+      });
+
+      const saveBtn = document.getElementById('save-pseudo-btn');
+      const handleSave = async () => {
+        const newPseudo = input.value.trim();
+        if (!newPseudo) {
+          toast('Le pseudo ne peut pas être vide.', 'error');
+          return;
+        }
+        if (newPseudo.length > 50) {
+          toast('Le pseudo ne peut pas dépasser 50 caractères.', 'error');
+          return;
+        }
+        saveBtn.disabled = true;
+        try {
+          const { user: updated } = await Api.post('/api/profile/pseudo', { pseudo: newPseudo });
+          state.user = updated;
+          toast('Pseudo mis à jour avec succès.', 'success');
+          renderHeader();
+          await viewDashboard();
+        } catch (err) {
+          toast(err.message || 'Erreur lors de la modification.', 'error');
+          saveBtn.disabled = false;
+        }
+      };
+
+      saveBtn.addEventListener('click', handleSave);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          handleSave();
+        } else if (e.key === 'Escape') {
+          cancelBtn.click();
+        }
+      });
+    });
+  };
+
+  const wrapper = document.getElementById('profile-pseudo-wrapper');
+  if (wrapper) {
+    setupEditPseudo(wrapper);
+  }
 }
 
 /* ==========================================================================
