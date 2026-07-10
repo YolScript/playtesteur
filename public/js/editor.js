@@ -1347,6 +1347,21 @@ function hexVersRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+// Dégradé linéaire couvrant tout le panneau de texte (panelW x panelH),
+// orienté selon `angleDeg` (0 = gauche→droite, 90 = haut→bas).
+function creerDegradeTexte(ctx, panelW, panelH, couleur1, couleur2, angleDeg) {
+  const angle = (angleDeg * Math.PI) / 180;
+  const cx = panelW / 2;
+  const cy = panelH / 2;
+  const longueur = Math.max(panelW, panelH);
+  const dx = Math.cos(angle) * (longueur / 2);
+  const dy = Math.sin(angle) * (longueur / 2);
+  const degrade = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+  degrade.addColorStop(0, couleur1);
+  degrade.addColorStop(1, couleur2);
+  return degrade;
+}
+
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -3922,6 +3937,17 @@ function renderTextBlockHtml(b, index) {
           <div class="editor-row">
             <label class="editor-mini-label">Largeur du cadre<input type="range" data-wrapwidth-for="${b.id}" min="15" max="90" value="${Math.round((b.wrapWidth ?? 0.85) * 100)}"></label>
           </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-stroke-for="${b.id}" ${b.strokeActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Contour</span></label>
+            <input type="color" data-strokecolor-for="${b.id}" value="${b.strokeColor || '#000000'}" title="Couleur du contour">
+            <label class="editor-mini-label">Épaisseur<input type="range" data-strokewidth-for="${b.id}" min="1" max="15" value="${b.strokeWidth ?? 4}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-gradient-for="${b.id}" ${b.gradientActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Dégradé</span></label>
+            <input type="color" data-gradientcolor1-for="${b.id}" value="${b.gradientColor1 || '#00e5ff'}" title="Couleur 1">
+            <input type="color" data-gradientcolor2-for="${b.id}" value="${b.gradientColor2 || '#ff2d95'}" title="Couleur 2">
+            <label class="editor-mini-label">Angle<input type="range" data-gradientangle-for="${b.id}" min="0" max="360" value="${b.gradientAngle ?? 90}"></label>
+          </div>
           <span class="form-hint">Un cadre plus étroit redispose automatiquement le texte sur plusieurs lignes (utile pour un texte "en liste" dans une marge latérale).</span>
           <div class="editor-row">
             <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-textecourbe-for="${b.id}" ${b.texteCourbe ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Texte le long d'une courbe</span></label>
@@ -4029,6 +4055,22 @@ function bindTextBlockEvents() {
     const bgPanelInput = document.querySelector(`[data-bgpanel-for="${b.id}"]`);
     if (bgPanelInput) bgPanelInput.addEventListener('change', (e) => (b.bgPanelActive = e.target.checked));
 
+    const strokeInput = document.querySelector(`[data-stroke-for="${b.id}"]`);
+    if (strokeInput) strokeInput.addEventListener('change', (e) => (b.strokeActive = e.target.checked));
+    const strokeColorInput = document.querySelector(`[data-strokecolor-for="${b.id}"]`);
+    if (strokeColorInput) strokeColorInput.addEventListener('input', (e) => (b.strokeColor = e.target.value));
+    const strokeWidthInput = document.querySelector(`[data-strokewidth-for="${b.id}"]`);
+    if (strokeWidthInput) strokeWidthInput.addEventListener('input', (e) => (b.strokeWidth = Number(e.target.value)));
+
+    const gradientInput = document.querySelector(`[data-gradient-for="${b.id}"]`);
+    if (gradientInput) gradientInput.addEventListener('change', (e) => (b.gradientActive = e.target.checked));
+    const gradientColor1Input = document.querySelector(`[data-gradientcolor1-for="${b.id}"]`);
+    if (gradientColor1Input) gradientColor1Input.addEventListener('input', (e) => (b.gradientColor1 = e.target.value));
+    const gradientColor2Input = document.querySelector(`[data-gradientcolor2-for="${b.id}"]`);
+    if (gradientColor2Input) gradientColor2Input.addEventListener('input', (e) => (b.gradientColor2 = e.target.value));
+    const gradientAngleInput = document.querySelector(`[data-gradientangle-for="${b.id}"]`);
+    if (gradientAngleInput) gradientAngleInput.addEventListener('input', (e) => (b.gradientAngle = Number(e.target.value)));
+
     const wrapWidthInput = document.querySelector(`[data-wrapwidth-for="${b.id}"]`);
     if (wrapWidthInput) {
       wrapWidthInput.addEventListener('input', (e) => (b.wrapWidth = Number(e.target.value) / 100));
@@ -4134,6 +4176,13 @@ function creerTextBlockParDefaut(id, decalage) {
     wrapWidth: 0.85,
     texteCourbe: false,
     courbeRayon: 220,
+    strokeActive: false,
+    strokeColor: '#000000',
+    strokeWidth: 4,
+    gradientActive: false,
+    gradientColor1: '#00e5ff',
+    gradientColor2: '#ff2d95',
+    gradientAngle: 90,
   };
 }
 
