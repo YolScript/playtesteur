@@ -1351,7 +1351,8 @@ function roundRectPath(ctx, x, y, w, h, r) {
 
 // Path de masque selon la forme choisie pour une photo. 'rect' = coins
 // arrondis (comportement historique), 'circle' = ellipse inscrite,
-// 'hexagon' = hexagone régulier inscrit.
+// 'hexagon'/'pentagon' = polygone régulier inscrit, 'star' = étoile à 5
+// branches, 'heart' = coeur (courbes de Bézier).
 function maskShapePath(ctx, shape, x, y, w, h, r) {
   if (shape === 'circle') {
     ctx.beginPath();
@@ -1359,17 +1360,49 @@ function maskShapePath(ctx, shape, x, y, w, h, r) {
     ctx.closePath();
     return;
   }
-  if (shape === 'hexagon') {
+  if (shape === 'hexagon' || shape === 'pentagon') {
+    const cotes = shape === 'hexagon' ? 6 : 5;
     const cx = x + w / 2;
     const cy = y + h / 2;
     ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const a = (Math.PI / 3) * i - Math.PI / 2;
+    for (let i = 0; i < cotes; i++) {
+      const a = ((Math.PI * 2) / cotes) * i - Math.PI / 2;
       const px = cx + (w / 2) * Math.cos(a);
       const py = cy + (h / 2) * Math.sin(a);
       if (i === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
+    ctx.closePath();
+    return;
+  }
+  if (shape === 'star') {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const outerX = w / 2;
+    const outerY = h / 2;
+    const innerX = outerX * 0.42;
+    const innerY = outerY * 0.42;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = (Math.PI / 5) * i - Math.PI / 2;
+      const rx = i % 2 === 0 ? outerX : innerX;
+      const ry = i % 2 === 0 ? outerY : innerY;
+      const px = cx + rx * Math.cos(a);
+      const py = cy + ry * Math.sin(a);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    return;
+  }
+  if (shape === 'heart') {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const s = Math.min(w, h) / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + s * 0.85);
+    ctx.bezierCurveTo(cx - s * 1.35, cy - s * 0.1, cx - s * 0.5, cy - s * 1.15, cx, cy - s * 0.35);
+    ctx.bezierCurveTo(cx + s * 0.5, cy - s * 1.15, cx + s * 1.35, cy - s * 0.1, cx, cy + s * 0.85);
     ctx.closePath();
     return;
   }
@@ -2931,6 +2964,9 @@ function renderPhotoLayerHtml(p, index) {
               <option value="rect" ${(!p.maskShape || p.maskShape === 'rect') ? 'selected' : ''}>Rectangle arrondi</option>
               <option value="circle" ${p.maskShape === 'circle' ? 'selected' : ''}>Cercle / ellipse</option>
               <option value="hexagon" ${p.maskShape === 'hexagon' ? 'selected' : ''}>Hexagone</option>
+              <option value="pentagon" ${p.maskShape === 'pentagon' ? 'selected' : ''}>Pentagone</option>
+              <option value="star" ${p.maskShape === 'star' ? 'selected' : ''}>Étoile</option>
+              <option value="heart" ${p.maskShape === 'heart' ? 'selected' : ''}>Cœur</option>
             </select>
           </div>
           <div class="editor-row">
