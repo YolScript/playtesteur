@@ -896,9 +896,10 @@ tbody tr:hover { background: var(--bg-card-hover); }
     padding: 20px;
     backdrop-filter: blur(var(--glass-blur));
     box-shadow: var(--shadow-md);
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    align-items: start;
+    gap: 14px;
 }
 
 .editor-section { display: flex; flex-direction: column; gap: 8px; }
@@ -909,7 +910,6 @@ tbody tr:hover { background: var(--bg-card-hover); }
     background: var(--bg-input);
     overflow: hidden;
 }
-.editor-accordion + .editor-accordion { margin-top: 10px; }
 .editor-accordion > summary {
     list-style: none;
     cursor: pointer;
@@ -1169,7 +1169,7 @@ tbody tr:hover { background: var(--bg-card-hover); }
     cursor: pointer;
 }
 
-.editor-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.editor-actions { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
 .editor-actions button { flex: 1; }
 
 .editor-add-btn {
