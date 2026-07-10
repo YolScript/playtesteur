@@ -1442,6 +1442,21 @@ function viewEditeur() {
         </details>
 
         <details class="editor-accordion">
+          <summary>Clés API IA</summary>
+          <div class="editor-accordion-body">
+            <span class="form-hint">Les fonctionnalités IA (sous-titres auto, suppression de fond, voix off...) appellent directement le fournisseur choisi depuis votre navigateur, avec votre propre clé. Rien n'est envoyé à nos serveurs, et rien n'est utilisable sans clé renseignée ici.</span>
+            <div class="editor-section">
+              <label class="editor-label">Clé API OpenAI (sous-titres, traduction, voix off, retouche)</label>
+              <input type="password" id="editor-ai-key-openai" placeholder="sk-..." autocomplete="off">
+            </div>
+            <div class="editor-section">
+              <label class="editor-label">Clé API remove.bg (suppression de fond automatique)</label>
+              <input type="password" id="editor-ai-key-removebg" placeholder="Clé API remove.bg" autocomplete="off">
+            </div>
+          </div>
+        </details>
+
+        <details class="editor-accordion">
           <summary>Export</summary>
           <div class="editor-accordion-body">
             <div class="editor-section">

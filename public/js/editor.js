@@ -70,6 +70,45 @@ const EditorState = {
   three: null, // rempli par initMoteur3D()
 };
 
+/* -------------------------------------------------------------------- */
+/* Clés API IA — saisies par l'utilisateur, stockées uniquement dans le  */
+/* navigateur (localStorage), jamais envoyées à notre serveur. Chaque    */
+/* fonctionnalité IA (sous-titres, suppression de fond, voix off...)     */
+/* appelle directement l'API du fournisseur depuis le navigateur avec la */
+/* clé fournie ici.                                                      */
+/* -------------------------------------------------------------------- */
+const AI_KEYS_STORAGE_KEY = 'playtesteur_editor_ai_keys';
+const AiKeys = { openai: '', removebg: '' };
+
+function chargerCleApiDepuisStockage() {
+  try {
+    const brut = localStorage.getItem(AI_KEYS_STORAGE_KEY);
+    if (brut) Object.assign(AiKeys, JSON.parse(brut));
+  } catch (_) {
+    /* localStorage indisponible (navigation privée...) : clés restent vides */
+  }
+}
+
+function sauvegarderCleApi(nom, valeur) {
+  AiKeys[nom] = valeur;
+  try {
+    localStorage.setItem(AI_KEYS_STORAGE_KEY, JSON.stringify(AiKeys));
+  } catch (_) {}
+}
+
+function bindReglagesIa() {
+  chargerCleApiDepuisStockage();
+  [
+    ['editor-ai-key-openai', 'openai'],
+    ['editor-ai-key-removebg', 'removebg'],
+  ].forEach(([inputId, nom]) => {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.value = AiKeys[nom] || '';
+    input.addEventListener('input', (e) => sauvegarderCleApi(nom, e.target.value.trim()));
+  });
+}
+
 let editorRafId = null;
 // Compteur PARTAGÉ entre calques photo et blocs texte (et non deux
 // compteurs séparés) : les deux types de calque réutilisent les mêmes
@@ -321,6 +360,7 @@ async function initEditeur() {
   bindTimelineControls();
   bindAccordionUx();
   bindHistoriqueUx();
+  bindReglagesIa();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
 
