@@ -2835,6 +2835,8 @@ function renderCalqueHeadHtml(item, nomParDefaut, typeRemove) {
       <div class="editor-calque-head-actions">
         <button type="button" class="editor-icon-btn ${estVerrouille ? 'active' : ''}" data-calquelock-for="${item.id}" title="${estVerrouille ? 'Déverrouiller (autoriser le déplacement)' : 'Verrouiller (empêcher déplacement et suppression)'}">${estVerrouille ? '🔒' : '🔓'}</button>
         <button type="button" class="editor-icon-btn ${estCache ? 'active' : ''}" data-calquevisible-for="${item.id}" title="${estCache ? 'Afficher ce calque' : 'Masquer ce calque (exclu de la timeline)'}">${estCache ? '🚫' : '👁'}</button>
+        <button type="button" class="editor-icon-btn" data-calquecopystyle-for="${item.id}" title="Copier le style de ce calque (filtres, forme, effets...)">📋</button>
+        <button type="button" class="editor-icon-btn" data-calquepastestyle-for="${item.id}" title="Coller le style copié">📥</button>
         <button type="button" class="editor-icon-btn" data-calqueduplique-for="${item.id}" title="Dupliquer ce calque">⧉</button>
         <button type="button" class="editor-remove-btn" data-remove-${typeRemove}="${item.id}" title="Supprimer" ${estVerrouille ? 'disabled' : ''}>&times;</button>
       </div>
@@ -3061,19 +3063,59 @@ function renderPhotoLayerHtml(p, index) {
   `;
 }
 
-// Boutons communs de l'en-tête d'un calque (renommer, verrouiller, masquer,
-// dupliquer) — `rafraichirFn` reconstruit la liste (pour mettre à jour les
-// icônes), `dupliquerFn` clone le calque juste après lui.
-function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn) {
+// Presse-papiers de style : copie tous les champs d'un calque SAUF son
+// contenu/sa position propres (image, texte, coordonnées, durée, nom,
+// verrou...) — tout le reste (filtres, forme, bordure, effets...) est
+// considéré comme "du style" réutilisable sur un autre calque du même type.
+let StyleClipboard = null;
+const CHAMPS_STYLE_EXCLUS = {
+  photo: [
+    'id', 'img', 'texte', 'x', 'y', 'z', 'texteX', 'texteY', 'duree', 'nom',
+    'verrouille', 'visible', 'bgOverrideType', 'bgOverrideVideoEl',
+    'bgOverrideImageEl', 'bgOverrideColor',
+  ],
+  textblock: ['id', 'texte', 'x', 'y', 'z', 'nom', 'verrouille', 'visible', 'startTime', 'endTime'],
+};
+
+function copierStyleCalque(type, item) {
+  const exclus = CHAMPS_STYLE_EXCLUS[type];
+  const style = {};
+  for (const cle of Object.keys(item)) {
+    if (!exclus.includes(cle)) style[cle] = cloneProfondSansDom(item[cle]);
+  }
+  StyleClipboard = { type, style };
+  toast('Style du calque copié.', 'success');
+}
+
+function collerStyleCalque(type, item) {
+  if (!StyleClipboard || StyleClipboard.type !== type) {
+    toast("Copiez d'abord le style d'un calque du même type.", 'error');
+    return;
+  }
+  Object.assign(item, cloneProfondSansDom(StyleClipboard.style));
+  (type === 'photo' ? rafraichirListePhotos : rafraichirListeTextBlocks)();
+  pousserHistorique();
+  toast('Style collé.', 'success');
+}
+
+// Boutons communs de l'en-tête d'un calque (sélection, renommer, verrouiller,
+// masquer, copier/coller le style, dupliquer) — `rafraichirFn` reconstruit
+// la liste (pour mettre à jour les icônes), `dupliquerFn` clone le calque
+// juste après lui, `type` ('photo'|'textblock') sert de clé pour la
+// sélection groupée et le presse-papiers de style.
+function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn, type) {
   const selCheckbox = document.querySelector(`[data-calquesel-for="${item.id}"]`);
   if (selCheckbox) {
     selCheckbox.addEventListener('change', (e) => {
-      const type = selCheckbox.dataset.calqueselType;
       if (e.target.checked) SelectionCalques[type].add(item.id);
       else SelectionCalques[type].delete(item.id);
       majBarreSelectionGroupee(type);
     });
   }
+  const copyStyleBtn = document.querySelector(`[data-calquecopystyle-for="${item.id}"]`);
+  if (copyStyleBtn) copyStyleBtn.addEventListener('click', () => copierStyleCalque(type, item));
+  const pasteStyleBtn = document.querySelector(`[data-calquepastestyle-for="${item.id}"]`);
+  if (pasteStyleBtn) pasteStyleBtn.addEventListener('click', () => collerStyleCalque(type, item));
   const nomInput = document.querySelector(`[data-calquenom-for="${item.id}"]`);
   if (nomInput) {
     // Pas de pousserHistorique() ici : l'écouteur délégué sur .editor-controls
@@ -3105,7 +3147,7 @@ function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn) {
 function bindPhotoLayerEvents() {
   EditorState.photos.forEach((p) => {
     const jump = () => allerAuSegment((s) => s.type === 'photo' && s.data.id === p.id);
-    bindCalqueHeadEvents(p, rafraichirListePhotos, dupliquerCalquePhoto);
+    bindCalqueHeadEvents(p, rafraichirListePhotos, dupliquerCalquePhoto, 'photo');
 
     const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
     if (fileInput) {
@@ -3552,7 +3594,7 @@ function renderTextBlockHtml(b, index) {
 
 function bindTextBlockEvents() {
   EditorState.textBlocks.forEach((b) => {
-    bindCalqueHeadEvents(b, rafraichirListeTextBlocks, dupliquerBlocTexte);
+    bindCalqueHeadEvents(b, rafraichirListeTextBlocks, dupliquerBlocTexte, 'textblock');
 
     const texteInput = document.querySelector(`[data-texte-for="${b.id}"]`);
     if (texteInput) texteInput.addEventListener('input', (e) => (b.texte = e.target.value));
