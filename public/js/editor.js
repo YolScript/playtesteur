@@ -64,6 +64,9 @@ const EditorState = {
   dessinCouleur: '#ff2d95',
   dessinEpaisseur: 6,
 
+  // Cadre décoratif plein cadre, dessiné par-dessus tout le reste.
+  cadreDecoratif: { type: 'none', couleur: '#ffffff', epaisseur: 24 },
+
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
   // État de l'export : la timeline avance toujours en temps réel (1x),
   // identique à une lecture normale, pour que la durée exportée corresponde
@@ -2118,15 +2121,28 @@ function mettreAJourMediasSuperposes(segmentActif, tGlobal) {
   const idsActifs = new Set();
   actifs.forEach((sm) => {
     const layerName = `photo-extra-${sm.id}`;
+    const particlesKey = `photo-extra-particles-${sm.id}`;
     idsActifs.add(layerName);
     if (sm.visible === false || !sm.img) {
       hideLayer(layerName);
+      mettreAJourParticules(null, null, tGlobal, particlesKey);
       return;
     }
-    mettreAJourPhoto(sm, tGlobal, layerName);
+    // Le contour énergétique (saber) est dessiné à même le canvas du média
+    // par mettreAJourPhoto() ; les particules sont un système three.js à
+    // part (points 3D, pas de texture 2D), à mettre à jour séparément avec
+    // une clé dédiée — sinon "Particules" reste sans effet sur un média
+    // superposé alors que la case à cocher existe bien dans le panneau.
+    const box = mettreAJourPhoto(sm, tGlobal, layerName);
+    mettreAJourParticules(sm, box, tGlobal, particlesKey);
   });
   Object.keys(EditorState.three.layers).forEach((name) => {
     if (name.startsWith('photo-extra-') && !idsActifs.has(name)) hideLayer(name);
+  });
+  Object.keys(EditorState.three.particleSystems).forEach((key) => {
+    if (key.startsWith('photo-extra-particles-') && !actifs.some((sm) => `photo-extra-particles-${sm.id}` === key)) {
+      EditorState.three.particleSystems[key].points.visible = false;
+    }
   });
 }
 
