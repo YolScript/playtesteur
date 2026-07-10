@@ -119,4 +119,28 @@ if (!colonnesUsers.includes('masquer_infos')) {
   db.exec('ALTER TABLE users ADD COLUMN masquer_infos INTEGER NOT NULL DEFAULT 0');
 }
 
+// Table des messages de discussion des tickets
+db.exec(`
+CREATE TABLE IF NOT EXISTS ticket_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  image_url TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id);
+`);
+
+// Migration idempotente pour ajouter l'image_url aux tickets
+const colonnesTickets = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name);
+if (!colonnesTickets.includes('image_url')) {
+  db.exec('ALTER TABLE tickets ADD COLUMN image_url TEXT');
+}
+
+const colonnesTicketMessages = db.prepare('PRAGMA table_info(ticket_messages)').all().map((c) => c.name);
+if (!colonnesTicketMessages.includes('image_url')) {
+  db.exec('ALTER TABLE ticket_messages ADD COLUMN image_url TEXT');
+}
+
 module.exports = db;

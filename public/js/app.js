@@ -1219,6 +1219,17 @@ async function viewTickets() {
           <label>Message</label>
           <textarea name="message" placeholder="Décrivez votre problème ou votre question en détail..." required minlength="10" maxlength="2000" rows="5"></textarea>
         </div>
+        <div class="form-group">
+          <label>Photo / Capture d'écran (optionnelle, max 5 Mo)</label>
+          <div class="ticket-file-upload-wrap">
+            <button type="button" class="btn-secondary btn-xs" id="ticket-upload-trigger">📷 Joindre une image</button>
+            <input type="file" id="ticket-file-input" accept="image/*" style="display: none;">
+            <div id="ticket-file-preview-container" class="hidden" style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+              <img id="ticket-file-preview" src="" style="max-height: 80px; border-radius: 6px; border: 1px solid var(--border-color);" />
+              <button type="button" class="btn-danger btn-xs" id="ticket-file-remove">Supprimer</button>
+            </div>
+          </div>
+        </div>
         <div style="display:flex; gap:10px;">
           <button type="submit" class="btn-primary" id="ticket-submit-btn">Envoyer le ticket</button>
           <button type="button" class="btn-secondary" id="ticket-cancel-btn">Annuler</button>
@@ -1232,6 +1243,39 @@ async function viewTickets() {
 
   const formCard = document.getElementById('ticket-form-card');
   const ticketForm = document.getElementById('ticket-form');
+  const fileInput = document.getElementById('ticket-file-input');
+  const trigger = document.getElementById('ticket-upload-trigger');
+  const previewContainer = document.getElementById('ticket-file-preview-container');
+  const previewImg = document.getElementById('ticket-file-preview');
+  const removeBtn = document.getElementById('ticket-file-remove');
+  let ticketImageData = null;
+
+  trigger.addEventListener('click', () => fileInput.click());
+  
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast("L'image ne doit pas dépasser 5 Mo.", "error");
+        fileInput.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        ticketImageData = event.target.result;
+        previewImg.src = ticketImageData;
+        previewContainer.classList.remove('hidden');
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+
+  removeBtn.addEventListener('click', () => {
+    ticketImageData = null;
+    fileInput.value = '';
+    previewContainer.classList.add('hidden');
+    previewImg.src = '';
+  });
 
   document.getElementById('btn-new-ticket').addEventListener('click', () => {
     formCard.classList.toggle('hidden');
@@ -1254,10 +1298,14 @@ async function viewTickets() {
         categorie: fd.get('categorie'),
         sujet: fd.get('sujet'),
         message: fd.get('message'),
+        image_data: ticketImageData,
       });
       toast('Ticket envoyé avec succès !', 'success');
       formCard.classList.add('hidden');
       ticketForm.reset();
+      ticketImageData = null;
+      previewContainer.classList.add('hidden');
+      previewImg.src = '';
       chargerMesTickets();
     } catch (err) {
       document.getElementById('ticket-form-msg').innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
@@ -1282,7 +1330,7 @@ async function chargerMesTickets() {
     container.innerHTML = tickets
       .map(
         (t) => `
-        <div class="ticket-card" data-ticket-id="${t.id}">
+        <div class="ticket-card" id="ticket-card-${t.id}">
           <div class="ticket-card-header">
             <div class="ticket-card-meta">
               ${BADGE_CATEGORIE[t.categorie] || ''}
@@ -1294,22 +1342,167 @@ async function chargerMesTickets() {
           <div class="ticket-card-title">${escapeHtml(t.sujet)}</div>
           <div class="ticket-card-message">${escapeHtml(t.message)}</div>
           ${
-            t.reponse_admin
-              ? `<div class="ticket-reply">
-                  <div class="ticket-reply-header">
-                    <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;flex-shrink:0;"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>
-                    <span>Réponse de ${escapeHtml(t.admin_pseudo || 'l\'admin')}</span>
-                  </div>
-                  <div class="ticket-reply-body">${escapeHtml(t.reponse_admin)}</div>
-                </div>`
+            t.image_url
+              ? `<div style="margin-top: 10px;">
+                  <a href="${escapeHtml(t.image_url)}" target="_blank">
+                    <img src="${escapeHtml(t.image_url)}" style="max-height: 120px; border-radius: 6px; border: 1px solid var(--border-color);" />
+                  </a>
+                 </div>`
               : ''
           }
+          <div style="margin-top: 14px; display: flex; gap: 10px;">
+            <button class="btn-secondary btn-xs" data-toggle-thread="${t.id}">💬 Discussion / Répondre</button>
+          </div>
+          <div class="ticket-thread-container hidden" id="ticket-thread-${t.id}" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-color);"></div>
         </div>
       `
       )
       .join('');
+
+    container.querySelectorAll('[data-toggle-thread]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleTicketThread(btn.dataset.toggleThread));
+    });
   } catch (err) {
     container.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+}
+
+async function toggleTicketThread(ticketId) {
+  const threadDiv = document.getElementById(`ticket-thread-${ticketId}`);
+  if (!threadDiv) return;
+  if (!threadDiv.classList.contains('hidden')) {
+    threadDiv.classList.add('hidden');
+    return;
+  }
+  
+  threadDiv.innerHTML = '<p class="form-hint">Chargement de la discussion...</p>';
+  threadDiv.classList.remove('hidden');
+
+  try {
+    const { ticket, replies } = await Api.get(`/api/tickets/${ticketId}/messages`);
+    
+    let threadHtml = '';
+    
+    // 1. Message initial (description du ticket)
+    threadHtml += `
+      <div class="thread-msg initial" style="padding: 12px; border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); margin-bottom: 12px;">
+        <div class="thread-msg-header" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
+          <span class="thread-msg-author" style="font-weight: 700;">Message Initial</span>
+          <span class="thread-msg-date">${tempsRelatif(ticket.created_at)}</span>
+        </div>
+        <div class="thread-msg-body" style="font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;">
+          ${escapeHtml(ticket.message)}
+          ${ticket.image_url ? `<div class="thread-msg-image" style="margin-top: 10px;"><a href="${escapeHtml(ticket.image_url)}" target="_blank"><img src="${escapeHtml(ticket.image_url)}" style="max-width: 100%; max-height: 250px; border-radius: 8px; border: 1px solid var(--border-color);" /></a></div>` : ''}
+        </div>
+      </div>
+    `;
+
+    // 2. Réponses de la discussion
+    replies.forEach((r) => {
+      const isMe = r.sender_id === state.user.id;
+      const isSenderAdmin = r.sender_role === 'administrator';
+      threadHtml += `
+        <div class="thread-msg ${isMe ? 'me' : ''} ${isSenderAdmin ? 'admin' : ''}" style="margin-bottom: 12px; padding: 12px; border-radius: var(--radius-md); background: ${isSenderAdmin ? 'rgba(0, 230, 118, 0.04)' : 'var(--bg-input)'}; border-left: 3px solid ${isSenderAdmin ? 'var(--primary)' : 'var(--border-color)'};">
+          <div class="thread-msg-header" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
+            <span class="thread-msg-author" style="font-weight: 700; ${isSenderAdmin ? 'color: var(--primary);' : ''}">${escapeHtml(r.sender_pseudo)} ${isSenderAdmin ? '(Admin)' : ''}</span>
+            <span class="thread-msg-date">${tempsRelatif(r.created_at)}</span>
+          </div>
+          <div class="thread-msg-body" style="font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;">
+            ${escapeHtml(r.message)}
+            ${r.image_url ? `<div class="thread-msg-image" style="margin-top: 10px;"><a href="${escapeHtml(r.image_url)}" target="_blank"><img src="${escapeHtml(r.image_url)}" style="max-width: 100%; max-height: 250px; border-radius: 8px; border: 1px solid var(--border-color);" /></a></div>` : ''}
+          </div>
+        </div>
+      `;
+    });
+
+    // 3. Formulaire de réponse
+    threadHtml += `
+      <form class="thread-reply-form" id="thread-reply-form-${ticketId}" style="margin-top: 16px; border-top: 1px dashed var(--border-color); padding-top: 16px;">
+        <div class="form-group" style="margin-bottom: 8px;">
+          <textarea name="message" placeholder="Écrire une réponse..." rows="3" required style="width: 100%; font-size: 13px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 8px 12px; color: var(--text-white); outline: none;"></textarea>
+        </div>
+        <div class="form-group" style="margin-bottom: 8px;">
+          <button type="button" class="btn-secondary btn-xs" id="reply-upload-trigger-${ticketId}">📷 Joindre une image</button>
+          <input type="file" id="reply-file-input-${ticketId}" accept="image/*" style="display: none;">
+          <div id="reply-preview-container-${ticketId}" class="hidden" style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
+            <img id="reply-preview-${ticketId}" src="" style="max-height: 60px; border-radius: 6px; border: 1px solid var(--border-color);" />
+            <button type="button" class="btn-danger btn-xs" id="reply-preview-remove-${ticketId}">Supprimer</button>
+          </div>
+        </div>
+        <button type="submit" class="btn-primary btn-xs">Répondre</button>
+      </form>
+    `;
+
+    threadDiv.innerHTML = threadHtml;
+
+    // Connecter les événements pour ce formulaire de réponse spécifique
+    const replyForm = document.getElementById(`thread-reply-form-${ticketId}`);
+    const rFileInput = document.getElementById(`reply-file-input-${ticketId}`);
+    const rTrigger = document.getElementById(`reply-upload-trigger-${ticketId}`);
+    const rPreviewContainer = document.getElementById(`reply-preview-container-${ticketId}`);
+    const rPreviewImg = document.getElementById(`reply-preview-${ticketId}`);
+    const rRemoveBtn = document.getElementById(`reply-preview-remove-${ticketId}`);
+    let replyImageData = null;
+
+    rTrigger.addEventListener('click', () => rFileInput.click());
+    
+    rFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        if (file.size > 5 * 1024 * 1024) {
+          toast("L'image ne doit pas dépasser 5 Mo.", "error");
+          rFileInput.value = '';
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          replyImageData = event.target.result;
+          rPreviewImg.src = replyImageData;
+          rPreviewContainer.classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    rRemoveBtn.addEventListener('click', () => {
+      replyImageData = null;
+      rFileInput.value = '';
+      rPreviewContainer.classList.add('hidden');
+      rPreviewImg.src = '';
+    });
+
+    replyForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const messageText = replyForm.message.value.trim();
+      const submitBtn = replyForm.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      try {
+        await Api.post(`/api/tickets/${ticketId}/messages`, {
+          message: messageText,
+          image_data: replyImageData,
+        });
+        toast('Réponse envoyée.', 'success');
+        
+        // Rafraîchir la discussion sans fermer
+        threadDiv.classList.add('hidden');
+        await toggleTicketThread(ticketId);
+        
+        // Rafraîchir les listes de tickets si nécessaire
+        if (state.user.role === 'administrator') {
+          chargerAdminTickets();
+        } else {
+          chargerMesTickets();
+        }
+      } catch (err) {
+        toast(err.message, 'error');
+        submitBtn.disabled = false;
+      }
+    });
+
+  } catch (err) {
+    threadDiv.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -1601,7 +1794,7 @@ async function chargerAdminTickets() {
     container.innerHTML = tickets
       .map(
         (t) => `
-        <div class="ticket-card ticket-card-admin" data-ticket-id="${t.id}">
+        <div class="ticket-card ticket-card-admin" id="ticket-card-${t.id}">
           <div class="ticket-card-header">
             <div class="ticket-card-meta">
               ${BADGE_CATEGORIE[t.categorie] || ''}
@@ -1614,26 +1807,29 @@ async function chargerAdminTickets() {
           <div class="ticket-card-title">${escapeHtml(t.sujet)}</div>
           <div class="ticket-card-message">${escapeHtml(t.message)}</div>
           ${
-            t.reponse_admin
-              ? `<div class="ticket-reply">
-                  <div class="ticket-reply-header">
-                    <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;flex-shrink:0;"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>
-                    <span>Réponse de ${escapeHtml(t.admin_pseudo || 'admin')}</span>
-                  </div>
-                  <div class="ticket-reply-body">${escapeHtml(t.reponse_admin)}</div>
-                </div>`
+            t.image_url
+              ? `<div style="margin-top: 10px;">
+                  <a href="${escapeHtml(t.image_url)}" target="_blank">
+                    <img src="${escapeHtml(t.image_url)}" style="max-height: 120px; border-radius: 6px; border: 1px solid var(--border-color);" />
+                  </a>
+                 </div>`
               : ''
           }
-          <div class="ticket-admin-controls">
+          <div style="margin-top: 14px; display: flex; gap: 10px;">
+            <button class="btn-secondary btn-xs" data-toggle-thread="${t.id}">💬 Discussion / Répondre</button>
+          </div>
+          <div class="ticket-thread-container hidden" id="ticket-thread-${t.id}" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-color);"></div>
+
+          <div class="ticket-admin-controls" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-color);">
             <form class="ticket-reply-form" data-ticket-reply="${t.id}">
-              <textarea name="reponse" placeholder="Répondre au ticket..." rows="2" maxlength="2000">${escapeHtml(t.reponse_admin || '')}</textarea>
+              <textarea name="reponse" placeholder="Réponse rapide de l'admin (écrite dans le chat et envoyée)..." rows="2" maxlength="2000"></textarea>
               <div class="ticket-reply-actions">
                 <select name="statut">
                   <option value="Ouvert" ${t.statut === 'Ouvert' ? 'selected' : ''}>Ouvert</option>
                   <option value="En_Cours" ${t.statut === 'En_Cours' ? 'selected' : ''}>En cours</option>
                   <option value="Fermé" ${t.statut === 'Fermé' ? 'selected' : ''}>Fermé</option>
                 </select>
-                <button type="submit" class="btn-primary btn-xs">Répondre & mettre à jour</button>
+                <button type="submit" class="btn-primary btn-xs">Envoyer &amp; Mettre à jour</button>
               </div>
             </form>
           </div>
@@ -1641,6 +1837,10 @@ async function chargerAdminTickets() {
       `
       )
       .join('');
+
+    container.querySelectorAll('[data-toggle-thread]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleTicketThread(btn.dataset.toggleThread));
+    });
 
     container.querySelectorAll('[data-ticket-reply]').forEach((form) => {
       form.addEventListener('submit', async (e) => {
