@@ -1286,6 +1286,55 @@ function viewEditeur() {
 
       <div class="editor-controls">
         <details class="editor-accordion" open>
+          <summary>Projet</summary>
+          <div class="editor-accordion-body">
+            <div class="editor-projet-autosave-banner hidden" id="editor-projet-autosave-banner">
+              <span>Un brouillon a été sauvegardé automatiquement lors d'une session précédente.</span>
+              <div class="editor-row" style="justify-content:flex-end;">
+                <button type="button" id="editor-projet-ignorer-autosave" class="btn-secondary">Ignorer</button>
+                <button type="button" id="editor-projet-restaurer-autosave" class="btn-primary">Restaurer le brouillon</button>
+              </div>
+            </div>
+            <div class="editor-section">
+              <label class="editor-label">Nom du projet</label>
+              <input type="text" id="editor-projet-nom" placeholder="Projet sans titre" maxlength="80">
+            </div>
+            <div class="editor-row">
+              <button type="button" id="editor-projet-nouveau" class="btn-secondary">Nouveau</button>
+              <button type="button" id="editor-projet-enregistrer-sous" class="btn-secondary">Enregistrer sous...</button>
+              <button type="button" id="editor-projet-checkpoint" class="btn-secondary">+ Point de sauvegarde</button>
+              <button type="button" id="editor-projet-enregistrer" class="btn-primary">Enregistrer</button>
+            </div>
+            <details class="editor-accordion-nested">
+              <summary>Projets enregistrés</summary>
+              <div class="editor-accordion-nested-body">
+                <div id="editor-projet-liste" class="editor-projet-liste"></div>
+              </div>
+            </details>
+            <details class="editor-accordion-nested">
+              <summary>Points de sauvegarde de ce projet</summary>
+              <div class="editor-accordion-nested-body">
+                <div id="editor-projet-checkpoints" class="editor-projet-liste"></div>
+              </div>
+            </details>
+            <details class="editor-accordion-nested">
+              <summary>Fichier (export / import)</summary>
+              <div class="editor-accordion-nested-body">
+                <div class="editor-row">
+                  <button type="button" id="editor-projet-export" class="btn-secondary">Exporter le projet (.json)</button>
+                  <label class="editor-file-picker" for="editor-projet-import-input">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+                    <span>Importer un projet</span>
+                  </label>
+                  <input type="file" id="editor-projet-import-input" accept=".json,application/json" class="editor-file-input">
+                </div>
+                <span class="form-hint">Le fichier exporté contient tout le projet (réglages + médias). Pratique pour le sauvegarder hors navigateur ou le transférer sur un autre appareil.</span>
+              </div>
+            </details>
+          </div>
+        </details>
+
+        <details class="editor-accordion" open>
           <summary>Fond &amp; musique</summary>
           <div class="editor-accordion-body">
             <div class="editor-section">

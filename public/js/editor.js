@@ -34,6 +34,13 @@ const EditorState = {
   voiceGainNode: null,
   voiceVolume: 1,
   fontFamily: null,
+  fontBlob: null, // fichier de la police perso (pour la sauvegarde de projet) — pas suivi dans l'historique
+  fontFileName: null,
+
+  // Identité du projet dans le stockage local (IndexedDB) — pas suivie
+  // dans l'historique undo/redo, seulement dans la sauvegarde de projet.
+  projetId: null,
+  projetNom: 'Projet sans titre',
 
   intro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
   outro: { active: false, logoImg: null, img: null, texte: '', duree: 3 },
@@ -155,6 +162,11 @@ function capturerSnapshot() {
   return snap;
 }
 
+// Capturé une seule fois, au chargement du script (avant toute interaction
+// utilisateur) : sert de base pour "Nouveau projet" sans dupliquer la liste
+// des valeurs par défaut de chaque champ.
+const ETAT_INITIAL = capturerSnapshot();
+
 function majBoutonsHistorique() {
   const btnUndo = document.getElementById('editor-undo-btn');
   const btnRedo = document.getElementById('editor-redo-btn');
@@ -173,6 +185,7 @@ function pousserHistorique() {
   if (Historique.pile.length > 60) Historique.pile.shift();
   Historique.index = Historique.pile.length - 1;
   majBoutonsHistorique();
+  planifierAutoSave();
 }
 
 function restaurerSnapshot(snap) {
@@ -203,6 +216,605 @@ function initHistorique() {
   Historique.pile = [capturerSnapshot()];
   Historique.index = 0;
   majBoutonsHistorique();
+}
+
+/* -------------------------------------------------------------------- */
+/* Projets — sauvegarde/chargement complets (état + médias) dans        */
+/* IndexedDB (contrairement à localStorage, pas de limite de taille     */
+/* pratique et support natif des Blob, donc des vidéos/audio importés). */
+/* Couvre : sauvegarde/chargement, auto-save de secours, plusieurs      */
+/* projets nommés, points de sauvegarde ("checkpoints") manuels, et     */
+/* export/import d'un projet en fichier .json portable.                 */
+/* -------------------------------------------------------------------- */
+const PROJETS_DB_NOM = 'playtesteur_editor_projets';
+const PROJETS_DB_VERSION = 1;
+const PROJETS_STORE = 'projets';
+const AUTOSAVE_ID = '__autosave__';
+
+let _projetsDbPromise = null;
+function ouvrirBaseProjets() {
+  if (!_projetsDbPromise) {
+    _projetsDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(PROJETS_DB_NOM, PROJETS_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(PROJETS_STORE)) {
+          db.createObjectStore(PROJETS_STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return _projetsDbPromise;
+}
+
+function requeteVersPromise(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function enregistrementProjetPut(record) {
+  const db = await ouvrirBaseProjets();
+  const tx = db.transaction(PROJETS_STORE, 'readwrite');
+  tx.objectStore(PROJETS_STORE).put(record);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function enregistrementProjetGet(id) {
+  const db = await ouvrirBaseProjets();
+  return requeteVersPromise(db.transaction(PROJETS_STORE, 'readonly').objectStore(PROJETS_STORE).get(id));
+}
+
+async function enregistrementProjetGetAll() {
+  const db = await ouvrirBaseProjets();
+  return requeteVersPromise(db.transaction(PROJETS_STORE, 'readonly').objectStore(PROJETS_STORE).getAll());
+}
+
+async function enregistrementProjetDelete(id) {
+  const db = await ouvrirBaseProjets();
+  const tx = db.transaction(PROJETS_STORE, 'readwrite');
+  tx.objectStore(PROJETS_STORE).delete(id);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function idProjetUnique() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+// Récupère le blob source d'un élément média déjà chargé (son `src` est une
+// URL blob: valide tant que la page n'a pas rechargé) — nécessaire car
+// EditorState ne garde que l'élément <img>/<video>/<audio>, jamais le
+// fichier d'origine.
+async function blobDepuisElementMedia(el) {
+  if (!el || !el.src) return null;
+  try {
+    const reponse = await fetch(el.src);
+    return await reponse.blob();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function serialiserProjetComplet() {
+  const etat = {};
+  for (const champ of CHAMPS_HISTORIQUE) etat[champ] = cloneProfondSansDom(EditorState[champ]);
+  etat.photos.forEach((p) => {
+    delete p.img;
+    delete p.bgOverrideVideoEl;
+    delete p.bgOverrideImageEl;
+  });
+  ['intro', 'outro'].forEach((seg) => {
+    delete etat[seg].logoImg;
+    delete etat[seg].img;
+  });
+
+  const medias = {
+    bg: await blobDepuisElementMedia(EditorState.bgVideoEl || EditorState.bgImageEl),
+    bgType: EditorState.bgVideoEl ? 'video' : EditorState.bgImageEl ? 'image' : null,
+    introLogo: await blobDepuisElementMedia(EditorState.intro.logoImg),
+    introImg: await blobDepuisElementMedia(EditorState.intro.img),
+    outroLogo: await blobDepuisElementMedia(EditorState.outro.logoImg),
+    outroImg: await blobDepuisElementMedia(EditorState.outro.img),
+    audio: await blobDepuisElementMedia(EditorState.audioEl),
+    voice: await blobDepuisElementMedia(EditorState.voiceEl),
+    font: EditorState.fontBlob || null,
+    fontFileName: EditorState.fontFileName || null,
+    photos: {},
+  };
+  for (const p of EditorState.photos) {
+    medias.photos[p.id] = {
+      media: await blobDepuisElementMedia(p.img),
+      mediaType: p.img ? (p.img.tagName === 'VIDEO' ? 'video' : 'image') : null,
+      bgOverride: await blobDepuisElementMedia(p.bgOverrideVideoEl || p.bgOverrideImageEl),
+      bgOverrideType: p.bgOverrideVideoEl ? 'video' : p.bgOverrideImageEl ? 'image' : null,
+    };
+  }
+  return { etat, medias };
+}
+
+async function restaurerProjetComplet({ etat, medias }) {
+  Historique.enPause = true;
+  for (const champ of CHAMPS_HISTORIQUE) EditorState[champ] = cloneProfondSansDom(etat[champ]);
+
+  EditorState.bgVideoEl = null;
+  EditorState.bgImageEl = null;
+  if (medias.bg && medias.bgType === 'video') EditorState.bgVideoEl = await chargerMediaPhoto(medias.bg);
+  else if (medias.bg && medias.bgType === 'image') EditorState.bgImageEl = await chargerImage(medias.bg);
+
+  EditorState.intro.logoImg = medias.introLogo ? await chargerImage(medias.introLogo) : null;
+  EditorState.intro.img = medias.introImg ? await chargerImage(medias.introImg) : null;
+  EditorState.outro.logoImg = medias.outroLogo ? await chargerImage(medias.outroLogo) : null;
+  EditorState.outro.img = medias.outroImg ? await chargerImage(medias.outroImg) : null;
+
+  EditorState.audioEl = null;
+  EditorState.audioGainNode = null;
+  if (medias.audio) {
+    const audio = new Audio();
+    audio.src = URL.createObjectURL(medias.audio);
+    audio.loop = true;
+    audio.crossOrigin = 'anonymous';
+    audio.currentTime = EditorState.audioTrimStart;
+    EditorState.audioEl = audio;
+    brancherAnalyseurAudio(audio);
+    calculerWaveform(medias.audio);
+  }
+
+  EditorState.voiceEl = null;
+  EditorState.voiceGainNode = null;
+  if (medias.voice) {
+    const voice = new Audio();
+    voice.src = URL.createObjectURL(medias.voice);
+    voice.crossOrigin = 'anonymous';
+    EditorState.voiceEl = voice;
+    brancherVoixOff(voice);
+  }
+
+  EditorState.fontFamily = null;
+  EditorState.fontBlob = null;
+  EditorState.fontFileName = null;
+  if (medias.font) {
+    try {
+      const buf = await medias.font.arrayBuffer();
+      const face = new FontFace('PolicePersonnalisee', buf);
+      await face.load();
+      document.fonts.add(face);
+      EditorState.fontFamily = 'PolicePersonnalisee';
+      EditorState.fontBlob = medias.font;
+      EditorState.fontFileName = medias.fontFileName;
+    } catch (_) {}
+  }
+
+  for (const p of EditorState.photos) {
+    p.img = null;
+    p.bgOverrideVideoEl = null;
+    p.bgOverrideImageEl = null;
+    const m = medias.photos ? medias.photos[p.id] : null;
+    if (m && m.media) p.img = m.mediaType === 'video' ? await chargerMediaPhoto(m.media) : await chargerImage(m.media);
+    if (m && m.bgOverride) {
+      if (m.bgOverrideType === 'video') p.bgOverrideVideoEl = await chargerMediaPhoto(m.bgOverride);
+      else p.bgOverrideImageEl = await chargerImage(m.bgOverride);
+    }
+  }
+
+  rafraichirListePhotos();
+  rafraichirListeTextBlocks();
+  rafraichirPanneauApresRestauration();
+  Historique.enPause = false;
+  initHistorique();
+}
+
+async function nouveauProjetVide() {
+  Historique.enPause = true;
+  for (const champ of CHAMPS_HISTORIQUE) EditorState[champ] = cloneProfondSansDom(ETAT_INITIAL[champ]);
+  for (const champ of CHAMPS_HISTORIQUE_REFS) EditorState[champ] = null;
+  EditorState.fontFamily = null;
+  EditorState.fontBlob = null;
+  EditorState.fontFileName = null;
+  EditorState.projetId = null;
+  EditorState.projetNom = 'Projet sans titre';
+  EditorState.playback.currentTime = 0;
+  EditorState.playback.playing = false;
+  rafraichirListePhotos();
+  rafraichirListeTextBlocks();
+  rafraichirPanneauApresRestauration();
+  Historique.enPause = false;
+  initHistorique();
+  await rafraichirPanneauProjet();
+  toast('Nouveau projet créé.', 'success');
+}
+
+async function sauvegarderProjetCourant({ commeNouveau = false, nom } = {}) {
+  const { etat, medias } = await serialiserProjetComplet();
+  const nouveau = commeNouveau || !EditorState.projetId;
+  const id = nouveau ? idProjetUnique() : EditorState.projetId;
+  const nomFinal = nom || EditorState.projetNom || 'Projet sans titre';
+  const maintenant = Date.now();
+  const existant = nouveau ? null : await enregistrementProjetGet(id).catch(() => null);
+  const record = {
+    id,
+    type: 'projet',
+    nom: nomFinal,
+    createdAt: (existant && existant.createdAt) || maintenant,
+    updatedAt: maintenant,
+    etat,
+    medias,
+  };
+  await enregistrementProjetPut(record);
+  EditorState.projetId = id;
+  EditorState.projetNom = nomFinal;
+  await rafraichirPanneauProjet();
+  toast(`Projet « ${nomFinal} » enregistré.`, 'success');
+  return record;
+}
+
+async function chargerProjet(id) {
+  const record = await enregistrementProjetGet(id);
+  if (!record) {
+    toast('Projet introuvable.', 'error');
+    return;
+  }
+  await restaurerProjetComplet(record);
+  EditorState.projetId = record.id;
+  EditorState.projetNom = record.nom;
+  await rafraichirPanneauProjet();
+  toast(`Projet « ${record.nom} » chargé.`, 'success');
+}
+
+async function dupliquerProjet(id) {
+  const record = await enregistrementProjetGet(id);
+  if (!record) return;
+  const copie = {
+    ...record,
+    id: idProjetUnique(),
+    nom: `${record.nom} (copie)`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await enregistrementProjetPut(copie);
+  await rafraichirPanneauProjet();
+  toast(`Projet dupliqué en « ${copie.nom} ».`, 'success');
+}
+
+async function renommerProjet(id, nouveauNom) {
+  const record = await enregistrementProjetGet(id);
+  if (!record || !nouveauNom || !nouveauNom.trim()) return;
+  record.nom = nouveauNom.trim();
+  record.updatedAt = Date.now();
+  await enregistrementProjetPut(record);
+  if (EditorState.projetId === id) EditorState.projetNom = record.nom;
+  await rafraichirPanneauProjet();
+}
+
+async function supprimerProjet(id) {
+  const tous = await enregistrementProjetGetAll();
+  const aSupprimer = tous.filter((r) => r.id === id || r.parentId === id);
+  for (const r of aSupprimer) await enregistrementProjetDelete(r.id);
+  if (EditorState.projetId === id) EditorState.projetId = null;
+  await rafraichirPanneauProjet();
+  toast('Projet supprimé.', 'success');
+}
+
+async function creerCheckpoint(nom) {
+  if (!EditorState.projetId) await sauvegarderProjetCourant();
+  const { etat, medias } = await serialiserProjetComplet();
+  const record = {
+    id: idProjetUnique(),
+    type: 'checkpoint',
+    parentId: EditorState.projetId,
+    nom: nom && nom.trim() ? nom.trim() : new Date().toLocaleString('fr-FR'),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    etat,
+    medias,
+  };
+  await enregistrementProjetPut(record);
+  await rafraichirPanneauProjet();
+  toast('Point de sauvegarde créé.', 'success');
+}
+
+async function restaurerCheckpoint(id) {
+  const record = await enregistrementProjetGet(id);
+  if (!record) return;
+  await restaurerProjetComplet(record);
+  toast(`Restauré depuis « ${record.nom} ».`, 'success');
+}
+
+async function supprimerCheckpoint(id) {
+  await enregistrementProjetDelete(id);
+  await rafraichirPanneauProjet();
+}
+
+/* ---- Sauvegarde automatique ------------------------------------------ */
+let _autoSaveTimer = null;
+function planifierAutoSave() {
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(sauvegarderAutoSave, 2500);
+}
+
+async function sauvegarderAutoSave() {
+  try {
+    const { etat, medias } = await serialiserProjetComplet();
+    await enregistrementProjetPut({
+      id: AUTOSAVE_ID,
+      type: 'autosave',
+      nom: EditorState.projetNom || 'Brouillon automatique',
+      projetId: EditorState.projetId,
+      updatedAt: Date.now(),
+      etat,
+      medias,
+    });
+  } catch (_) {
+    /* échec silencieux : l'auto-save est un filet de sécurité, pas une
+       action demandée explicitement par l'utilisateur */
+  }
+}
+
+async function restaurerAutoSave() {
+  const record = await enregistrementProjetGet(AUTOSAVE_ID);
+  if (!record) return;
+  await restaurerProjetComplet(record);
+  EditorState.projetId = record.projetId || null;
+  EditorState.projetNom = record.nom || 'Projet sans titre';
+  await rafraichirPanneauProjet();
+  const banniere = document.getElementById('editor-projet-autosave-banner');
+  if (banniere) banniere.classList.add('hidden');
+  toast('Brouillon automatique restauré.', 'success');
+}
+
+async function verifierAutoSaveAuDemarrage() {
+  const banniere = document.getElementById('editor-projet-autosave-banner');
+  if (!banniere) return;
+  if (EditorState.projetId) {
+    banniere.classList.add('hidden');
+    return;
+  }
+  const record = await enregistrementProjetGet(AUTOSAVE_ID).catch(() => null);
+  const vide =
+    !record ||
+    (!(record.etat?.photos?.length) &&
+      !(record.etat?.textBlocks?.length) &&
+      !record.medias?.bg &&
+      !record.medias?.audio);
+  banniere.classList.toggle('hidden', vide);
+}
+
+/* ---- Export / import en fichier portable ------------------------------ */
+async function blobVersDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const lecteur = new FileReader();
+    lecteur.onload = () => resolve(lecteur.result);
+    lecteur.onerror = reject;
+    lecteur.readAsDataURL(blob);
+  });
+}
+
+async function dataUrlVersBlob(dataUrl) {
+  const reponse = await fetch(dataUrl);
+  return reponse.blob();
+}
+
+async function encoderMediasEnBase64(valeur) {
+  if (valeur instanceof Blob) return { __blob64: await blobVersDataUrl(valeur) };
+  if (Array.isArray(valeur)) return Promise.all(valeur.map(encoderMediasEnBase64));
+  if (valeur && typeof valeur === 'object') {
+    const out = {};
+    for (const cle of Object.keys(valeur)) out[cle] = await encoderMediasEnBase64(valeur[cle]);
+    return out;
+  }
+  return valeur;
+}
+
+async function decoderMediasDepuisBase64(valeur) {
+  if (valeur && typeof valeur === 'object' && typeof valeur.__blob64 === 'string') {
+    return dataUrlVersBlob(valeur.__blob64);
+  }
+  if (Array.isArray(valeur)) return Promise.all(valeur.map(decoderMediasDepuisBase64));
+  if (valeur && typeof valeur === 'object') {
+    const out = {};
+    for (const cle of Object.keys(valeur)) out[cle] = await decoderMediasDepuisBase64(valeur[cle]);
+    return out;
+  }
+  return valeur;
+}
+
+async function exporterProjetFichier() {
+  const { etat, medias } = await serialiserProjetComplet();
+  const mediasB64 = await encoderMediasEnBase64(medias);
+  const fichier = {
+    format: 'playtesteur-editor-projet',
+    version: 1,
+    nom: EditorState.projetNom || 'Projet sans titre',
+    exporteLe: new Date().toISOString(),
+    etat,
+    medias: mediasB64,
+  };
+  const blob = new Blob([JSON.stringify(fichier)], { type: 'application/json' });
+  const nomFichier = (EditorState.projetNom || 'projet').replace(/[^\w-]+/g, '_').toLowerCase();
+  downloadBlob(blob, `${nomFichier || 'projet'}.playtesteur.json`);
+  toast('Projet exporté en fichier.', 'success');
+}
+
+async function importerProjetFichier(file) {
+  try {
+    const texte = await file.text();
+    const fichier = JSON.parse(texte);
+    if (fichier.format !== 'playtesteur-editor-projet') throw new Error('Fichier de projet invalide.');
+    const medias = await decoderMediasDepuisBase64(fichier.medias);
+    await restaurerProjetComplet({ etat: fichier.etat, medias });
+    EditorState.projetId = null; // traité comme un nouveau projet local, pas encore enregistré
+    EditorState.projetNom = fichier.nom || 'Projet importé';
+    await rafraichirPanneauProjet();
+    toast(`Projet « ${EditorState.projetNom} » importé.`, 'success');
+  } catch (err) {
+    console.error('[editeur] import projet échoué', err);
+    toast("Impossible d'importer ce fichier de projet.", 'error');
+  }
+}
+
+/* ---- UI ---------------------------------------------------------------- */
+function formaterDateProjet(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function rafraichirPanneauProjet() {
+  const nomInput = document.getElementById('editor-projet-nom');
+  if (nomInput && document.activeElement !== nomInput) nomInput.value = EditorState.projetNom || '';
+
+  const tous = await enregistrementProjetGetAll().catch(() => []);
+  const projets = tous.filter((r) => r.type === 'projet').sort((a, b) => b.updatedAt - a.updatedAt);
+  const checkpoints = EditorState.projetId
+    ? tous
+        .filter((r) => r.type === 'checkpoint' && r.parentId === EditorState.projetId)
+        .sort((a, b) => b.createdAt - a.createdAt)
+    : [];
+
+  const listeEl = document.getElementById('editor-projet-liste');
+  if (listeEl) {
+    listeEl.innerHTML = projets.length
+      ? projets
+          .map(
+            (p) => `
+        <div class="editor-projet-item ${p.id === EditorState.projetId ? 'active' : ''}">
+          <span class="editor-projet-item-nom" title="${escapeHtml(p.nom)}">${escapeHtml(p.nom)}</span>
+          <span class="editor-projet-item-date">${formaterDateProjet(p.updatedAt)}</span>
+          <div class="editor-projet-item-actions">
+            <button type="button" data-projet-charger="${p.id}" title="Charger">Charger</button>
+            <button type="button" data-projet-dupliquer="${p.id}" title="Dupliquer">Dupliquer</button>
+            <button type="button" data-projet-renommer="${p.id}" title="Renommer">Renommer</button>
+            <button type="button" data-projet-supprimer="${p.id}" title="Supprimer" class="editor-remove-btn">&times;</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : `<p class="form-hint">Aucun projet enregistré pour l'instant.</p>`;
+
+    listeEl.querySelectorAll('[data-projet-charger]').forEach((btn) => {
+      btn.addEventListener('click', () => chargerProjet(btn.dataset.projetCharger));
+    });
+    listeEl.querySelectorAll('[data-projet-dupliquer]').forEach((btn) => {
+      btn.addEventListener('click', () => dupliquerProjet(btn.dataset.projetDupliquer));
+    });
+    listeEl.querySelectorAll('[data-projet-renommer]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const nouveauNom = prompt('Nouveau nom du projet :');
+        if (nouveauNom) renommerProjet(btn.dataset.projetRenommer, nouveauNom);
+      });
+    });
+    listeEl.querySelectorAll('[data-projet-supprimer]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (confirm('Supprimer ce projet et ses points de sauvegarde ?')) supprimerProjet(btn.dataset.projetSupprimer);
+      });
+    });
+  }
+
+  const checkpointsEl = document.getElementById('editor-projet-checkpoints');
+  if (checkpointsEl) {
+    checkpointsEl.innerHTML = checkpoints.length
+      ? checkpoints
+          .map(
+            (c) => `
+        <div class="editor-projet-item">
+          <span class="editor-projet-item-nom" title="${escapeHtml(c.nom)}">${escapeHtml(c.nom)}</span>
+          <span class="editor-projet-item-date">${formaterDateProjet(c.createdAt)}</span>
+          <div class="editor-projet-item-actions">
+            <button type="button" data-checkpoint-restaurer="${c.id}" title="Restaurer">Restaurer</button>
+            <button type="button" data-checkpoint-supprimer="${c.id}" title="Supprimer" class="editor-remove-btn">&times;</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : '<p class="form-hint">Aucun point de sauvegarde pour ce projet.</p>';
+
+    checkpointsEl.querySelectorAll('[data-checkpoint-restaurer]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (confirm('Restaurer ce point de sauvegarde ? Les modifications non enregistrées seront perdues.')) {
+          restaurerCheckpoint(btn.dataset.checkpointRestaurer);
+        }
+      });
+    });
+    checkpointsEl.querySelectorAll('[data-checkpoint-supprimer]').forEach((btn) => {
+      btn.addEventListener('click', () => supprimerCheckpoint(btn.dataset.checkpointSupprimer));
+    });
+  }
+}
+
+function bindGestionProjet() {
+  const nomInput = document.getElementById('editor-projet-nom');
+  if (nomInput) {
+    nomInput.addEventListener('change', (e) => {
+      EditorState.projetNom = e.target.value.trim() || 'Projet sans titre';
+      if (EditorState.projetId) renommerProjet(EditorState.projetId, EditorState.projetNom);
+    });
+  }
+  const btnNouveau = document.getElementById('editor-projet-nouveau');
+  if (btnNouveau) {
+    btnNouveau.addEventListener('click', () => {
+      if (confirm('Créer un nouveau projet vide ? Les modifications non enregistrées seront perdues.')) nouveauProjetVide();
+    });
+  }
+  const btnEnregistrer = document.getElementById('editor-projet-enregistrer');
+  if (btnEnregistrer) {
+    btnEnregistrer.addEventListener('click', () => {
+      const nomActuel = document.getElementById('editor-projet-nom');
+      sauvegarderProjetCourant({ nom: nomActuel ? nomActuel.value.trim() : undefined });
+    });
+  }
+  const btnEnregistrerSous = document.getElementById('editor-projet-enregistrer-sous');
+  if (btnEnregistrerSous) {
+    btnEnregistrerSous.addEventListener('click', () => {
+      const nouveauNom = prompt('Nom du nouveau projet :', `${EditorState.projetNom} (copie)`);
+      if (nouveauNom) sauvegarderProjetCourant({ commeNouveau: true, nom: nouveauNom });
+    });
+  }
+  const btnCheckpoint = document.getElementById('editor-projet-checkpoint');
+  if (btnCheckpoint) {
+    btnCheckpoint.addEventListener('click', () => {
+      const nom = prompt('Nom de ce point de sauvegarde (optionnel) :', '');
+      creerCheckpoint(nom);
+    });
+  }
+  const btnExport = document.getElementById('editor-projet-export');
+  if (btnExport) btnExport.addEventListener('click', exporterProjetFichier);
+
+  const importInput = document.getElementById('editor-projet-import-input');
+  if (importInput) {
+    importInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) importerProjetFichier(file);
+      e.target.value = '';
+    });
+  }
+
+  const btnRestaurerAutosave = document.getElementById('editor-projet-restaurer-autosave');
+  if (btnRestaurerAutosave) btnRestaurerAutosave.addEventListener('click', restaurerAutoSave);
+  const btnIgnorerAutosave = document.getElementById('editor-projet-ignorer-autosave');
+  if (btnIgnorerAutosave) {
+    btnIgnorerAutosave.addEventListener('click', () => {
+      const banniere = document.getElementById('editor-projet-autosave-banner');
+      if (banniere) banniere.classList.add('hidden');
+    });
+  }
+
+  verifierAutoSaveAuDemarrage();
+  rafraichirPanneauProjet();
 }
 
 // Resynchronise les champs du panneau qui ne sont pas régénérés depuis
@@ -361,6 +973,7 @@ async function initEditeur() {
   bindAccordionUx();
   bindHistoriqueUx();
   bindReglagesIa();
+  bindGestionProjet();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
 
@@ -2096,6 +2709,8 @@ function bindEditorInputs() {
       await face.load();
       document.fonts.add(face);
       EditorState.fontFamily = 'PolicePersonnalisee';
+      EditorState.fontBlob = file;
+      EditorState.fontFileName = file.name;
       toast('Police chargée, appliquée au texte.', 'success');
     } catch (err) {
       toast('Impossible de charger cette police.', 'error');
