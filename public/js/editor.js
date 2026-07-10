@@ -3703,6 +3703,42 @@ function raycastLayer(canvas, evt, layerNames) {
   return hits.length ? hits[0] : null;
 }
 
+// Guides d'alignement (0..1 du cadre) : centre + règle des tiers. Le nom
+// correspond à l'attribut data-guide de la ligne HTML affichée dessus.
+const SEUIL_SNAP_ALIGNEMENT = 0.012;
+const GUIDES_VERTICALES = { 'center-v': 0.5, 'third-v1': 1 / 3, 'third-v2': 2 / 3 };
+const GUIDES_HORIZONTALES = { 'center-h': 0.5, 'third-h1': 1 / 3, 'third-h2': 2 / 3 };
+
+// Aimante (fx, fy) sur le guide le plus proche s'il est à moins de
+// SEUIL_SNAP_ALIGNEMENT, et allume la ligne correspondante à l'écran.
+function appliquerSnapEtGuides(fx, fy) {
+  let sx = fx;
+  let sy = fy;
+  const actifs = [];
+  for (const [nom, val] of Object.entries(GUIDES_VERTICALES)) {
+    if (Math.abs(fx - val) < SEUIL_SNAP_ALIGNEMENT) {
+      sx = val;
+      actifs.push(nom);
+      break;
+    }
+  }
+  for (const [nom, val] of Object.entries(GUIDES_HORIZONTALES)) {
+    if (Math.abs(fy - val) < SEUIL_SNAP_ALIGNEMENT) {
+      sy = val;
+      actifs.push(nom);
+      break;
+    }
+  }
+  document.querySelectorAll('.editor-align-guide').forEach((el) => {
+    el.classList.toggle('active', actifs.includes(el.dataset.guide));
+  });
+  return { fx: sx, fy: sy };
+}
+
+function masquerGuidesAlignement() {
+  document.querySelectorAll('.editor-align-guide.active').forEach((el) => el.classList.remove('active'));
+}
+
 // Convertit une position pointeur en fraction (0..1) du cadre, projetée
 // sur le plan de profondeur z du calque en cours de glisser-déposer.
 function pointerToFraction(canvas, evt, z) {
@@ -3752,22 +3788,25 @@ function bindEditorDrag3D(canvas) {
       const b = EditorState.textBlocks.find((tb) => tb.id === EditorState.dragging.id);
       const frac = b && pointerToFraction(canvas, e, b.z ?? 10);
       if (b && frac) {
-        b.x = frac.fx;
-        b.y = frac.fy;
+        const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
+        b.x = snap.fx;
+        b.y = snap.fy;
       }
     } else if (EditorState.dragging.type === 'photo') {
       const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
       const frac = p && pointerToFraction(canvas, e, p.z || 0);
       if (p && frac) {
-        p.x = frac.fx;
-        p.y = frac.fy;
+        const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
+        p.x = snap.fx;
+        p.y = snap.fy;
       }
     } else if (EditorState.dragging.type === 'caption') {
       const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
       const frac = p && pointerToFraction(canvas, e, (p.z || 0) + 2);
       if (p && frac) {
-        p.texteX = frac.fx;
-        p.texteY = frac.fy;
+        const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
+        p.texteX = snap.fx;
+        p.texteY = snap.fy;
       }
     }
   });
@@ -3777,6 +3816,7 @@ function bindEditorDrag3D(canvas) {
       if (EditorState.dragging) pousserHistorique();
       EditorState.dragging = null;
       canvas.style.cursor = 'default';
+      masquerGuidesAlignement();
     });
   });
 }

@@ -1269,6 +1269,14 @@ function viewEditeur() {
             <div class="editor-crop-overlay-frame" id="editor-crop-overlay-frame"></div>
             <span class="editor-crop-overlay-label" id="editor-crop-overlay-label"></span>
           </div>
+          <div class="editor-align-guides" id="editor-align-guides">
+            <div class="editor-align-guide editor-align-guide-v" data-guide="center-v" style="left:50%;"></div>
+            <div class="editor-align-guide editor-align-guide-h" data-guide="center-h" style="top:50%;"></div>
+            <div class="editor-align-guide editor-align-guide-v" data-guide="third-v1" style="left:33.333%;"></div>
+            <div class="editor-align-guide editor-align-guide-v" data-guide="third-v2" style="left:66.667%;"></div>
+            <div class="editor-align-guide editor-align-guide-h" data-guide="third-h1" style="top:33.333%;"></div>
+            <div class="editor-align-guide editor-align-guide-h" data-guide="third-h2" style="top:66.667%;"></div>
+          </div>
         </div>
         <div class="editor-hint">Glissez le texte fixe, la photo active ou sa légende directement sur l'aperçu pour les repositionner.</div>
         <div class="editor-timeline">

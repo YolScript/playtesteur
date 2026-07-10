@@ -857,6 +857,18 @@ tbody tr:hover { background: var(--bg-card-hover); }
     white-space: nowrap;
 }
 
+.editor-align-guides { position: absolute; inset: 0; pointer-events: none; }
+.editor-align-guide {
+    position: absolute;
+    background: var(--accent-color, #00e676);
+    opacity: 0;
+    box-shadow: 0 0 6px rgba(0, 230, 118, 0.7);
+    transition: opacity 0.08s ease;
+}
+.editor-align-guide.active { opacity: 0.9; }
+.editor-align-guide-v { top: 0; bottom: 0; width: 1px; }
+.editor-align-guide-h { left: 0; right: 0; height: 1px; }
+
 .editor-hint {
     margin-top: 10px;
     font-size: 12px;
