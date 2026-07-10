@@ -3818,9 +3818,23 @@ function renderTextBlockHtml(b, index) {
                 <option value="fade" ${b.anim === 'fade' ? 'selected' : ''}>Fondu</option>
                 <option value="slide" ${b.anim === 'slide' ? 'selected' : ''}>Glissement</option>
                 <option value="pop" ${b.anim === 'pop' ? 'selected' : ''}>Pop (zoom)</option>
+                <option value="rotate3d" ${b.anim === 'rotate3d' ? 'selected' : ''}>Rotation 3D</option>
+                <option value="blur" ${b.anim === 'blur' ? 'selected' : ''}>Flou → net</option>
                 <option value="typewriter" ${b.anim === 'typewriter' ? 'selected' : ''}>Machine à écrire</option>
               </select>
             </label>
+            <label class="editor-mini-label">Courbe
+              <select data-easing-for="${b.id}">
+                <option value="linear" ${(!b.easing || b.easing === 'linear') ? 'selected' : ''}>Linéaire</option>
+                <option value="easeInOut" ${b.easing === 'easeInOut' ? 'selected' : ''}>Ralenti (ease in-out)</option>
+                <option value="easeOut" ${b.easing === 'easeOut' ? 'selected' : ''}>Ralenti sortie (ease out)</option>
+                <option value="bounce" ${b.easing === 'bounce' ? 'selected' : ''}>Rebond</option>
+                <option value="elastic" ${b.easing === 'elastic' ? 'selected' : ''}>Élastique</option>
+              </select>
+            </label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Durée anim. (s)<input type="number" data-animduree-for="${b.id}" min="0.1" max="5" step="0.1" value="${b.animDuree ?? 0.5}" style="max-width:80px;"></label>
           </div>
           <div class="editor-row">
             <label class="editor-mini-label">Apparaît à (s, vide = début)<input type="number" data-start-for="${b.id}" min="0" step="0.5" value="${b.startTime ?? ''}" style="max-width:80px;"></label>
@@ -3899,6 +3913,10 @@ function bindTextBlockEvents() {
 
     const animInput = document.querySelector(`[data-anim-for="${b.id}"]`);
     if (animInput) animInput.addEventListener('change', (e) => (b.anim = e.target.value));
+    const easingInput = document.querySelector(`[data-easing-for="${b.id}"]`);
+    if (easingInput) easingInput.addEventListener('change', (e) => (b.easing = e.target.value));
+    const animDureeInput = document.querySelector(`[data-animduree-for="${b.id}"]`);
+    if (animDureeInput) animDureeInput.addEventListener('input', (e) => (b.animDuree = Math.max(0.1, Number(e.target.value) || 0.5)));
 
     const startInput = document.querySelector(`[data-start-for="${b.id}"]`);
     if (startInput) {
@@ -3971,6 +3989,8 @@ function creerTextBlockParDefaut(id, decalage) {
     italic: false,
     align: 'center',
     anim: 'none',
+    animDuree: 0.5,
+    easing: 'linear',
     startTime: null,
     endTime: null,
     bgPanelActive: true,
