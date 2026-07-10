@@ -1201,6 +1201,34 @@ tbody tr:hover { background: var(--bg-card-hover); }
 
 .editor-canvas-dessin { cursor: crosshair; outline: 2px dashed var(--primary); outline-offset: -2px; }
 
+.editor-pixabay-grille {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+.editor-pixabay-item {
+    position: relative;
+    aspect-ratio: 1;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    padding: 0;
+    cursor: pointer;
+    background: var(--bg-darker);
+    transition: var(--transition-fast);
+}
+.editor-pixabay-item:hover { border-color: var(--primary); transform: scale(1.03); }
+.editor-pixabay-item img,
+.editor-pixabay-item video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
 .editor-photos-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
 
 .editor-sticker-choix { flex-wrap: wrap; gap: 4px; }

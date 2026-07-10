@@ -1359,6 +1359,21 @@ function viewEditeur() {
               <label class="editor-label">Fond (vidéo MP4 ou image)</label>
               ${renderFilePicker('editor-bg-input', 'video/mp4,image/png,image/jpeg', 'editor-bg-filename')}
             </div>
+            <details class="editor-accordion-nested">
+              <summary>Bibliothèque Pixabay (vidéos &amp; images libres de droits)</summary>
+              <div class="editor-accordion-nested-body">
+                <span class="form-hint">Nécessite une clé API Pixabay (section "Clés API IA" plus bas, gratuite). Le résultat choisi remplace le fond ci-dessus.</span>
+                <div class="editor-row">
+                  <input type="text" id="editor-pixabay-recherche" placeholder="Ex : anime fight, ville, nature...">
+                  <select id="editor-pixabay-type">
+                    <option value="videos">Vidéos</option>
+                    <option value="photos">Images</option>
+                  </select>
+                  <button type="button" id="editor-pixabay-chercher" class="editor-add-btn">Rechercher</button>
+                </div>
+                <div id="editor-pixabay-resultats" class="editor-pixabay-grille"></div>
+              </div>
+            </details>
             <div class="editor-section hidden" id="editor-bg-color-panel">
               <label class="editor-label">Couleur du fond</label>
               <input type="color" id="editor-bg-color" value="#12151c">
@@ -1568,6 +1583,11 @@ function viewEditeur() {
             <div class="editor-section">
               <label class="editor-label">Clé API remove.bg (suppression de fond automatique)</label>
               <input type="password" id="editor-ai-key-removebg" placeholder="Clé API remove.bg" autocomplete="off">
+            </div>
+            <div class="editor-section">
+              <label class="editor-label">Clé API Pixabay (bibliothèque de vidéos/images pour le fond)</label>
+              <input type="password" id="editor-ai-key-pixabay" placeholder="Clé API Pixabay" autocomplete="off">
+              <span class="form-hint">Gratuite sur pixabay.com/api/docs/ (compte requis). Utilisée dans la section "Fond & musique" pour chercher des vidéos/images libres de droits.</span>
             </div>
           </div>
         </details>

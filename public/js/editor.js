@@ -97,7 +97,7 @@ const EditorState = {
 /* clé fournie ici.                                                      */
 /* -------------------------------------------------------------------- */
 const AI_KEYS_STORAGE_KEY = 'playtesteur_editor_ai_keys';
-const AiKeys = { openai: '', removebg: '' };
+const AiKeys = { openai: '', removebg: '', pixabay: '' };
 
 function chargerCleApiDepuisStockage() {
   try {
@@ -120,12 +120,105 @@ function bindReglagesIa() {
   [
     ['editor-ai-key-openai', 'openai'],
     ['editor-ai-key-removebg', 'removebg'],
+    ['editor-ai-key-pixabay', 'pixabay'],
   ].forEach(([inputId, nom]) => {
     const input = document.getElementById(inputId);
     if (!input) return;
     input.value = AiKeys[nom] || '';
     input.addEventListener('input', (e) => sauvegarderCleApi(nom, e.target.value.trim()));
   });
+}
+
+/* -------------------------------------------------------------------- */
+/* Bibliothèque Pixabay (vidéos & images libres de droits pour le fond) */
+/* -------------------------------------------------------------------- */
+async function rechercherPixabay() {
+  const requeteInput = document.getElementById('editor-pixabay-recherche');
+  const typeSelect = document.getElementById('editor-pixabay-type');
+  const resultatsEl = document.getElementById('editor-pixabay-resultats');
+  if (!requeteInput || !typeSelect || !resultatsEl) return;
+  const requete = requeteInput.value.trim();
+  const type = typeSelect.value;
+  if (!requete) {
+    toast('Entrez un terme de recherche.', 'error');
+    return;
+  }
+  if (!AiKeys.pixabay) {
+    toast('Renseignez votre clé API Pixabay dans la section "Clés API IA" plus bas.', 'error');
+    return;
+  }
+  resultatsEl.innerHTML = '<p class="form-hint">Recherche en cours…</p>';
+  try {
+    const base = type === 'photos' ? 'https://pixabay.com/api/' : 'https://pixabay.com/api/videos/';
+    const url = `${base}?key=${encodeURIComponent(AiKeys.pixabay)}&q=${encodeURIComponent(requete)}&per_page=24&safesearch=true`;
+    const reponse = await fetch(url);
+    if (!reponse.ok) throw new Error(`Pixabay a répondu ${reponse.status}`);
+    const donnees = await reponse.json();
+    afficherResultatsPixabay(donnees.hits || [], type);
+  } catch (err) {
+    console.error('[editeur] recherche Pixabay échouée', err);
+    resultatsEl.innerHTML = '<p class="form-hint">Recherche impossible (clé API invalide ou problème réseau).</p>';
+  }
+}
+
+function afficherResultatsPixabay(hits, type) {
+  const resultatsEl = document.getElementById('editor-pixabay-resultats');
+  if (!resultatsEl) return;
+  if (!hits.length) {
+    resultatsEl.innerHTML = '<p class="form-hint">Aucun résultat pour cette recherche.</p>';
+    return;
+  }
+  resultatsEl.innerHTML = hits
+    .map((hit) => {
+      const titre = escapeHtml((hit.tags || '').split(',')[0] || '');
+      if (type === 'photos') {
+        const source = hit.largeImageURL || hit.webformatURL;
+        return `<button type="button" class="editor-pixabay-item" data-pixabay-url="${escapeHtml(source)}" data-pixabay-mediatype="image" title="${titre}">
+          <img src="${escapeHtml(hit.previewURL)}" alt="${titre}" loading="lazy">
+        </button>`;
+      }
+      const videos = hit.videos || {};
+      const source = (videos.medium || videos.small || videos.tiny || {}).url;
+      const apercu = (videos.tiny || videos.small || {}).url;
+      if (!source || !apercu) return '';
+      return `<button type="button" class="editor-pixabay-item" data-pixabay-url="${escapeHtml(source)}" data-pixabay-mediatype="video" title="${titre}">
+        <video src="${escapeHtml(apercu)}" muted loop autoplay playsinline></video>
+      </button>`;
+    })
+    .join('');
+  resultatsEl.querySelectorAll('[data-pixabay-url]').forEach((btn) => {
+    btn.addEventListener('click', () => appliquerResultatPixabay(btn.dataset.pixabayUrl, btn.dataset.pixabayMediatype));
+  });
+}
+
+async function appliquerResultatPixabay(url, mediaType) {
+  if (!url) return;
+  toast('Téléchargement du média Pixabay…', 'info');
+  try {
+    const file = await chargerFichierDepuisUrl(url, mediaType === 'video' ? 'pixabay.mp4' : 'pixabay.jpg');
+    await chargerFondDepuisFichier(file);
+    afficherNomFichier('editor-bg-filename', file);
+    rafraichirPanneauApresRestauration();
+    pousserHistorique();
+    toast('Fond mis à jour depuis Pixabay.', 'success');
+  } catch (err) {
+    console.error('[editeur] application média Pixabay échouée', err);
+    toast("Impossible de charger ce média (réseau ou restriction d'accès).", 'error');
+  }
+}
+
+function bindPixabay() {
+  const chercherBtn = document.getElementById('editor-pixabay-chercher');
+  if (chercherBtn) chercherBtn.addEventListener('click', rechercherPixabay);
+  const requeteInput = document.getElementById('editor-pixabay-recherche');
+  if (requeteInput) {
+    requeteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        rechercherPixabay();
+      }
+    });
+  }
 }
 
 let editorRafId = null;
@@ -1054,6 +1147,7 @@ async function initEditeur() {
   bindAccordionUx();
   bindHistoriqueUx();
   bindReglagesIa();
+  bindPixabay();
   bindGestionProjet();
   bindBarreSelectionGroupee();
   chargerGoogleFontsEtendues();
