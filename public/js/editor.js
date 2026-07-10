@@ -852,6 +852,13 @@ function rafraichirPanneauApresRestauration() {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', hidden);
   };
+  // Sans ça, "Aucun fichier choisi" restait affiché après un chargement de
+  // projet/checkpoint/undo alors qu'un média était bel et bien restauré —
+  // seul un choix direct dans le champ mettait ce libellé à jour.
+  const majNomFichier = (id, dejaCharge, libelle) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = dejaCharge ? libelle : 'Aucun fichier choisi';
+  };
 
   const bgMode = EditorState.bgType === 'color' ? 'color' : EditorState.bgType === 'gradient' ? 'gradient' : 'media';
   setVal('editor-bg-type', bgMode);
@@ -869,12 +876,16 @@ function rafraichirPanneauApresRestauration() {
   setChecked('editor-bg-chromakey-toggle', EditorState.bgChromaKey.active);
   setVal('editor-bg-chromakey-color', EditorState.bgChromaKey.color);
   setVal('editor-bg-chromakey-tolerance', Math.round(EditorState.bgChromaKey.tolerance * 100));
+  majNomFichier('editor-bg-filename', EditorState.bgVideoEl || EditorState.bgImageEl, EditorState.bgVideoEl ? 'Vidéo chargée' : 'Image chargée');
 
   setVal('editor-audio-volume', Math.round(EditorState.audioVolume * 100));
   setVal('editor-audio-fadein', EditorState.audioFadeIn);
   setVal('editor-audio-fadeout', EditorState.audioFadeOut);
   setVal('editor-audio-trim', EditorState.audioTrimStart);
   setVal('editor-voice-volume', Math.round(EditorState.voiceVolume * 100));
+  majNomFichier('editor-audio-filename', EditorState.audioEl, 'Musique chargée');
+  majNomFichier('editor-voice-filename', EditorState.voiceEl, 'Voix off chargée');
+  majNomFichier('editor-font-filename', EditorState.fontBlob, EditorState.fontFileName || 'Police chargée');
 
   ['intro', 'outro'].forEach((prefix) => {
     const seg = EditorState[prefix];
@@ -882,6 +893,8 @@ function rafraichirPanneauApresRestauration() {
     toggleHidden(`editor-${prefix}-panel`, !seg.active);
     setVal(`editor-${prefix}-text`, seg.texte || '');
     setVal(`editor-${prefix}-duree`, seg.duree);
+    majNomFichier(`editor-${prefix}-logo-filename`, seg.logoImg, 'Logo chargé');
+    majNomFichier(`editor-${prefix}-img-filename`, seg.img, 'Image chargée');
   });
 
   setVal('editor-transition-type', EditorState.transitionType);
@@ -3200,7 +3213,12 @@ function mettreAJourOverlayZoneCapture() {
 /* -------------------------------------------------------------------- */
 /* Calques photo multiples (chacun avec sa légende et sa durée)          */
 /* -------------------------------------------------------------------- */
-function markupFilePickerPhoto(inputId, filenameId) {
+// `media`, si fourni, sert à afficher un libellé cohérent quand le fichier
+// vient d'être restauré (projet chargé, undo/redo...) plutôt qu'un choix
+// direct dans ce champ — sinon "Aucun fichier choisi" restait affiché même
+// avec un média déjà présent, laissant croire à tort que rien n'était chargé.
+function markupFilePickerPhoto(inputId, filenameId, media) {
+  const libelle = media ? (media.tagName === 'VIDEO' ? 'Vidéo chargée' : 'Image chargée') : 'Aucun fichier choisi';
   return `
     <div class="editor-file-picker-wrap">
       <label class="editor-file-picker" for="${inputId}">
@@ -3208,7 +3226,7 @@ function markupFilePickerPhoto(inputId, filenameId) {
         <span>Choisir un fichier</span>
       </label>
       <input type="file" id="${inputId}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input" multiple>
-      <span class="editor-file-name" id="${filenameId}">Aucun fichier choisi</span>
+      <span class="editor-file-name" id="${filenameId}">${libelle}</span>
     </div>
   `;
 }
@@ -3332,7 +3350,7 @@ function renderSousMediaHtml(sm, index) {
           <button type="button" class="editor-remove-btn" data-smsupprimer-for="${sm.id}" title="Supprimer">&times;</button>
         </div>
       </div>
-      ${markupFilePickerPhoto(`editor-sm-input-${sm.id}`, `editor-sm-filename-${sm.id}`)}
+      ${markupFilePickerPhoto(`editor-sm-input-${sm.id}`, `editor-sm-filename-${sm.id}`, sm.img)}
       <div class="editor-row">
         <label class="editor-mini-label">X<input type="range" data-smx-for="${sm.id}" min="0" max="100" value="${Math.round((sm.x ?? 0.5) * 100)}"></label>
         <label class="editor-mini-label">Y<input type="range" data-smy-for="${sm.id}" min="0" max="100" value="${Math.round((sm.y ?? 0.5) * 100)}"></label>
@@ -3365,7 +3383,7 @@ function renderPhotoLayerHtml(p, index) {
   return `
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
       ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
-      ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
+      ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`, p.img)}
       <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres s'affichent EN MÊME TEMPS par-dessus (composite), réglables séparément ci-dessous.</span>
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
