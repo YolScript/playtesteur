@@ -86,6 +86,22 @@ CREATE INDEX IF NOT EXISTS idx_applications_dev ON applications(developpeur_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_app ON messages(application_id);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  categorie TEXT NOT NULL CHECK (categorie IN ('Bug', 'Information')),
+  sujet TEXT NOT NULL,
+  message TEXT NOT NULL,
+  statut TEXT NOT NULL DEFAULT 'Ouvert' CHECK (statut IN ('Ouvert', 'En_Cours', 'Fermé')),
+  reponse_admin TEXT,
+  admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_statut ON tickets(statut);
 `);
 
 // Migration idempotente pour les bases déjà créées avant l'ajout de ces

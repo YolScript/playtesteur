@@ -14,6 +14,7 @@ const profileRoutes = require('./src/routes/profile');
 const appsRoutes = require('./src/routes/apps');
 const adminRoutes = require('./src/routes/admin');
 const classementRoutes = require('./src/routes/classement');
+const ticketsRoutes = require('./src/routes/tickets');
 
 const app = express();
 const PORT = parseInt(process.env.PORT, 10) || 8090;
@@ -33,6 +34,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/apps', appsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/classement', classementRoutes);
+app.use('/api/tickets', ticketsRoutes);
 
 app.use(express.static(path.join(__dirname, 'public')));
 

@@ -90,6 +90,8 @@ async function router() {
         return viewAppDetail(param);
       case 'editeur':
         return viewEditeur();
+      case 'tickets':
+        return viewTickets();
       case 'admin':
         return viewAdmin();
       case 'dashboard':
@@ -113,6 +115,7 @@ const NAV_ICONS = {
   'mes-apps': '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 3l-6 6h4v6h4v-6h4l-6-6z"/></svg>',
   editeur: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
   admin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>',
+  tickets: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12zm-3-5H7v2h10v-2zm0-4H7v2h10V7z"/></svg>',
 };
 
 function renderHeader() {
@@ -134,6 +137,7 @@ function renderHeader() {
     { route: 'mes-apps', label: 'Mes apps' },
     { route: 'dashboard', label: 'Compte' },
     { route: 'editeur', label: 'Éditeur' },
+    { route: 'tickets', label: 'Support' },
   ];
   if (state.user.role === 'administrator') {
     links.push({ route: 'admin', label: 'Admin' });
@@ -347,11 +351,17 @@ async function viewDashboard() {
         <p class="app-card-desc">Installez PlayTesteur directement sur votre téléphone.</p>
         <a class="btn-secondary" href="/downloads/playtesteur.apk" download style="display:inline-block; text-align:center; text-decoration:none;">Télécharger l'APK</a>
       </div>
+      <div class="app-card">
+        <div class="app-card-title">🎫 Contacter le support</div>
+        <p class="app-card-desc">Signalez un bug ou posez une question à l'équipe.</p>
+        <button class="btn-secondary" id="go-tickets">Ouvrir un ticket</button>
+      </div>
     </div>
   `;
 
   document.getElementById('go-catalogue').addEventListener('click', () => (location.hash = '#/catalogue'));
   document.getElementById('go-mesapps').addEventListener('click', () => (location.hash = '#/mes-apps'));
+  document.getElementById('go-tickets').addEventListener('click', () => (location.hash = '#/tickets'));
 
   document.querySelectorAll('[data-copy-mail]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -1112,6 +1122,159 @@ async function chargerMesApps(onEdit) {
 }
 
 /* ==========================================================================
+   TICKETS / SUPPORT
+   ========================================================================== */
+const BADGE_TICKET = {
+  Ouvert: '<span class="badge badge-en-cours"><span class="badge-dot"></span>Ouvert</span>',
+  En_Cours: '<span class="badge badge-attente"><span class="badge-dot"></span>En cours</span>',
+  'Fermé': '<span class="badge badge-valide"><span class="badge-dot"></span>Fermé</span>',
+};
+
+const BADGE_CATEGORIE = {
+  Bug: '<span class="badge badge-suspendu"><span class="badge-dot"></span>Bug</span>',
+  Information: '<span class="badge badge-en-cours"><span class="badge-dot"></span>Information</span>',
+};
+
+async function viewTickets() {
+  viewRoot.innerHTML = `
+    <h1 class="page-title">Support</h1>
+    <p class="page-subtitle">Signalez un bug ou contactez l'équipe pour une demande d'information.</p>
+
+    <div class="ticket-actions-bar">
+      <button class="btn-primary" id="btn-new-ticket">
+        <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        Nouveau ticket
+      </button>
+    </div>
+
+    <div class="profile-card hidden" id="ticket-form-card">
+      <div class="section-title" style="margin-top:0;">Créer un ticket</div>
+      <div id="ticket-form-msg"></div>
+      <form id="ticket-form">
+        <div class="form-group">
+          <label>Catégorie</label>
+          <div class="ticket-category-picker">
+            <label class="ticket-cat-option" data-cat="Bug">
+              <input type="radio" name="categorie" value="Bug" required>
+              <span class="ticket-cat-card">
+                <span class="ticket-cat-icon">🐛</span>
+                <span class="ticket-cat-label">Bug</span>
+                <span class="ticket-cat-desc">Signaler un problème technique</span>
+              </span>
+            </label>
+            <label class="ticket-cat-option" data-cat="Information">
+              <input type="radio" name="categorie" value="Information" required>
+              <span class="ticket-cat-card">
+                <span class="ticket-cat-icon">ℹ️</span>
+                <span class="ticket-cat-label">Information</span>
+                <span class="ticket-cat-desc">Question ou demande générale</span>
+              </span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Sujet</label>
+          <input type="text" name="sujet" placeholder="Résumez votre demande..." required minlength="3" maxlength="120" />
+        </div>
+        <div class="form-group">
+          <label>Message</label>
+          <textarea name="message" placeholder="Décrivez votre problème ou votre question en détail..." required minlength="10" maxlength="2000" rows="5"></textarea>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button type="submit" class="btn-primary" id="ticket-submit-btn">Envoyer le ticket</button>
+          <button type="button" class="btn-secondary" id="ticket-cancel-btn">Annuler</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="section-title">Mes tickets</div>
+    <div id="tickets-list"><p class="page-subtitle">Chargement...</p></div>
+  `;
+
+  const formCard = document.getElementById('ticket-form-card');
+  const ticketForm = document.getElementById('ticket-form');
+
+  document.getElementById('btn-new-ticket').addEventListener('click', () => {
+    formCard.classList.toggle('hidden');
+    if (!formCard.classList.contains('hidden')) {
+      formCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  });
+
+  document.getElementById('ticket-cancel-btn').addEventListener('click', () => {
+    formCard.classList.add('hidden');
+  });
+
+  ticketForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const btn = document.getElementById('ticket-submit-btn');
+    btn.disabled = true;
+    try {
+      await Api.post('/api/tickets', {
+        categorie: fd.get('categorie'),
+        sujet: fd.get('sujet'),
+        message: fd.get('message'),
+      });
+      toast('Ticket envoyé avec succès !', 'success');
+      formCard.classList.add('hidden');
+      ticketForm.reset();
+      chargerMesTickets();
+    } catch (err) {
+      document.getElementById('ticket-form-msg').innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  chargerMesTickets();
+}
+
+async function chargerMesTickets() {
+  const container = document.getElementById('tickets-list');
+  try {
+    const { tickets } = await Api.get('/api/tickets/mine');
+
+    if (tickets.length === 0) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-icon">🎫</div><p>Aucun ticket pour le moment. Cliquez sur "Nouveau ticket" pour contacter l'équipe.</p></div>`;
+      return;
+    }
+
+    container.innerHTML = tickets
+      .map(
+        (t) => `
+        <div class="ticket-card" data-ticket-id="${t.id}">
+          <div class="ticket-card-header">
+            <div class="ticket-card-meta">
+              ${BADGE_CATEGORIE[t.categorie] || ''}
+              ${BADGE_TICKET[t.statut] || ''}
+              <span class="ticket-id">#${t.id}</span>
+            </div>
+            <span class="ticket-date">${tempsRelatif(t.created_at)}</span>
+          </div>
+          <div class="ticket-card-title">${escapeHtml(t.sujet)}</div>
+          <div class="ticket-card-message">${escapeHtml(t.message)}</div>
+          ${
+            t.reponse_admin
+              ? `<div class="ticket-reply">
+                  <div class="ticket-reply-header">
+                    <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;flex-shrink:0;"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>
+                    <span>Réponse de ${escapeHtml(t.admin_pseudo || 'l\'admin')}</span>
+                  </div>
+                  <div class="ticket-reply-body">${escapeHtml(t.reponse_admin)}</div>
+                </div>`
+              : ''
+          }
+        </div>
+      `
+      )
+      .join('');
+  } catch (err) {
+    container.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+/* ==========================================================================
    ADMIN
    ========================================================================== */
 async function viewAdmin() {
@@ -1155,9 +1318,13 @@ async function viewAdmin() {
     <div class="profile-card" style="padding:16px;">
       <div id="activity-console"><p class="form-hint">Chargement...</p></div>
     </div>
+
+    <div class="section-title">Tickets support</div>
+    <div id="admin-tickets-list"><p class="page-subtitle">Chargement...</p></div>
   `;
 
   chargerConsoleActivite();
+  chargerAdminTickets();
 
   const usersTbody = document.getElementById('users-tbody');
   usersTbody.innerHTML = users
@@ -1378,6 +1545,85 @@ async function chargerConsoleActivite() {
     container.innerHTML = renderLogsList(logs, true);
   } catch (err) {
     container.innerHTML = `<p class="form-hint">Impossible de charger la console d'activité.</p>`;
+  }
+}
+
+async function chargerAdminTickets() {
+  const container = document.getElementById('admin-tickets-list');
+  if (!container) return;
+  try {
+    const { tickets } = await Api.get('/api/tickets/all');
+
+    if (tickets.length === 0) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-icon">🎫</div><p>Aucun ticket pour le moment.</p></div>`;
+      return;
+    }
+
+    container.innerHTML = tickets
+      .map(
+        (t) => `
+        <div class="ticket-card ticket-card-admin" data-ticket-id="${t.id}">
+          <div class="ticket-card-header">
+            <div class="ticket-card-meta">
+              ${BADGE_CATEGORIE[t.categorie] || ''}
+              ${BADGE_TICKET[t.statut] || ''}
+              <span class="ticket-id">#${t.id}</span>
+              <span class="ticket-author">par ${escapeHtml(t.user_pseudo)} (${escapeHtml(t.user_email)})</span>
+            </div>
+            <span class="ticket-date">${tempsRelatif(t.created_at)}</span>
+          </div>
+          <div class="ticket-card-title">${escapeHtml(t.sujet)}</div>
+          <div class="ticket-card-message">${escapeHtml(t.message)}</div>
+          ${
+            t.reponse_admin
+              ? `<div class="ticket-reply">
+                  <div class="ticket-reply-header">
+                    <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;flex-shrink:0;"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>
+                    <span>Réponse de ${escapeHtml(t.admin_pseudo || 'admin')}</span>
+                  </div>
+                  <div class="ticket-reply-body">${escapeHtml(t.reponse_admin)}</div>
+                </div>`
+              : ''
+          }
+          <div class="ticket-admin-controls">
+            <form class="ticket-reply-form" data-ticket-reply="${t.id}">
+              <textarea name="reponse" placeholder="Répondre au ticket..." rows="2" maxlength="2000">${escapeHtml(t.reponse_admin || '')}</textarea>
+              <div class="ticket-reply-actions">
+                <select name="statut">
+                  <option value="Ouvert" ${t.statut === 'Ouvert' ? 'selected' : ''}>Ouvert</option>
+                  <option value="En_Cours" ${t.statut === 'En_Cours' ? 'selected' : ''}>En cours</option>
+                  <option value="Fermé" ${t.statut === 'Fermé' ? 'selected' : ''}>Fermé</option>
+                </select>
+                <button type="submit" class="btn-primary btn-xs">Répondre & mettre à jour</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+
+    container.querySelectorAll('[data-ticket-reply]').forEach((form) => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const ticketId = form.dataset.ticketReply;
+        const reponse = form.reponse.value.trim();
+        const statut = form.statut.value;
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+          await Api.post(`/api/tickets/${ticketId}/reply`, { reponse, statut });
+          toast('Ticket mis à jour.', 'success');
+          chargerAdminTickets();
+        } catch (err) {
+          toast(err.message, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
 }
 
