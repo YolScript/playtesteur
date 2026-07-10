@@ -46,15 +46,11 @@ const EditorState = {
   textBlocks: [],
 
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
-  // État de l'export : quand `exporting` est actif, `avancerPlayback` freine
-  // l'avancée de la timeline (et des médias audio/vidéo) via
-  // `exportPlaybackRate` si le rendu réel n'arrive pas à suivre le FPS
-  // demandé, plutôt que de sacrifier des images — l'export prend alors
-  // plus de temps réel mais reste complet et fluide au FPS choisi.
+  // État de l'export : la timeline avance toujours en temps réel (1x),
+  // identique à une lecture normale, pour que la durée exportée corresponde
+  // exactement à `dureeTotale` et reste synchronisée avec l'audio.
   exporting: false,
   exportFps: 30,
-  exportPlaybackRate: 1,
-  _exportRafTs: null,
   // Mode IA : remplace le rendu visuel de chaque calque par un simple
   // cadre pointillé + label (id, dimensions) — pour qu'une IA pilotant
   // l'éditeur lise la disposition sans avoir à interpréter une image.
@@ -417,7 +413,7 @@ function avancerPlayback(dureeTotale) {
   const now = performance.now();
   if (EditorState.playback.playing) {
     if (EditorState.playback.lastFrameTs != null) {
-      const delta = ((now - EditorState.playback.lastFrameTs) / 1000) * (EditorState.exporting ? EditorState.exportPlaybackRate : 1);
+      const delta = (now - EditorState.playback.lastFrameTs) / 1000;
       EditorState.playback.currentTime += delta;
       if (EditorState.playback.currentTime >= dureeTotale) {
         EditorState.playback.currentTime = dureeTotale > 0 ? dureeTotale - 0.001 : 0;
@@ -1721,41 +1717,9 @@ function appliquerEffetTransition(layerName, progress, direction) {
   }
 }
 
-// Applique le ralentissement d'export à tous les médias en cours de
-// lecture, pour qu'ils restent synchronisés avec la timeline freinée.
-function appliquerExportPlaybackRate(rate) {
-  const r = Math.max(0.1, Math.min(1, rate));
-  if (EditorState.audioEl) EditorState.audioEl.playbackRate = r;
-  if (EditorState.voiceEl) EditorState.voiceEl.playbackRate = r;
-  if (EditorState.bgVideoEl) EditorState.bgVideoEl.playbackRate = r;
-  EditorState.photos.forEach((p) => {
-    if (p.img && p.img.tagName === 'VIDEO') p.img.playbackRate = r;
-    if (p.bgOverrideVideoEl) p.bgOverrideVideoEl.playbackRate = r;
-  });
-}
-
-// Mesure, pendant un export, l'écart entre le temps réel écoulé entre deux
-// images et le budget du FPS demandé. Si le rendu (beaucoup de photos,
-// d'effets Saber/spectre, de bloom…) est plus lent que ce budget, réduit
-// `exportPlaybackRate` (lissé) pour ralentir la timeline et les médias en
-// conséquence — l'export dure alors plus longtemps en temps réel, mais
-// aucune image n'est sacrifiée et le FPS choisi est respecté.
-function ajusterCadenceExport() {
-  const nowRaf = performance.now();
-  if (EditorState._exportRafTs != null) {
-    const frameDelta = nowRaf - EditorState._exportRafTs;
-    const budget = 1000 / (Number(EditorState.exportFps) || 30);
-    const cible = Math.min(1, budget / Math.max(frameDelta, 0.001));
-    EditorState.exportPlaybackRate = EditorState.exportPlaybackRate * 0.85 + cible * 0.15;
-    appliquerExportPlaybackRate(EditorState.exportPlaybackRate);
-  }
-  EditorState._exportRafTs = nowRaf;
-}
-
 function renderEditorFrame() {
   const ts = EditorState.three;
   if (!ts) return;
-  if (EditorState.exporting) ajusterCadenceExport();
 
   const { segments, dureeTotale } = calculerTimeline();
   avancerPlayback(dureeTotale);
@@ -3242,10 +3206,13 @@ function basculerBoutonsExport(actifs) {
   });
 }
 
-// Capture la timeline en webm (vidéo + audio) au FPS demandé, en freinant
-// automatiquement la lecture (voir `ajusterCadenceExport`) si le rendu réel
-// n'arrive pas à suivre — l'export dure alors plus longtemps en temps réel
-// plutôt que de perdre des images. Réutilisé par les exports MP4 et GIF.
+// Capture la timeline en webm (vidéo + audio) au FPS demandé, en temps réel
+// (comme le ferait une lecture normale) : `captureStream(fps)` échantillonne
+// le canvas à un rythme réel fixe et répète la dernière image dessinée si le
+// rendu (bloom, particules…) n'a pas eu le temps de produire la suivante —
+// jamais de perte de durée ni de désynchronisation audio, tout au plus une
+// image répétée sur une scène très chargée. Réutilisé par les exports MP4 et
+// GIF.
 async function capturerFluxWebm({ fps, setProgress }) {
   const { dureeTotale } = calculerTimeline();
   let audioCtx = null;
@@ -3292,8 +3259,6 @@ async function capturerFluxWebm({ fps, setProgress }) {
 
   EditorState.exporting = true;
   EditorState.exportFps = fps;
-  EditorState.exportPlaybackRate = 1;
-  EditorState._exportRafTs = null;
   EditorState.playback.currentTime = 0;
   EditorState.playback.lastFrameTs = null;
   EditorState.playback.playing = true;
@@ -3305,13 +3270,7 @@ async function capturerFluxWebm({ fps, setProgress }) {
 
   const tick = setInterval(() => {
     const frac = dureeTotale > 0 ? EditorState.playback.currentTime / dureeTotale : 0;
-    const ralenti = EditorState.exportPlaybackRate < 0.92;
-    setProgress(
-      Math.min(0.5, frac * 0.5),
-      ralenti
-        ? `Rendu en cours (ralenti pour garder ${fps} im/s)… ${Math.round(frac * 100)}%`
-        : undefined
-    );
+    setProgress(Math.min(0.5, frac * 0.5));
   }, 100);
 
   await new Promise((resolve) => {
@@ -3329,7 +3288,6 @@ async function capturerFluxWebm({ fps, setProgress }) {
   if (EditorState.audioEl) EditorState.audioEl.pause();
   if (EditorState.voiceEl) EditorState.voiceEl.pause();
   EditorState.exporting = false;
-  appliquerExportPlaybackRate(1);
   await finEnregistrement;
 
   return new Blob(chunks, { type: 'video/webm' });

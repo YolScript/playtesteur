@@ -1466,7 +1466,7 @@ function viewEditeur() {
                 <option value="30" selected>30 im/s (recommandé)</option>
                 <option value="60">60 im/s (le plus fluide)</option>
               </select>
-              <span class="form-hint">Un projet avec beaucoup de photos/effets peut rendre l'export plus long que la durée de la vidéo : c'est normal, l'éditeur ralentit le rendu pour garder le nombre d'images par seconde choisi plutôt que de perdre en fluidité.</span>
+              <span class="form-hint">La vidéo exportée dure toujours exactement la durée de votre montage (intro + photos + outro), quel que soit le temps que prend le rendu. Sur une scène très chargée (beaucoup d'effets), certaines images peuvent être répétées à l'écran, mais la durée et l'audio restent corrects.</span>
             </div>
           </div>
         </details>
