@@ -4908,13 +4908,25 @@ function nomsFormeLayerNames() {
   return EditorState.shapes.map((f) => `forme-${f.id}`);
 }
 
+// Médias superposés du calque photo actif — uniquement ceux-là sont
+// affichés/glissables à un instant donné (voir mettreAJourMediasSuperposes).
+function nomsSousMediaLayerNames() {
+  const p = calquePhotoActif();
+  return p ? (p.sousMedias || []).map((sm) => `photo-extra-${sm.id}`) : [];
+}
+
 function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
     const layers = EditorState.three.layers;
     const textLayerNames = nomsTextLayerNames();
     const formeLayerNames = nomsFormeLayerNames();
+    const smLayerNames = nomsSousMediaLayerNames();
     const textHit = raycastLayer(canvas, e, textLayerNames);
     const formeHit = !textHit && raycastLayer(canvas, e, formeLayerNames);
+    // Les médias superposés sont vérifiés avant la photo principale : ils
+    // sont sémantiquement "au-dessus" et doivent rester attrapables même
+    // s'ils recouvrent une partie du média principal.
+    const smHit = !textHit && !formeHit && raycastLayer(canvas, e, smLayerNames);
     if (textHit) {
       const id = Number(textLayerNames.find((n) => layers[n] && layers[n].mesh === textHit.object).replace('text-', ''));
       const b = EditorState.textBlocks.find((tb) => tb.id === id);
@@ -4923,6 +4935,11 @@ function bindEditorDrag3D(canvas) {
       const id = Number(formeLayerNames.find((n) => layers[n] && layers[n].mesh === formeHit.object).replace('forme-', ''));
       const f = EditorState.shapes.find((s) => s.id === id);
       if (f && !f.verrouille) EditorState.dragging = { type: 'forme', id };
+    } else if (smHit) {
+      const id = Number(smLayerNames.find((n) => layers[n] && layers[n].mesh === smHit.object).replace('photo-extra-', ''));
+      const p = calquePhotoActif();
+      const sm = p && (p.sousMedias || []).find((s) => s.id === id);
+      if (sm && !sm.verrouille) EditorState.dragging = { type: 'sousmedia', id, parentId: p.id };
     } else if (layers.caption && layers.caption.mesh.visible && raycastLayer(canvas, e, ['caption'])) {
       const p = calquePhotoActif();
       if (p && !p.verrouille) EditorState.dragging = { type: 'caption', id: p.id };
@@ -4936,7 +4953,7 @@ function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointermove', (e) => {
     if (!EditorState.dragging) {
       const survole =
-        raycastLayer(canvas, e, [...nomsTextLayerNames(), ...nomsFormeLayerNames(), 'caption', 'photo']) !== null;
+        raycastLayer(canvas, e, [...nomsTextLayerNames(), ...nomsFormeLayerNames(), ...nomsSousMediaLayerNames(), 'caption', 'photo']) !== null;
       canvas.style.cursor = survole ? 'grab' : 'default';
       return;
     }
@@ -4948,6 +4965,15 @@ function bindEditorDrag3D(canvas) {
         const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
         b.x = snap.fx;
         b.y = snap.fy;
+      }
+    } else if (EditorState.dragging.type === 'sousmedia') {
+      const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.parentId);
+      const sm = p && (p.sousMedias || []).find((s) => s.id === EditorState.dragging.id);
+      const frac = sm && pointerToFraction(canvas, e, sm.z ?? 0);
+      if (sm && frac) {
+        const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
+        sm.x = snap.fx;
+        sm.y = snap.fy;
       }
     } else if (EditorState.dragging.type === 'forme') {
       const f = EditorState.shapes.find((s) => s.id === EditorState.dragging.id);
