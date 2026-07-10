@@ -344,6 +344,7 @@ async function viewDashboard() {
                       <span class="mail-detail-status">${statusIcon} ${statusText}</span>
                     </div>
                     <div class="mail-detail-email" ${!user.masquer_infos && m.google_group_email ? `data-copy-detail-mail="${escapeHtml(m.google_group_email)}" title="Cliquer pour copier"` : ''}>${emailDisplay}</div>
+                    ${m.group_join_url ? `<a href="${escapeHtml(m.group_join_url)}" target="_blank" rel="noopener" class="form-hint" style="text-decoration:underline;">👥 Rejoindre le groupe Google (si pas encore fait)</a>` : ''}
                     <div class="mail-detail-date">Rejoint ${tempsRelatif(m.date_rejoint)}</div>
                   </div>
                 </div>`;
@@ -658,6 +659,9 @@ async function viewAppDetail(id) {
         try {
           const r = await Api.post(`/api/apps/${app.id}/join`);
           toast(r.message || 'Accès accordé.', 'success');
+          // Groupe non géré par l'API (groupe Google gratuit) : ouvrir la
+          // page du groupe pour que le testeur clique "Rejoindre le groupe".
+          if (r.join_url) window.open(r.join_url, '_blank', 'noopener');
           viewAppDetail(id);
         } catch (err) {
           document.getElementById('detail-msg').innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
@@ -693,6 +697,11 @@ function renderTesteurBloc(app, dejaRejoint, dejaValide) {
       <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">3</span>Laisser un avis avec votre pseudo Play Store</div>
       <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">4</span>Vérification automatique &amp; gain du mail actif</div>
     </div>
+    ${
+      dejaRejoint && app.group_join_url
+        ? `<a class="btn-secondary btn-block" href="${escapeHtml(app.group_join_url)}" target="_blank" rel="noopener" style="margin-bottom:10px; text-align:center; display:block;">👥 Rejoindre le groupe Google (obligatoire pour l'accès testeur)</a>`
+        : ''
+    }
     ${
       dejaValide
         ? `<p class="form-success">Test validé pour cette application. Elle ne réapparaîtra plus dans votre catalogue.</p>`
@@ -899,6 +908,17 @@ async function viewMesApps() {
           <label>Description</label>
           <div id="apercu-description" class="readonly-field">—</div>
         </div>
+        <div class="form-group">
+          <label>Groupe Google de testeurs (gratuit, recommandé)</label>
+          <input type="text" name="google_group_email" placeholder="mon-app-testeurs@googlegroups.com" />
+          <p class="form-hint" style="margin-top:6px;">
+            Créez gratuitement un groupe sur <a href="https://groups.google.com/creategroup" target="_blank" rel="noopener">groups.google.com</a> (aucun abonnement ni domaine requis) :
+            1) Nom du groupe, puis dans "Qui peut rejoindre le groupe" choisissez <strong>« Tout utilisateur du Web peut demander à rejoindre »</strong> (ou « peut rejoindre » pour un accès immédiat).
+            2) Collez ici l'adresse du groupe (xxx@googlegroups.com).
+            3) Dans Play Console → Tests fermés → Testeurs, cochez "Groupes" et collez la même adresse.
+            Chaque testeur PlayTesteur recevra alors un bouton "Rejoindre le groupe" qui active son accès en un clic.
+          </p>
+        </div>
         <div style="display:flex; gap:10px;">
           <button type="submit" class="btn-primary" id="submit-form-btn">Créer le groupe de test</button>
           <button type="button" class="btn-secondary" id="btn-cancel-submit">Annuler</button>
@@ -953,6 +973,7 @@ async function viewMesApps() {
     submitForm.reset();
     submitForm.dataset.editingId = app.id;
     submitForm.package_name.value = app.package_name || '';
+    submitForm.google_group_email.value = app.google_group_email || '';
     appliquerApercuFiche(app);
     submitCardTitle.textContent = `Modifier "${app.nom_application}"`;
     submitFormBtn.textContent = 'Enregistrer les modifications';
@@ -1020,6 +1041,7 @@ async function viewMesApps() {
       description: fd.get('description'),
       screenshots: JSON.parse(submitForm.dataset.screenshots || '[]'),
       video_url: submitForm.dataset.videoUrl || '',
+      google_group_email: (fd.get('google_group_email') || '').trim(),
     };
     const editingId = submitForm.dataset.editingId;
     try {

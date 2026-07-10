@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db/init');
 const { requireAuth } = require('../middleware/auth');
 const { publicUser } = require('../services/serialize');
+const googleGroups = require('../services/googleGroups');
 
 const router = express.Router();
 
@@ -50,6 +51,12 @@ function listeMails(user) {
       id: r.id,
       nom_application: r.nom_application,
       google_group_email: r.google_group_email,
+      // Lien "Rejoindre le groupe" pour les groupes non gérés par l'API
+      // (groupes @googlegroups.com gratuits) : l'adhésion se fait par le
+      // testeur lui-même, ce lien doit donc rester accessible ici.
+      group_join_url: googleGroups.estGroupeGere(r.google_group_email)
+        ? null
+        : googleGroups.urlAdhesion(r.google_group_email),
       statut: r.statut,
       statut_visuel,
       raison,

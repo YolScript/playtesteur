@@ -93,4 +93,22 @@ async function retirerMembre(groupEmail, userEmail) {
   }
 }
 
-module.exports = { devMode, creerGroupe, ajouterMembre, retirerMembre };
+// Groupe "externe" = fourni par le développeur (typiquement un groupe grand
+// public xxx@googlegroups.com créé gratuitement sur groups.google.com, sans
+// Google Workspace ni domaine). L'API Admin SDK ne peut PAS gérer ses
+// membres : l'adhésion passe par le testeur lui-même via l'URL du groupe
+// (réglage du groupe : "Qui peut rejoindre : tout le monde sur le web").
+function estGroupeGere(groupEmail) {
+  if (devMode) return false;
+  return !!groupEmail && groupEmail.toLowerCase().endsWith(`@${String(DOMAIN).toLowerCase()}`);
+}
+
+// URL de la page du groupe où le testeur clique "Rejoindre le groupe".
+function urlAdhesion(groupEmail) {
+  if (!groupEmail || !groupEmail.includes('@')) return null;
+  const [local, domaine] = groupEmail.toLowerCase().split('@');
+  if (domaine === 'googlegroups.com') return `https://groups.google.com/g/${local}`;
+  return `https://groups.google.com/a/${domaine}/g/${local}`;
+}
+
+module.exports = { devMode, creerGroupe, ajouterMembre, retirerMembre, estGroupeGere, urlAdhesion };

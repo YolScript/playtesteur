@@ -1,4 +1,5 @@
 const { MAX_MAILS, scoreMinPour } = require('./scoring');
+const googleGroups = require('./googleGroups');
 
 // Version sûre d'un utilisateur enrichie des infos de palier utiles à
 // l'affichage de la jauge côté client.
@@ -48,6 +49,12 @@ function publicApplication(app) {
     statut: app.statut,
     screenshots,
     video_url: app.video_url,
+    google_group_email: app.google_group_email,
+    // URL "Rejoindre le groupe" quand le groupe n'est pas géré par l'API
+    // (groupe @googlegroups.com gratuit fourni par le développeur).
+    group_join_url: googleGroups.estGroupeGere(app.google_group_email)
+      ? null
+      : googleGroups.urlAdhesion(app.google_group_email),
     created_at: app.created_at,
   };
 }

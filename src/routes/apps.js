@@ -105,10 +105,28 @@ router.post('/import', requireAuth, async (req, res) => {
   }
 });
 
+// Valide une adresse de groupe fournie par le développeur (groupe Google
+// grand public gratuit, ou groupe Workspace s'il en a un).
+function validerGroupeFourni(email) {
+  const e = (email || '').trim().toLowerCase();
+  if (!e) return null;
+  if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(e)) {
+    throw new Error("L'adresse du groupe Google n'est pas une adresse email valide.");
+  }
+  return e;
+}
+
 router.post('/', requireAuth, async (req, res) => {
-  const { nom_application, description, logo_url, package_name, screenshots, video_url } = req.body || {};
+  const { nom_application, description, logo_url, package_name, screenshots, video_url, google_group_email } = req.body || {};
   if (!nom_application || !nom_application.trim()) {
     return res.status(400).json({ erreur: "Le nom de l'application est requis." });
+  }
+
+  let groupeFourni;
+  try {
+    groupeFourni = validerGroupeFourni(google_group_email);
+  } catch (err) {
+    return res.status(400).json({ erreur: err.message });
   }
 
   try {
@@ -124,7 +142,10 @@ router.post('/', requireAuth, async (req, res) => {
     );
     const appId = info.lastInsertRowid;
 
-    const groupEmail = await googleGroups.creerGroupe(appId, nom_application.trim());
+    // Groupe fourni par le développeur (gratuit, sans Workspace) prioritaire ;
+    // sinon création automatique via l'API si un Workspace est configuré
+    // (en MODE DEV le groupe auto-créé est fictif et ne sert qu'aux tests).
+    const groupEmail = groupeFourni || (await googleGroups.creerGroupe(appId, nom_application.trim()));
     db.prepare('UPDATE applications SET google_group_email = ? WHERE id = ?').run(groupEmail, appId);
 
     const app = findAppById.get(appId);
@@ -137,7 +158,7 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // Édition des infos d'une application par son créateur (nom, description,
-// logo, package). Le groupe Google et le compteur de testeurs ne changent pas.
+// logo, package, groupe de testeurs). Le compteur de testeurs ne change pas.
 router.put('/:id', requireAuth, (req, res) => {
   const app = findAppById.get(req.params.id);
   if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
@@ -145,13 +166,25 @@ router.put('/:id', requireAuth, (req, res) => {
     return res.status(403).json({ erreur: "Vous n'êtes pas le créateur de cette application." });
   }
 
-  const { nom_application, description, logo_url, package_name, screenshots, video_url } = req.body || {};
+  const { nom_application, description, logo_url, package_name, screenshots, video_url, google_group_email } = req.body || {};
   if (!nom_application || !nom_application.trim()) {
     return res.status(400).json({ erreur: "Le nom de l'application est requis." });
   }
 
+  // Le développeur peut renseigner/corriger son groupe de testeurs après
+  // coup (indispensable pour brancher un vrai groupe @googlegroups.com sur
+  // une app créée avant cette fonctionnalité). Champ absent = inchangé.
+  let groupeFourni = app.google_group_email;
+  if (google_group_email !== undefined) {
+    try {
+      groupeFourni = validerGroupeFourni(google_group_email) || app.google_group_email;
+    } catch (err) {
+      return res.status(400).json({ erreur: err.message });
+    }
+  }
+
   db.prepare(
-    'UPDATE applications SET nom_application = ?, description = ?, logo_url = ?, package_name = ?, screenshots = ?, video_url = ? WHERE id = ?'
+    'UPDATE applications SET nom_application = ?, description = ?, logo_url = ?, package_name = ?, screenshots = ?, video_url = ?, google_group_email = ? WHERE id = ?'
   ).run(
     nom_application.trim(),
     description || null,
@@ -159,6 +192,7 @@ router.put('/:id', requireAuth, (req, res) => {
     package_name || null,
     Array.isArray(screenshots) && screenshots.length ? JSON.stringify(screenshots) : null,
     video_url || null,
+    groupeFourni,
     app.id
   );
 
@@ -166,7 +200,12 @@ router.put('/:id', requireAuth, (req, res) => {
   res.json({ application: publicApplication(findAppById.get(app.id)) });
 });
 
-// Rejoindre le test d'une application : ajout immédiat au Google Group.
+// Rejoindre le test d'une application. Deux cas :
+// - Groupe géré par l'API (Workspace configuré) : ajout automatique du mail.
+// - Groupe externe (@googlegroups.com fourni par le développeur, gratuit) :
+//   l'API ne peut pas ajouter le membre — on renvoie l'URL du groupe et le
+//   testeur clique lui-même "Rejoindre le groupe" (adhésion en un clic si le
+//   groupe est réglé sur "tout le monde peut rejoindre").
 router.post('/:id/join', requireAuth, async (req, res) => {
   const app = findAppById.get(req.params.id);
   if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
@@ -183,12 +222,21 @@ router.post('/:id/join', requireAuth, async (req, res) => {
   const user = findUserById.get(req.session.userId);
 
   try {
-    if (app.google_group_email) {
+    const groupeGere = googleGroups.estGroupeGere(app.google_group_email);
+    if (app.google_group_email && groupeGere) {
       await googleGroups.ajouterMembre(app.google_group_email, user.email);
     }
     insertHistorique.run(req.session.userId, app.id);
     logActivity(req.session.userId, 'A rejoint un test', app.nom_application);
-    res.status(201).json({ ok: true, message: 'Accès accordé. Installez l’application puis laissez un avis pour valider votre test.' });
+
+    const joinUrl = !groupeGere ? googleGroups.urlAdhesion(app.google_group_email) : null;
+    res.status(201).json({
+      ok: true,
+      join_url: joinUrl,
+      message: joinUrl
+        ? 'Dernière étape : cliquez sur "Rejoindre le groupe Google" pour activer votre accès testeur, puis installez l’application et laissez un avis.'
+        : 'Accès accordé. Installez l’application puis laissez un avis pour valider votre test.',
+    });
   } catch (err) {
     console.error('[apps.join]', err);
     res.status(500).json({ erreur: 'Impossible de vous ajouter au groupe de test pour le moment.' });
