@@ -1446,6 +1446,15 @@ function viewEditeur() {
             <div class="editor-row" style="justify-content:flex-end;">
               <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
             </div>
+            <div class="editor-bulk-bar hidden" id="editor-photos-bulk-bar">
+              <span id="editor-photos-bulk-count">0 sélectionné(s)</span>
+              <div class="editor-row" style="gap:6px;">
+                <button type="button" data-bulk="photo" data-bulk-action="lock">Verrouiller</button>
+                <button type="button" data-bulk="photo" data-bulk-action="hide">Masquer</button>
+                <button type="button" data-bulk="photo" data-bulk-action="duplicate">Dupliquer</button>
+                <button type="button" data-bulk="photo" data-bulk-action="delete" class="editor-remove-btn">Supprimer</button>
+              </div>
+            </div>
             <div id="editor-photos-list" class="editor-photos-list"></div>
           </div>
         </details>
@@ -1475,6 +1484,15 @@ function viewEditeur() {
             </div>
             <div class="editor-row" style="justify-content:flex-end;">
               <button type="button" id="editor-add-textblock" class="editor-add-btn">+ Ajouter un texte</button>
+            </div>
+            <div class="editor-bulk-bar hidden" id="editor-textblocks-bulk-bar">
+              <span id="editor-textblocks-bulk-count">0 sélectionné(s)</span>
+              <div class="editor-row" style="gap:6px;">
+                <button type="button" data-bulk="textblock" data-bulk-action="lock">Verrouiller</button>
+                <button type="button" data-bulk="textblock" data-bulk-action="hide">Masquer</button>
+                <button type="button" data-bulk="textblock" data-bulk-action="duplicate">Dupliquer</button>
+                <button type="button" data-bulk="textblock" data-bulk-action="delete" class="editor-remove-btn">Supprimer</button>
+              </div>
             </div>
             <div id="editor-textblocks-list" class="editor-photos-list"></div>
           </div>

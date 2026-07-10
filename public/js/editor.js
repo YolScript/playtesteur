@@ -974,6 +974,7 @@ async function initEditeur() {
   bindHistoriqueUx();
   bindReglagesIa();
   bindGestionProjet();
+  bindBarreSelectionGroupee();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
 
@@ -2813,15 +2814,22 @@ function markupFilePickerPhoto(inputId, filenameId) {
   `;
 }
 
-// En-tête commun aux calques (photo ou bloc de texte) : nom éditable,
-// verrouillage, visibilité, duplication et suppression. `typeRemove` fixe
-// l'attribut data-remove-* correct pour rester compatible avec les
-// gestionnaires de suppression déjà en place pour chaque type de calque.
+// Sélection multiple courante pour les actions groupées — état d'interface
+// éphémère (pas de session à session), donc volontairement hors
+// EditorState/historique : coché/décoché n'est pas une action "undo-able".
+const SelectionCalques = { photo: new Set(), textblock: new Set() };
+
+// En-tête commun aux calques (photo ou bloc de texte) : case de sélection,
+// nom éditable, verrouillage, visibilité, duplication et suppression.
+// `typeRemove` fixe l'attribut data-remove-* correct (compatible avec les
+// gestionnaires déjà en place) et sert aussi de clé dans SelectionCalques.
 function renderCalqueHeadHtml(item, nomParDefaut, typeRemove) {
   const estVerrouille = !!item.verrouille;
   const estCache = item.visible === false;
+  const estSelectionne = SelectionCalques[typeRemove].has(item.id);
   return `
     <div class="editor-photo-layer-head">
+      <input type="checkbox" class="editor-calque-select" data-calquesel-for="${item.id}" data-calquesel-type="${typeRemove}" ${estSelectionne ? 'checked' : ''} title="Sélectionner pour une action groupée">
       <span class="editor-photo-layer-title" title="Glisser pour réordonner">&#9776;</span>
       <input type="text" class="editor-calque-nom" data-calquenom-for="${item.id}" value="${escapeHtml(item.nom || '')}" placeholder="${escapeHtml(nomParDefaut)}" title="Renommer ce calque">
       <div class="editor-calque-head-actions">
@@ -2832,6 +2840,74 @@ function renderCalqueHeadHtml(item, nomParDefaut, typeRemove) {
       </div>
     </div>
   `;
+}
+
+function majBarreSelectionGroupee(type) {
+  const set = SelectionCalques[type];
+  const conteneurId = type === 'photo' ? 'editor-photos-bulk-bar' : 'editor-textblocks-bulk-bar';
+  const compteId = type === 'photo' ? 'editor-photos-bulk-count' : 'editor-textblocks-bulk-count';
+  const bar = document.getElementById(conteneurId);
+  const compteEl = document.getElementById(compteId);
+  if (bar) bar.classList.toggle('hidden', set.size === 0);
+  if (compteEl) compteEl.textContent = `${set.size} sélectionné${set.size > 1 ? 's' : ''}`;
+}
+
+// Purge la sélection des id qui n'existent plus (calque supprimé
+// individuellement) et resynchronise la barre d'actions groupées — appelé à
+// chaque reconstruction de liste.
+function purgerSelectionGroupee(type, listeActuelle) {
+  const set = SelectionCalques[type];
+  const idsActuels = new Set(listeActuelle.map((x) => x.id));
+  [...set].forEach((id) => {
+    if (!idsActuels.has(id)) set.delete(id);
+  });
+  majBarreSelectionGroupee(type);
+}
+
+// Applique une action (verrouiller/masquer/dupliquer/supprimer) à tous les
+// calques actuellement sélectionnés pour ce type, en un seul passage
+// d'historique plutôt qu'un par calque.
+function executerActionGroupee(type, action) {
+  const set = SelectionCalques[type];
+  const ids = [...set];
+  if (!ids.length) return;
+  if (action === 'delete' && !confirm(`Supprimer ${ids.length} calque(s) sélectionné(s) ?`)) return;
+
+  const estPhoto = type === 'photo';
+  const liste = estPhoto ? EditorState.photos : EditorState.textBlocks;
+
+  if (action === 'lock') {
+    liste.forEach((item) => {
+      if (set.has(item.id)) item.verrouille = true;
+    });
+  } else if (action === 'hide') {
+    liste.forEach((item) => {
+      if (set.has(item.id)) item.visible = false;
+    });
+  } else if (action === 'duplicate') {
+    ids.forEach((id) => {
+      const index = liste.findIndex((item) => item.id === id);
+      if (index === -1) return;
+      const original = liste[index];
+      const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null, verrouille: false };
+      liste.splice(index + 1, 0, copie);
+    });
+  } else if (action === 'delete') {
+    const restants = liste.filter((item) => !set.has(item.id) || item.verrouille);
+    liste.length = 0;
+    liste.push(...restants);
+  }
+
+  set.clear();
+  if (estPhoto) rafraichirListePhotos();
+  else rafraichirListeTextBlocks();
+  pousserHistorique();
+}
+
+function bindBarreSelectionGroupee() {
+  document.querySelectorAll('[data-bulk-action]').forEach((btn) => {
+    btn.addEventListener('click', () => executerActionGroupee(btn.dataset.bulk, btn.dataset.bulkAction));
+  });
 }
 
 function renderPhotoLayerHtml(p, index) {
@@ -2986,6 +3062,15 @@ function renderPhotoLayerHtml(p, index) {
 // dupliquer) — `rafraichirFn` reconstruit la liste (pour mettre à jour les
 // icônes), `dupliquerFn` clone le calque juste après lui.
 function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn) {
+  const selCheckbox = document.querySelector(`[data-calquesel-for="${item.id}"]`);
+  if (selCheckbox) {
+    selCheckbox.addEventListener('change', (e) => {
+      const type = selCheckbox.dataset.calqueselType;
+      if (e.target.checked) SelectionCalques[type].add(item.id);
+      else SelectionCalques[type].delete(item.id);
+      majBarreSelectionGroupee(type);
+    });
+  }
   const nomInput = document.querySelector(`[data-calquenom-for="${item.id}"]`);
   if (nomInput) {
     nomInput.addEventListener('change', (e) => {
@@ -3259,6 +3344,7 @@ function rafraichirListePhotos() {
     EditorState.photos.map((p, i) => renderPhotoLayerHtml(p, i)).join('') ||
     '<p class="form-hint">Aucune photo ajoutée pour le moment.</p>';
   bindPhotoLayerEvents();
+  purgerSelectionGroupee('photo', EditorState.photos);
 }
 
 function creerPhotoParDefaut(id) {
@@ -3526,6 +3612,7 @@ function rafraichirListeTextBlocks() {
     EditorState.textBlocks.map((b, i) => renderTextBlockHtml(b, i)).join('') ||
     '<p class="form-hint">Aucun texte ajouté pour le moment.</p>';
   bindTextBlockEvents();
+  purgerSelectionGroupee('textblock', EditorState.textBlocks);
 }
 
 function creerTextBlockParDefaut(id, decalage) {
