@@ -1507,6 +1507,26 @@ function viewEditeur() {
         </details>
 
         <details class="editor-accordion">
+          <summary>Formes &amp; stickers</summary>
+          <div class="editor-accordion-body">
+            <span class="form-hint">Rectangles, cercles, étoiles, flèches... ou stickers emoji, superposés au visuel à tout moment (indépendants des photos, comme les blocs de texte).</span>
+            <div class="editor-row" style="justify-content:flex-end;">
+              <button type="button" id="editor-add-shape" class="editor-add-btn">+ Ajouter une forme/sticker</button>
+            </div>
+            <div class="editor-bulk-bar hidden" id="editor-shapes-bulk-bar">
+              <span id="editor-shapes-bulk-count">0 sélectionné(s)</span>
+              <div class="editor-row" style="gap:6px;">
+                <button type="button" data-bulk="forme" data-bulk-action="lock">Verrouiller</button>
+                <button type="button" data-bulk="forme" data-bulk-action="hide">Masquer</button>
+                <button type="button" data-bulk="forme" data-bulk-action="duplicate">Dupliquer</button>
+                <button type="button" data-bulk="forme" data-bulk-action="delete" class="editor-remove-btn">Supprimer</button>
+              </div>
+            </div>
+            <div id="editor-shapes-list" class="editor-photos-list"></div>
+          </div>
+        </details>
+
+        <details class="editor-accordion">
           <summary>Effets lumineux (glow)</summary>
           <div class="editor-accordion-body">
             <label class="editor-toggle-row"><input type="checkbox" id="editor-bloom-toggle"><span class="editor-toggle-switch"></span><span>Activer le halo lumineux</span></label>

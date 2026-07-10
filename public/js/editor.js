@@ -142,7 +142,7 @@ let elementIdCounter = 0;
 const CHAMPS_HISTORIQUE = [
   'bgType', 'bgColor', 'bgGradient', 'bgAdjust', 'overlay', 'bgChromaKey',
   'audioVolume', 'audioFadeIn', 'audioFadeOut', 'audioTrimStart', 'voiceVolume',
-  'fontFamily', 'intro', 'outro', 'photos', 'textBlocks', 'imageExportFormat',
+  'fontFamily', 'intro', 'outro', 'photos', 'textBlocks', 'shapes', 'imageExportFormat',
   'effects', 'transitionType',
 ];
 // Références aux éléments média déjà chargés : à réattacher telles quelles
@@ -199,6 +199,7 @@ function restaurerSnapshot(snap) {
   for (const champ of CHAMPS_HISTORIQUE_REFS) EditorState[champ] = snap[champ];
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
+  rafraichirListeFormes();
   rafraichirPanneauApresRestauration();
   Historique.enPause = false;
 }
@@ -427,6 +428,7 @@ async function restaurerProjetComplet({ etat, medias }) {
 
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
+  rafraichirListeFormes();
   rafraichirPanneauApresRestauration();
   Historique.enPause = false;
   initHistorique();
@@ -445,6 +447,7 @@ async function nouveauProjetVide() {
   EditorState.playback.playing = false;
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
+  rafraichirListeFormes();
   rafraichirPanneauApresRestauration();
   Historique.enPause = false;
   initHistorique();
@@ -1046,6 +1049,7 @@ async function initEditeur() {
   chargerGoogleFontsEtendues();
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
+  rafraichirListeFormes();
 
   arreterEditeur();
   await initMoteur3D(canvas);
@@ -2368,6 +2372,14 @@ function dessinerForme(f, layerName) {
   sizeLayerCanvas(layer, dim, dim);
   const ctx = layer.ctx;
   ctx.clearRect(0, 0, dim, dim);
+
+  if (EditorState.modeContours) {
+    dessinerContourAsset(ctx, 0, 0, dim, dim, 12, 'rect', `#${f.id} forme (${f.type})`, { x: f.x, y: f.y, z: f.z ?? 8 });
+    placerLayer(layer, f.x * width, f.y * height, f.z ?? 8, 0, 0, ((f.rotZ || 0) * Math.PI) / 180);
+    layer.mesh.scale.set(dim, dim, 1);
+    return { x: f.x * width - dim / 2, y: f.y * height - dim / 2, w: dim, h: dim, cx: f.x * width, cy: f.y * height, z: f.z ?? 8 };
+  }
+
   ctx.globalAlpha = Number(f.opacite ?? 1);
 
   if (f.type === 'sticker') {
@@ -3134,6 +3146,9 @@ function bindEditorInputs() {
 
   addTextBlockBtn.addEventListener('click', ajouterBlocTexte);
 
+  const addShapeBtn = document.getElementById('editor-add-shape');
+  if (addShapeBtn) addShapeBtn.addEventListener('click', ajouterForme);
+
   const transitionSelect = document.getElementById('editor-transition-type');
   if (transitionSelect) {
     transitionSelect.addEventListener('change', (e) => {
@@ -3234,7 +3249,7 @@ function markupFilePickerPhoto(inputId, filenameId, media) {
 // Sélection multiple courante pour les actions groupées — état d'interface
 // éphémère (pas de session à session), donc volontairement hors
 // EditorState/historique : coché/décoché n'est pas une action "undo-able".
-const SelectionCalques = { photo: new Set(), textblock: new Set() };
+const SelectionCalques = { photo: new Set(), textblock: new Set(), forme: new Set() };
 
 // En-tête commun aux calques (photo ou bloc de texte) : case de sélection,
 // nom éditable, verrouillage, visibilité, duplication et suppression.
@@ -3261,12 +3276,21 @@ function renderCalqueHeadHtml(item, nomParDefaut, typeRemove) {
   `;
 }
 
+// Config par type de calque pour la sélection/les actions groupées —
+// évite de multiplier les ternaires à chaque nouveau type de calque
+// (photo/texte/forme partagent tous le même mécanisme).
+const CONFIG_TYPE_CALQUE = {
+  photo: { barId: 'editor-photos-bulk-bar', compteId: 'editor-photos-bulk-count', liste: () => EditorState.photos, rafraichir: () => rafraichirListePhotos() },
+  textblock: { barId: 'editor-textblocks-bulk-bar', compteId: 'editor-textblocks-bulk-count', liste: () => EditorState.textBlocks, rafraichir: () => rafraichirListeTextBlocks() },
+  forme: { barId: 'editor-shapes-bulk-bar', compteId: 'editor-shapes-bulk-count', liste: () => EditorState.shapes, rafraichir: () => rafraichirListeFormes() },
+};
+
 function majBarreSelectionGroupee(type) {
   const set = SelectionCalques[type];
-  const conteneurId = type === 'photo' ? 'editor-photos-bulk-bar' : 'editor-textblocks-bulk-bar';
-  const compteId = type === 'photo' ? 'editor-photos-bulk-count' : 'editor-textblocks-bulk-count';
-  const bar = document.getElementById(conteneurId);
-  const compteEl = document.getElementById(compteId);
+  const config = CONFIG_TYPE_CALQUE[type];
+  if (!set || !config) return;
+  const bar = document.getElementById(config.barId);
+  const compteEl = document.getElementById(config.compteId);
   if (bar) bar.classList.toggle('hidden', set.size === 0);
   if (compteEl) compteEl.textContent = `${set.size} sélectionné${set.size > 1 ? 's' : ''}`;
 }
@@ -3288,12 +3312,13 @@ function purgerSelectionGroupee(type, listeActuelle) {
 // d'historique plutôt qu'un par calque.
 function executerActionGroupee(type, action) {
   const set = SelectionCalques[type];
+  const config = CONFIG_TYPE_CALQUE[type];
+  if (!set || !config) return;
   const ids = [...set];
   if (!ids.length) return;
   if (action === 'delete' && !confirm(`Supprimer ${ids.length} calque(s) sélectionné(s) ?`)) return;
 
-  const estPhoto = type === 'photo';
-  const liste = estPhoto ? EditorState.photos : EditorState.textBlocks;
+  const liste = config.liste();
 
   if (action === 'lock') {
     liste.forEach((item) => {
@@ -3324,8 +3349,7 @@ function executerActionGroupee(type, action) {
   }
 
   set.clear();
-  if (estPhoto) rafraichirListePhotos();
-  else rafraichirListeTextBlocks();
+  config.rafraichir();
   pousserHistorique();
 }
 
@@ -3592,6 +3616,7 @@ const CHAMPS_STYLE_EXCLUS = {
     'bgOverrideImageEl', 'bgOverrideColor', 'sousMedias',
   ],
   textblock: ['id', 'texte', 'x', 'y', 'z', 'nom', 'verrouille', 'visible', 'startTime', 'endTime'],
+  forme: ['id', 'emoji', 'x', 'y', 'z', 'nom', 'verrouille', 'visible', 'startTime', 'endTime'],
 };
 
 function copierStyleCalque(type, item) {
@@ -4661,6 +4686,148 @@ function dupliquerBlocTexte(id) {
 }
 
 /* -------------------------------------------------------------------- */
+/* Formes vectorielles & stickers                                        */
+/* -------------------------------------------------------------------- */
+function creerFormeParDefaut(id) {
+  return {
+    id,
+    nom: null,
+    verrouille: false,
+    visible: true,
+    type: 'star',
+    emoji: '⭐',
+    x: 0.5,
+    y: 0.5,
+    z: 8,
+    rotZ: 0,
+    scale: 0.18,
+    couleur: '#00e676',
+    opacite: 1,
+    contourActive: false,
+    contourColor: '#ffffff',
+    contourWidth: 4,
+    startTime: null,
+    endTime: null,
+  };
+}
+
+function renderFormeHtml(f, index) {
+  return `
+    <div class="editor-photo-layer ${f.verrouille ? 'verrouille' : ''}" draggable="${!f.verrouille}" data-forme-drag="${f.id}">
+      ${renderCalqueHeadHtml(f, `Forme ${index + 1}`, 'forme')}
+      <div class="editor-row">
+        <select data-formetype-for="${f.id}">${SHAPES_DISPONIBLES.map((s) => `<option value="${s.value}" ${f.type === s.value ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
+      </div>
+      ${f.type === 'sticker' ? `
+      <div class="editor-row editor-sticker-choix">
+        ${STICKERS_DISPONIBLES.map((e) => `<button type="button" class="editor-sticker-btn ${f.emoji === e ? 'active' : ''}" data-formeemoji-for="${f.id}" data-emoji="${e}">${e}</button>`).join('')}
+      </div>` : `
+      <div class="editor-row">
+        <input type="color" data-formecouleur-for="${f.id}" value="${f.couleur || '#00e676'}" title="Couleur">
+        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-formecontour-for="${f.id}" ${f.contourActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Contour</span></label>
+        <input type="color" data-formecontourcolor-for="${f.id}" value="${f.contourColor || '#ffffff'}" title="Couleur du contour">
+      </div>`}
+      <div class="editor-row">
+        <label class="editor-mini-label">Taille<input type="range" data-formescale-for="${f.id}" min="4" max="60" value="${Math.round((f.scale ?? 0.18) * 100)}"></label>
+        <label class="editor-mini-label">Rotation<input type="range" data-formerotz-for="${f.id}" min="-180" max="180" value="${f.rotZ || 0}"></label>
+      </div>
+      <div class="editor-row">
+        <label class="editor-mini-label">Opacité<input type="range" data-formeopacite-for="${f.id}" min="10" max="100" value="${Math.round((f.opacite ?? 1) * 100)}"></label>
+      </div>
+      <div class="editor-row">
+        <label class="editor-mini-label">Apparaît à (s, vide = début)<input type="number" data-formestart-for="${f.id}" min="0" step="0.5" value="${f.startTime ?? ''}" style="max-width:80px;"></label>
+        <label class="editor-mini-label">Disparaît à (s, vide = fin)<input type="number" data-formeend-for="${f.id}" min="0" step="0.5" value="${f.endTime ?? ''}" style="max-width:80px;"></label>
+      </div>
+    </div>
+  `;
+}
+
+function rafraichirListeFormes() {
+  const container = document.getElementById('editor-shapes-list');
+  if (!container) return;
+  container.innerHTML =
+    EditorState.shapes.map((f, i) => renderFormeHtml(f, i)).join('') ||
+    '<p class="form-hint">Aucune forme/sticker ajouté pour le moment.</p>';
+  bindFormeEvents();
+  purgerSelectionGroupee('forme', EditorState.shapes);
+}
+
+function bindFormeEvents() {
+  EditorState.shapes.forEach((f) => {
+    bindCalqueHeadEvents(f, rafraichirListeFormes, dupliquerForme, 'forme');
+
+    const typeInput = document.querySelector(`[data-formetype-for="${f.id}"]`);
+    if (typeInput) {
+      typeInput.addEventListener('change', (e) => {
+        f.type = e.target.value;
+        rafraichirListeFormes();
+        pousserHistorique();
+      });
+    }
+    document.querySelectorAll(`[data-formeemoji-for="${f.id}"]`).forEach((btn) => {
+      btn.addEventListener('click', () => {
+        f.emoji = btn.dataset.emoji;
+        rafraichirListeFormes();
+        pousserHistorique();
+      });
+    });
+    const couleurInput = document.querySelector(`[data-formecouleur-for="${f.id}"]`);
+    if (couleurInput) couleurInput.addEventListener('input', (e) => (f.couleur = e.target.value));
+    const contourInput = document.querySelector(`[data-formecontour-for="${f.id}"]`);
+    if (contourInput) contourInput.addEventListener('change', (e) => (f.contourActive = e.target.checked));
+    const contourColorInput = document.querySelector(`[data-formecontourcolor-for="${f.id}"]`);
+    if (contourColorInput) contourColorInput.addEventListener('input', (e) => (f.contourColor = e.target.value));
+    const scaleInput = document.querySelector(`[data-formescale-for="${f.id}"]`);
+    if (scaleInput) scaleInput.addEventListener('input', (e) => (f.scale = Number(e.target.value) / 100));
+    const rotzInput = document.querySelector(`[data-formerotz-for="${f.id}"]`);
+    if (rotzInput) rotzInput.addEventListener('input', (e) => (f.rotZ = Number(e.target.value)));
+    const opaciteInput = document.querySelector(`[data-formeopacite-for="${f.id}"]`);
+    if (opaciteInput) opaciteInput.addEventListener('input', (e) => (f.opacite = Number(e.target.value) / 100));
+    const startInput = document.querySelector(`[data-formestart-for="${f.id}"]`);
+    if (startInput) {
+      startInput.addEventListener('input', (e) => {
+        f.startTime = e.target.value === '' ? null : Math.max(0, Number(e.target.value));
+      });
+    }
+    const endInput = document.querySelector(`[data-formeend-for="${f.id}"]`);
+    if (endInput) {
+      endInput.addEventListener('input', (e) => {
+        f.endTime = e.target.value === '' ? null : Math.max(0, Number(e.target.value));
+      });
+    }
+  });
+  document.querySelectorAll('[data-remove-forme]').forEach((btn) => {
+    btn.addEventListener('click', () => supprimerForme(Number(btn.dataset.removeForme)));
+  });
+}
+
+function ajouterForme() {
+  const id = ++elementIdCounter;
+  EditorState.shapes.push(creerFormeParDefaut(id));
+  rafraichirListeFormes();
+  pousserHistorique();
+}
+
+function supprimerForme(id) {
+  const f = EditorState.shapes.find((s) => s.id === id);
+  if (f && f.verrouille) return;
+  EditorState.shapes = EditorState.shapes.filter((s) => s.id !== id);
+  hideLayer(`forme-${id}`);
+  rafraichirListeFormes();
+  pousserHistorique();
+}
+
+function dupliquerForme(id) {
+  const index = EditorState.shapes.findIndex((s) => s.id === id);
+  if (index === -1) return;
+  const original = EditorState.shapes[index];
+  const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null, verrouille: false };
+  EditorState.shapes.splice(index + 1, 0, copie);
+  rafraichirListeFormes();
+  pousserHistorique();
+}
+
+/* -------------------------------------------------------------------- */
 /* Glisser-déposer sur le canvas (texte / photo active) — raycasting 3D  */
 /* -------------------------------------------------------------------- */
 function pointerToNdc(canvas, evt) {
@@ -4737,15 +4904,25 @@ function nomsTextLayerNames() {
   return EditorState.textBlocks.map((b) => `text-${b.id}`);
 }
 
+function nomsFormeLayerNames() {
+  return EditorState.shapes.map((f) => `forme-${f.id}`);
+}
+
 function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
     const layers = EditorState.three.layers;
     const textLayerNames = nomsTextLayerNames();
+    const formeLayerNames = nomsFormeLayerNames();
     const textHit = raycastLayer(canvas, e, textLayerNames);
+    const formeHit = !textHit && raycastLayer(canvas, e, formeLayerNames);
     if (textHit) {
       const id = Number(textLayerNames.find((n) => layers[n] && layers[n].mesh === textHit.object).replace('text-', ''));
       const b = EditorState.textBlocks.find((tb) => tb.id === id);
       if (b && !b.verrouille) EditorState.dragging = { type: 'textblock', id };
+    } else if (formeHit) {
+      const id = Number(formeLayerNames.find((n) => layers[n] && layers[n].mesh === formeHit.object).replace('forme-', ''));
+      const f = EditorState.shapes.find((s) => s.id === id);
+      if (f && !f.verrouille) EditorState.dragging = { type: 'forme', id };
     } else if (layers.caption && layers.caption.mesh.visible && raycastLayer(canvas, e, ['caption'])) {
       const p = calquePhotoActif();
       if (p && !p.verrouille) EditorState.dragging = { type: 'caption', id: p.id };
@@ -4759,7 +4936,7 @@ function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointermove', (e) => {
     if (!EditorState.dragging) {
       const survole =
-        raycastLayer(canvas, e, [...nomsTextLayerNames(), 'caption', 'photo']) !== null;
+        raycastLayer(canvas, e, [...nomsTextLayerNames(), ...nomsFormeLayerNames(), 'caption', 'photo']) !== null;
       canvas.style.cursor = survole ? 'grab' : 'default';
       return;
     }
@@ -4771,6 +4948,14 @@ function bindEditorDrag3D(canvas) {
         const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
         b.x = snap.fx;
         b.y = snap.fy;
+      }
+    } else if (EditorState.dragging.type === 'forme') {
+      const f = EditorState.shapes.find((s) => s.id === EditorState.dragging.id);
+      const frac = f && pointerToFraction(canvas, e, f.z ?? 8);
+      if (f && frac) {
+        const snap = appliquerSnapEtGuides(frac.fx, frac.fy);
+        f.x = snap.fx;
+        f.y = snap.fy;
       }
     } else if (EditorState.dragging.type === 'photo') {
       const p = EditorState.photos.find((ph) => ph.id === EditorState.dragging.id);
