@@ -2166,6 +2166,35 @@ function progressionAnimation(start, end, now, dureeAnim) {
   return Math.min(inT, outT);
 }
 
+// Courbes d'accélération appliquées à la progression linéaire (0..1) d'une
+// animation d'entrée/sortie de texte. 'bounce'/'elastic' donnent un effet de
+// rebond, 'easeInOut'/'easeOut' un ralenti plus naturel qu'une vitesse
+// constante.
+function appliquerEasing(t, easing) {
+  switch (easing) {
+    case 'easeInOut':
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    case 'easeOut':
+      return 1 - Math.pow(1 - t, 3);
+    case 'bounce': {
+      const n1 = 7.5625;
+      const d1 = 2.75;
+      let x = t;
+      if (x < 1 / d1) return n1 * x * x;
+      if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+      if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+      return n1 * (x -= 2.625 / d1) * x + 0.984375;
+    }
+    case 'elastic': {
+      if (t === 0 || t === 1) return t;
+      const c4 = (2 * Math.PI) / 3;
+      return Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+    }
+    default:
+      return t; // linear
+  }
+}
+
 function blocTexteActif(b, now) {
   if (b.visible === false) return false;
   if (b.startTime != null && now < b.startTime) return false;
@@ -2214,8 +2243,9 @@ function dessinerPasseTexte(ctx, lignes, textX, padY, lineHeight, anim, progress
       compte += ligne.length;
     });
   } else {
+    const animsAvecFondu = ['fade', 'slide', 'pop', 'rotate3d', 'blur'];
     const alphaAvant = ctx.globalAlpha;
-    ctx.globalAlpha = (anim === 'fade' || anim === 'slide' || anim === 'pop' ? progress : 1) * alphaAvant;
+    ctx.globalAlpha = (animsAvecFondu.includes(anim) ? progress : 1) * alphaAvant;
     lignes.forEach((ligne, i) => ctx.fillText(ligne, textX, padY + i * lineHeight));
     ctx.globalAlpha = alphaAvant;
   }
@@ -2253,7 +2283,7 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   // (animDuree) car un long texte en 'typewriter' à 0.5s fixe défilerait
   // bien trop vite pour être perçu comme un vrai effet machine à écrire.
   const dureeAnim = Number(b.animDuree) || 0.5;
-  const progress = progressionAnimation(b.startTime, b.endTime, now, dureeAnim);
+  const progress = appliquerEasing(progressionAnimation(b.startTime, b.endTime, now, dureeAnim), b.easing);
 
   if (EditorState.modeContours) {
     dessinerContourAsset(ctx, 0, 0, panelW, panelH, 18, 'rect', `#${b.id} texte: "${(b.texte || '').slice(0, 20)}"`, {
@@ -2273,6 +2303,10 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
   ctx.textAlign = align;
   ctx.textBaseline = 'top';
   const textX = align === 'left' ? padX : align === 'right' ? panelW - padX : panelW / 2;
+
+  // 'blur' : net à progress=1, flou croissant à mesure qu'on s'éloigne du
+  // plein affichage (entrée ou sortie).
+  ctx.filter = anim === 'blur' ? `blur(${Math.max(0, (1 - progress) * 10)}px)` : 'none';
 
   if (b.glowActive) {
     ctx.save();
@@ -2297,19 +2331,23 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
       b.saberCount, b.saberSize
     );
   }
+  ctx.filter = 'none';
   }
 
   let cx = b.x * width;
   let cy = b.y * height;
   let scaleMul = 1;
+  let rotYAnim = 0;
   if (anim === 'slide') {
     cx += (1 - progress) * width * 0.15;
   } else if (anim === 'pop') {
     scaleMul = 0.6 + 0.4 * progress;
+  } else if (anim === 'rotate3d') {
+    rotYAnim = (1 - progress) * (Math.PI / 2);
   }
 
   const rotX = ((b.rotX || 0) * Math.PI) / 180;
-  const rotY = ((b.rotY || 0) * Math.PI) / 180;
+  const rotY = ((b.rotY || 0) * Math.PI) / 180 + rotYAnim;
   const rotZ = ((b.rotZ || 0) * Math.PI) / 180;
   placerLayer(layer, cx, cy, b.z ?? 10, rotX, rotY, rotZ);
   layer.mesh.scale.set(panelW * scaleMul, panelH * scaleMul, 1);
@@ -2982,7 +3020,7 @@ function bindBarreSelectionGroupee() {
 function renderPhotoLayerHtml(p, index) {
   return `
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
-      ${renderCalqueHeadHtml(p, `Photo ${index + 1}`, 'photo')}
+      ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
@@ -3634,7 +3672,7 @@ function rafraichirListePhotos() {
   if (!container) return;
   container.innerHTML =
     EditorState.photos.map((p, i) => renderPhotoLayerHtml(p, i)).join('') ||
-    '<p class="form-hint">Aucune photo ajoutée pour le moment.</p>';
+    '<p class="form-hint">Aucune photo/vidéo ajoutée pour le moment.</p>';
   bindPhotoLayerEvents();
   purgerSelectionGroupee('photo', EditorState.photos);
 }

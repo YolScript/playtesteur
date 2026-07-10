@@ -1439,7 +1439,7 @@ function viewEditeur() {
         </details>
 
         <details class="editor-accordion">
-          <summary>Photos</summary>
+          <summary>Photos / Vidéos</summary>
           <div class="editor-accordion-body">
             <div class="editor-row">
               <label class="editor-mini-label">Transition entre photos
@@ -1452,7 +1452,7 @@ function viewEditeur() {
               </label>
             </div>
             <div class="editor-row" style="justify-content:flex-end;">
-              <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo</button>
+              <button type="button" id="editor-add-photo" class="editor-add-btn">+ Ajouter une photo/vidéo</button>
             </div>
             <div class="editor-bulk-bar hidden" id="editor-photos-bulk-bar">
               <span id="editor-photos-bulk-count">0 sélectionné(s)</span>
