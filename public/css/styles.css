@@ -1200,22 +1200,12 @@ tbody tr:hover { background: var(--bg-card-hover); }
 
 .editor-photos-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
 
-.editor-photo-groupe {
-    border: 1px dashed rgba(0, 230, 118, 0.4);
-    border-radius: var(--radius-md);
-    padding: 10px;
+.editor-sousmedias-liste { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.editor-sousmedia {
+    border-style: dashed;
+    border-color: rgba(0, 230, 118, 0.35);
     background: rgba(0, 230, 118, 0.03);
 }
-.editor-photo-groupe-head {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 11px;
-    color: var(--text-muted);
-    margin-bottom: 10px;
-}
-.editor-photo-groupe-body { display: flex; flex-direction: column; gap: 12px; }
 .editor-file-picker-mini {
     padding: 5px 12px;
     font-size: 11px;

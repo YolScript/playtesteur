@@ -52,6 +52,11 @@ const EditorState = {
   // (null = du début/jusqu'à la fin) et son animation d'entrée/sortie.
   textBlocks: [],
 
+  // [{ id, type, emoji, x, y, z, rotZ, scale, couleur, opacite, startTime,
+  //    endTime }] — formes vectorielles et stickers emoji, calques libres
+  // au même titre que les blocs de texte (indépendants de la timeline photo).
+  shapes: [],
+
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
   // État de l'export : la timeline avance toujours en temps réel (1x),
   // identique à une lecture normale, pour que la durée exportée corresponde
@@ -313,6 +318,7 @@ async function serialiserProjetComplet() {
     delete p.img;
     delete p.bgOverrideVideoEl;
     delete p.bgOverrideImageEl;
+    (p.sousMedias || []).forEach((sm) => delete sm.img);
   });
   ['intro', 'outro'].forEach((seg) => {
     delete etat[seg].logoImg;
@@ -338,7 +344,14 @@ async function serialiserProjetComplet() {
       mediaType: p.img ? (p.img.tagName === 'VIDEO' ? 'video' : 'image') : null,
       bgOverride: await blobDepuisElementMedia(p.bgOverrideVideoEl || p.bgOverrideImageEl),
       bgOverrideType: p.bgOverrideVideoEl ? 'video' : p.bgOverrideImageEl ? 'image' : null,
+      sousMedias: {},
     };
+    for (const sm of p.sousMedias || []) {
+      medias.photos[p.id].sousMedias[sm.id] = {
+        media: await blobDepuisElementMedia(sm.img),
+        mediaType: sm.img ? (sm.img.tagName === 'VIDEO' ? 'video' : 'image') : null,
+      };
+    }
   }
   return { etat, medias };
 }
@@ -404,6 +417,11 @@ async function restaurerProjetComplet({ etat, medias }) {
     if (m && m.bgOverride) {
       if (m.bgOverrideType === 'video') p.bgOverrideVideoEl = await chargerMediaPhoto(m.bgOverride);
       else p.bgOverrideImageEl = await chargerImage(m.bgOverride);
+    }
+    for (const sm of p.sousMedias || []) {
+      sm.img = null;
+      const msm = m && m.sousMedias ? m.sousMedias[sm.id] : null;
+      if (msm && msm.media) sm.img = msm.mediaType === 'video' ? await chargerMediaPhoto(msm.media) : await chargerImage(msm.media);
     }
   }
 
@@ -1468,6 +1486,33 @@ function maskShapePath(ctx, shape, x, y, w, h, r) {
     ctx.closePath();
     return;
   }
+  if (shape === 'triangle') {
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2, y);
+    ctx.lineTo(x + w, y + h);
+    ctx.lineTo(x, y + h);
+    ctx.closePath();
+    return;
+  }
+  if (shape === 'arrow') {
+    const cy = y + h / 2;
+    ctx.beginPath();
+    ctx.moveTo(x, cy - h * 0.18);
+    ctx.lineTo(x + w * 0.6, cy - h * 0.18);
+    ctx.lineTo(x + w * 0.6, y);
+    ctx.lineTo(x + w, cy);
+    ctx.lineTo(x + w * 0.6, y + h);
+    ctx.lineTo(x + w * 0.6, cy + h * 0.18);
+    ctx.lineTo(x, cy + h * 0.18);
+    ctx.closePath();
+    return;
+  }
+  if (shape === 'line') {
+    ctx.beginPath();
+    ctx.rect(x, y + h / 2 - h * 0.06, w, h * 0.12);
+    ctx.closePath();
+    return;
+  }
   roundRectPath(ctx, x, y, w, h, r);
 }
 
@@ -1941,6 +1986,28 @@ function dessinerContourAsset(ctx, x, y, w, h, radius, shape, label, posInfo) {
   ctx.restore();
 }
 
+// Rend les médias superposés (composite simultané) du calque photo
+// actuellement actif — chacun réutilise mettreAJourPhoto() sur son propre
+// calque three.js ('photo-extra-<id>'), donc profite gratuitement de tous
+// les mêmes réglages (forme, filtres, ombre, chromakey...). Masque les
+// calques superposés d'un segment qui n'est plus actif.
+function mettreAJourMediasSuperposes(segmentActif, tGlobal) {
+  const actifs = segmentActif && segmentActif.type === 'photo' ? segmentActif.data.sousMedias || [] : [];
+  const idsActifs = new Set();
+  actifs.forEach((sm) => {
+    const layerName = `photo-extra-${sm.id}`;
+    idsActifs.add(layerName);
+    if (sm.visible === false || !sm.img) {
+      hideLayer(layerName);
+      return;
+    }
+    mettreAJourPhoto(sm, tGlobal, layerName);
+  });
+  Object.keys(EditorState.three.layers).forEach((name) => {
+    if (name.startsWith('photo-extra-') && !idsActifs.has(name)) hideLayer(name);
+  });
+}
+
 function mettreAJourPhoto(p, tGlobal, layerName) {
   layerName = layerName || 'photo';
   if (!p.img) {
@@ -2253,6 +2320,83 @@ function blocTexteActif(b, now) {
   if (b.startTime != null && now < b.startTime) return false;
   if (b.endTime != null && now > b.endTime) return false;
   return true;
+}
+
+const SHAPES_DISPONIBLES = [
+  { value: 'rect', label: 'Rectangle' },
+  { value: 'circle', label: 'Cercle' },
+  { value: 'triangle', label: 'Triangle' },
+  { value: 'star', label: 'Étoile' },
+  { value: 'heart', label: 'Cœur' },
+  { value: 'hexagon', label: 'Hexagone' },
+  { value: 'pentagon', label: 'Pentagone' },
+  { value: 'arrow', label: 'Flèche' },
+  { value: 'line', label: 'Ligne' },
+  { value: 'sticker', label: 'Sticker (emoji)' },
+];
+const STICKERS_DISPONIBLES = ['⭐', '❤️', '🔥', '✨', '👍', '🎉', '💯', '⚡', '👀', '🚀', '✅', '❌'];
+
+function formeActive(f, now) {
+  if (f.visible === false) return false;
+  if (f.startTime != null && now < f.startTime) return false;
+  if (f.endTime != null && now > f.endTime) return false;
+  return true;
+}
+
+// Dessine une forme vectorielle (réutilise maskShapePath) ou un sticker
+// emoji sur son propre calque carré, positionné/pivoté comme un bloc de
+// texte (calque libre, indépendant de la timeline photo).
+function dessinerForme(f, layerName) {
+  const { width, height } = EditorState.three;
+  const layer = getOrCreateCanvasLayer(layerName);
+  const taille = Math.max(20, (Number(f.scale) || 0.18) * Math.min(width, height));
+  const marge = Math.ceil(taille * 0.25);
+  const dim = taille + marge * 2;
+  sizeLayerCanvas(layer, dim, dim);
+  const ctx = layer.ctx;
+  ctx.clearRect(0, 0, dim, dim);
+  ctx.globalAlpha = Number(f.opacite ?? 1);
+
+  if (f.type === 'sticker') {
+    ctx.font = `${taille}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(f.emoji || '⭐', dim / 2, dim / 2 + taille * 0.08);
+  } else {
+    maskShapePath(ctx, f.type, marge, marge, taille, taille, taille * 0.08);
+    ctx.fillStyle = f.couleur || '#00e676';
+    ctx.fill();
+    if (f.contourActive) {
+      ctx.strokeStyle = f.contourColor || '#ffffff';
+      ctx.lineWidth = Number(f.contourWidth) || 4;
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  const cx = f.x * width;
+  const cy = f.y * height;
+  const rotZ = ((f.rotZ || 0) * Math.PI) / 180;
+  placerLayer(layer, cx, cy, f.z ?? 8, 0, 0, rotZ);
+  layer.mesh.scale.set(dim, dim, 1);
+  return { x: cx - dim / 2, y: cy - dim / 2, w: dim, h: dim, cx, cy, z: f.z ?? 8 };
+}
+
+function mettreAJourFormes(now) {
+  EditorState.shapes.forEach((f) => {
+    const layerName = `forme-${f.id}`;
+    if (!formeActive(f, now)) {
+      hideLayer(layerName);
+      return;
+    }
+    dessinerForme(f, layerName);
+  });
+  // Masque les layers des formes supprimées entre-temps.
+  Object.keys(EditorState.three.layers).forEach((name) => {
+    if (name.startsWith('forme-') && !EditorState.shapes.some((f) => `forme-${f.id}` === name)) {
+      hideLayer(name);
+    }
+  });
 }
 
 function mettreAJourBlocsTexte(now, tGlobal) {
@@ -2684,7 +2828,10 @@ function renderEditorFrame() {
     hideLayer('photo-in');
   }
 
+  mettreAJourMediasSuperposes(segmentActif, tGlobal);
+
   EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime, tGlobal);
+  mettreAJourFormes(EditorState.playback.currentTime);
 
   ts.bloomPass.enabled = EditorState.effects.bloomActive;
   let strength = Number(EditorState.effects.bloomStrength) || 0;
@@ -3143,7 +3290,13 @@ function executerActionGroupee(type, action) {
       const index = liste.findIndex((item) => item.id === id);
       if (index === -1) return;
       const original = liste[index];
-      const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null, verrouille: false };
+      const copie = {
+        ...original,
+        id: ++elementIdCounter,
+        nom: original.nom ? `${original.nom} (copie)` : null,
+        verrouille: false,
+        sousMedias: (original.sousMedias || []).map((sm) => ({ ...sm, id: ++elementIdCounter })),
+      };
       liste.splice(index + 1, 0, copie);
     });
   } else if (action === 'delete') {
@@ -3164,18 +3317,75 @@ function bindBarreSelectionGroupee() {
   });
 }
 
+// Carte compacte d'un média superposé — sous-ensemble volontairement plus
+// léger des réglages complets du calque principal (position/taille/
+// rotation, forme, bordure, filtres image, chromakey), suffisant pour
+// composer un visuel à plusieurs médias sans dupliquer tout le panneau.
+function renderSousMediaHtml(sm, index) {
+  return `
+    <div class="editor-photo-layer editor-sousmedia">
+      <div class="editor-photo-layer-head">
+        <input type="text" class="editor-calque-nom" data-smnom-for="${sm.id}" value="${escapeHtml(sm.nom || '')}" placeholder="Média ${index + 1}" title="Renommer">
+        <div class="editor-calque-head-actions">
+          <button type="button" class="editor-icon-btn ${sm.visible === false ? 'active' : ''}" data-smvisible-for="${sm.id}" title="${sm.visible === false ? 'Afficher' : 'Masquer'}">${sm.visible === false ? '🚫' : '👁'}</button>
+          <button type="button" class="editor-icon-btn" data-smduplique-for="${sm.id}" title="Dupliquer">⧉</button>
+          <button type="button" class="editor-remove-btn" data-smsupprimer-for="${sm.id}" title="Supprimer">&times;</button>
+        </div>
+      </div>
+      ${markupFilePickerPhoto(`editor-sm-input-${sm.id}`, `editor-sm-filename-${sm.id}`)}
+      <div class="editor-row">
+        <label class="editor-mini-label">X<input type="range" data-smx-for="${sm.id}" min="0" max="100" value="${Math.round((sm.x ?? 0.5) * 100)}"></label>
+        <label class="editor-mini-label">Y<input type="range" data-smy-for="${sm.id}" min="0" max="100" value="${Math.round((sm.y ?? 0.5) * 100)}"></label>
+      </div>
+      <div class="editor-row">
+        <label class="editor-mini-label">Taille<input type="range" data-smscale-for="${sm.id}" min="5" max="80" value="${Math.round((sm.scale ?? 0.22) * 100)}"></label>
+        <label class="editor-mini-label">Rotation<input type="range" data-smrotz-for="${sm.id}" min="-45" max="45" value="${sm.rotZ || 0}"></label>
+      </div>
+      <div class="editor-row">
+        <select data-smshape-for="${sm.id}">
+          <option value="rect" ${(!sm.maskShape || sm.maskShape === 'rect') ? 'selected' : ''}>Rectangle arrondi</option>
+          <option value="circle" ${sm.maskShape === 'circle' ? 'selected' : ''}>Cercle / ellipse</option>
+          <option value="hexagon" ${sm.maskShape === 'hexagon' ? 'selected' : ''}>Hexagone</option>
+        </select>
+        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-smborder-for="${sm.id}" ${sm.borderActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Bordure</span></label>
+      </div>
+      <div class="editor-row">
+        <label class="editor-mini-label">Luminosité<input type="range" data-smbrightness-for="${sm.id}" min="40" max="180" value="${sm.imgBrightness ?? 100}"></label>
+        <label class="editor-mini-label">Saturation<input type="range" data-smsaturation-for="${sm.id}" min="0" max="200" value="${sm.imgSaturation ?? 100}"></label>
+      </div>
+      <div class="editor-row">
+        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-smshadow-for="${sm.id}" ${sm.shadowActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Ombre portée</span></label>
+        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-smchromakey-for="${sm.id}" ${sm.chromaKeyActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Clé chromatique (fond vert)</span></label>
+      </div>
+    </div>
+  `;
+}
+
 function renderPhotoLayerHtml(p, index) {
   return `
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
       ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
-      <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres rejoignent le même groupe juste en dessous, avec leurs propres réglages.</span>
-      ${p.groupeId ? `<div class="editor-row" style="justify-content:flex-end;"><button type="button" class="editor-add-btn" data-dissocier-groupe-for="${p.id}" title="Sortir ce média du groupe">Dissocier du groupe</button></div>` : ''}
+      <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres s'affichent EN MÊME TEMPS par-dessus (composite), réglables séparément ci-dessous.</span>
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
         <label class="editor-mini-label">Durée (s)<input type="number" data-duree-for="${p.id}" min="0.5" max="30" step="0.5" value="${p.duree}" style="max-width:80px;"></label>
       </div>
+
+      <details class="editor-accordion-nested" ${(p.sousMedias && p.sousMedias.length) ? 'open' : ''}>
+        <summary>Médias superposés (même visuel)${p.sousMedias && p.sousMedias.length ? ` — ${p.sousMedias.length}` : ''}</summary>
+        <div class="editor-accordion-nested-body">
+          <span class="form-hint">S'affichent EN MÊME TEMPS que le média principal ci-dessus, chacun avec sa propre position, taille et ses propres réglages — utile pour composer plusieurs images/vidéos sur un même visuel (ex : incruster une capture d'écran sur une illustration).</span>
+          <div class="editor-row" style="justify-content:flex-end;">
+            <label class="editor-file-picker editor-file-picker-mini" for="editor-sousmedia-add-input-${p.id}">+ Ajouter un média superposé</label>
+            <input type="file" id="editor-sousmedia-add-input-${p.id}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input" multiple>
+          </div>
+          <div class="editor-sousmedias-liste">
+            ${(p.sousMedias || []).map((sm, i) => renderSousMediaHtml(sm, i)).join('') || '<p class="form-hint">Aucun média superposé.</p>'}
+          </div>
+        </div>
+      </details>
 
       <details class="editor-accordion-nested">
         <summary>Forme &amp; bordure</summary>
@@ -3361,7 +3571,7 @@ const CHAMPS_STYLE_EXCLUS = {
   photo: [
     'id', 'img', 'texte', 'x', 'y', 'z', 'texteX', 'texteY', 'duree', 'nom',
     'verrouille', 'visible', 'bgOverrideType', 'bgOverrideVideoEl',
-    'bgOverrideImageEl', 'bgOverrideColor',
+    'bgOverrideImageEl', 'bgOverrideColor', 'sousMedias',
   ],
   textblock: ['id', 'texte', 'x', 'y', 'z', 'nom', 'verrouille', 'visible', 'startTime', 'endTime'],
 };
@@ -3520,13 +3730,65 @@ function bindCropVisuel(p) {
   });
 }
 
+// Câble les contrôles de chaque média superposé d'un calque photo `p`.
+// Contrairement aux calques principaux, ces objets ne vivent que dans
+// `p.sousMedias` : pas de jump()/timeline, pas d'entrée séparée dans
+// SelectionCalques (la sélection groupée reste au niveau des calques
+// principaux).
+function bindSousMediaEvents(p) {
+  (p.sousMedias || []).forEach((sm) => {
+    const nomInput = document.querySelector(`[data-smnom-for="${sm.id}"]`);
+    if (nomInput) nomInput.addEventListener('change', (e) => (sm.nom = e.target.value.trim() || null));
+
+    const visibleBtn = document.querySelector(`[data-smvisible-for="${sm.id}"]`);
+    if (visibleBtn) {
+      visibleBtn.addEventListener('click', () => {
+        sm.visible = sm.visible === false ? true : false;
+        rafraichirListePhotos();
+        pousserHistorique();
+      });
+    }
+    const dupliqueBtn = document.querySelector(`[data-smduplique-for="${sm.id}"]`);
+    if (dupliqueBtn) dupliqueBtn.addEventListener('click', () => dupliquerSousMedia(p, sm.id));
+    const supprimerBtn = document.querySelector(`[data-smsupprimer-for="${sm.id}"]`);
+    if (supprimerBtn) supprimerBtn.addEventListener('click', () => supprimerSousMedia(p, sm.id));
+
+    const fileInput = document.getElementById(`editor-sm-input-${sm.id}`);
+    if (fileInput) {
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        afficherNomFichier(`editor-sm-filename-${sm.id}`, file);
+        sm.img = await chargerMediaPhoto(file);
+      });
+    }
+    const xInput = document.querySelector(`[data-smx-for="${sm.id}"]`);
+    if (xInput) xInput.addEventListener('input', (e) => (sm.x = Number(e.target.value) / 100));
+    const yInput = document.querySelector(`[data-smy-for="${sm.id}"]`);
+    if (yInput) yInput.addEventListener('input', (e) => (sm.y = Number(e.target.value) / 100));
+    const scaleInput = document.querySelector(`[data-smscale-for="${sm.id}"]`);
+    if (scaleInput) scaleInput.addEventListener('input', (e) => (sm.scale = Number(e.target.value) / 100));
+    const rotzInput = document.querySelector(`[data-smrotz-for="${sm.id}"]`);
+    if (rotzInput) rotzInput.addEventListener('input', (e) => (sm.rotZ = Number(e.target.value)));
+    const shapeInput = document.querySelector(`[data-smshape-for="${sm.id}"]`);
+    if (shapeInput) shapeInput.addEventListener('change', (e) => (sm.maskShape = e.target.value));
+    const borderInput = document.querySelector(`[data-smborder-for="${sm.id}"]`);
+    if (borderInput) borderInput.addEventListener('change', (e) => (sm.borderActive = e.target.checked));
+    const brightnessInput = document.querySelector(`[data-smbrightness-for="${sm.id}"]`);
+    if (brightnessInput) brightnessInput.addEventListener('input', (e) => (sm.imgBrightness = Number(e.target.value)));
+    const saturationInput = document.querySelector(`[data-smsaturation-for="${sm.id}"]`);
+    if (saturationInput) saturationInput.addEventListener('input', (e) => (sm.imgSaturation = Number(e.target.value)));
+    const shadowInput = document.querySelector(`[data-smshadow-for="${sm.id}"]`);
+    if (shadowInput) shadowInput.addEventListener('change', (e) => (sm.shadowActive = e.target.checked));
+    const chromaKeyInput = document.querySelector(`[data-smchromakey-for="${sm.id}"]`);
+    if (chromaKeyInput) chromaKeyInput.addEventListener('change', (e) => (sm.chromaKeyActive = e.target.checked));
+  });
+}
+
 function bindPhotoLayerEvents() {
   EditorState.photos.forEach((p) => {
     const jump = () => allerAuSegment((s) => s.type === 'photo' && s.data.id === p.id);
     bindCalqueHeadEvents(p, rafraichirListePhotos, dupliquerCalquePhoto, 'photo');
-
-    const dissocierBtn = document.querySelector(`[data-dissocier-groupe-for="${p.id}"]`);
-    if (dissocierBtn) dissocierBtn.addEventListener('click', () => dissocierDuGroupe(p.id));
 
     const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
     if (fileInput) {
@@ -3538,34 +3800,31 @@ function bindPhotoLayerEvents() {
         p.img = await chargerMediaPhoto(premier);
         jump();
 
-        // Sélection multiple : le premier fichier remplace le média de ce
-        // calque, chaque fichier supplémentaire rejoint le même groupe
-        // (groupeId partagé) — les cartes restent réunies visuellement sous
-        // celle-ci, chacune avec ses propres réglages, et se déroulent l'une
-        // après l'autre dans la timeline (comportement séquentiel déjà en
-        // place pour EditorState.photos).
+        // Sélection multiple : le premier fichier remplace le média
+        // principal, chaque fichier supplémentaire devient un média
+        // superposé sur CE MÊME visuel (composite simultané, pas une
+        // nouvelle diapositive) — chacun avec ses propres réglages complets.
         if (autres.length) {
-          if (!p.groupeId) p.groupeId = idProjetUnique();
-          await ajouterMediasAuGroupe(p.groupeId, autres, p.id);
+          await ajouterSousMedias(p, autres);
           rafraichirListePhotos();
           pousserHistorique();
-          toast(`${autres.length} média(s) ajouté(s) au même groupe.`, 'success');
+          toast(`${autres.length} média(s) superposé(s) ajouté(s) sur ce visuel.`, 'success');
         }
       });
     }
-    const groupAddInput = document.getElementById(`editor-groupadd-input-${p.groupeId}`);
-    if (groupAddInput && !groupAddInput.dataset.bound) {
-      groupAddInput.dataset.bound = '1';
-      groupAddInput.addEventListener('change', async (e) => {
+    const sousMediaAddInput = document.getElementById(`editor-sousmedia-add-input-${p.id}`);
+    if (sousMediaAddInput) {
+      sousMediaAddInput.addEventListener('change', async (e) => {
         const fichiers = Array.from(e.target.files || []);
         if (!fichiers.length) return;
-        await ajouterMediasAuGroupe(p.groupeId, fichiers, p.id);
+        await ajouterSousMedias(p, fichiers);
         rafraichirListePhotos();
         pousserHistorique();
-        toast(`${fichiers.length} média(s) ajouté(s) au groupe.`, 'success');
+        toast(`${fichiers.length} média(s) superposé(s) ajouté(s).`, 'success');
         e.target.value = '';
       });
     }
+    bindSousMediaEvents(p);
     const captionInput = document.querySelector(`[data-caption-for="${p.id}"]`);
     if (captionInput) {
       captionInput.addEventListener('input', (e) => {
@@ -3847,32 +4106,36 @@ function bindPhotoDragReorder() {
   });
 }
 
-// Insère `fichiers` dans le même groupe visuel que `groupeId` (à la suite du
-// dernier membre déjà présent, ou juste après `apresId` si le groupe vient
-// d'être créé) — chaque média garde ses propres réglages complets, seul
-// l'affichage les réunit sous une carte commune.
-async function ajouterMediasAuGroupe(groupeId, fichiers, apresId) {
-  let indexInsertion = -1;
-  EditorState.photos.forEach((p, i) => {
-    if (p.groupeId === groupeId) indexInsertion = i;
-  });
-  if (indexInsertion === -1) indexInsertion = EditorState.photos.findIndex((p) => p.id === apresId);
-  if (indexInsertion === -1) indexInsertion = EditorState.photos.length - 1;
+// Ajoute des médias superposés (composite simultané, même visuel) au
+// calque `p` — chacun est un objet "photo" complet (mêmes réglages
+// possibles : forme, filtres, ombre, chromakey...) sauf qu'il ne fait pas
+// partie de la timeline : il s'affiche en même temps que `p` pendant tout
+// son segment. Positionnés en cascade légère pour rester distincts par
+// défaut plutôt que de tomber exactement l'un sur l'autre.
+async function ajouterSousMedias(p, fichiers) {
+  if (!p.sousMedias) p.sousMedias = [];
   for (const file of fichiers) {
-    const nouvelle = creerPhotoParDefaut(++elementIdCounter);
-    nouvelle.img = await chargerMediaPhoto(file);
-    nouvelle.groupeId = groupeId;
-    indexInsertion += 1;
-    EditorState.photos.splice(indexInsertion, 0, nouvelle);
+    const sm = creerPhotoParDefaut(++elementIdCounter);
+    sm.img = await chargerMediaPhoto(file);
+    sm.scale = 0.22;
+    const decalage = p.sousMedias.length % 4;
+    sm.x = 0.72 + (decalage % 2) * 0.06;
+    sm.y = 0.72 + Math.floor(decalage / 2) * 0.06;
+    p.sousMedias.push(sm);
   }
 }
 
-// Retire un calque de son groupe (la carte redevient indépendante, toujours
-// à la même place dans la timeline).
-function dissocierDuGroupe(id) {
-  const p = EditorState.photos.find((ph) => ph.id === id);
-  if (!p) return;
-  p.groupeId = null;
+function supprimerSousMedia(p, id) {
+  p.sousMedias = (p.sousMedias || []).filter((sm) => sm.id !== id);
+  rafraichirListePhotos();
+  pousserHistorique();
+}
+
+function dupliquerSousMedia(p, id) {
+  const original = (p.sousMedias || []).find((sm) => sm.id === id);
+  if (!original) return;
+  const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null };
+  p.sousMedias.push(copie);
   rafraichirListePhotos();
   pousserHistorique();
 }
@@ -3880,45 +4143,9 @@ function dissocierDuGroupe(id) {
 function rafraichirListePhotos() {
   const container = document.getElementById('editor-photos-list');
   if (!container) return;
-  if (!EditorState.photos.length) {
-    container.innerHTML = '<p class="form-hint">Aucune photo/vidéo ajoutée pour le moment.</p>';
-    bindPhotoLayerEvents();
-    purgerSelectionGroupee('photo', EditorState.photos);
-    return;
-  }
-  // Regroupe les cartes CONSÉCUTIVES qui partagent un groupeId sous un même
-  // conteneur visuel (elles se suivent toujours dans la timeline puisque
-  // ajouterMediasAuGroupe insère juste après le dernier membre du groupe).
-  const blocs = [];
-  EditorState.photos.forEach((p, i) => {
-    const dernierBloc = blocs[blocs.length - 1];
-    if (p.groupeId && dernierBloc && dernierBloc.groupeId === p.groupeId) {
-      dernierBloc.items.push({ p, i });
-    } else {
-      blocs.push({ groupeId: p.groupeId || null, items: [{ p, i }] });
-    }
-  });
-  container.innerHTML = blocs
-    .map((bloc) => {
-      if (bloc.items.length === 1) {
-        // Un groupe réduit à un seul membre (les autres ont été supprimés/
-        // dissociés) redevient une carte normale — le wrapper "groupe" n'a
-        // de sens qu'à partir de 2 médias.
-        return renderPhotoLayerHtml(bloc.items[0].p, bloc.items[0].i);
-      }
-      const interieur = bloc.items.map(({ p, i }) => renderPhotoLayerHtml(p, i)).join('');
-      return `
-        <div class="editor-photo-groupe">
-          <div class="editor-photo-groupe-head">
-            <span>Groupe de ${bloc.items.length} médias — se déroulent l'un après l'autre, réglages indépendants</span>
-            <label class="editor-file-picker editor-file-picker-mini" for="editor-groupadd-input-${bloc.groupeId}">+ Ajouter au groupe</label>
-            <input type="file" id="editor-groupadd-input-${bloc.groupeId}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input" multiple>
-          </div>
-          <div class="editor-photo-groupe-body">${interieur}</div>
-        </div>
-      `;
-    })
-    .join('');
+  container.innerHTML =
+    EditorState.photos.map((p, i) => renderPhotoLayerHtml(p, i)).join('') ||
+    '<p class="form-hint">Aucune photo/vidéo ajoutée pour le moment.</p>';
   bindPhotoLayerEvents();
   purgerSelectionGroupee('photo', EditorState.photos);
 }
@@ -3926,7 +4153,7 @@ function rafraichirListePhotos() {
 function creerPhotoParDefaut(id) {
   return {
     id,
-    groupeId: null, // médias importés ensemble (sélection multiple) : regroupés visuellement, réglages indépendants
+    sousMedias: [], // médias superposés : mêmes réglages complets, affichés EN MÊME TEMPS que ce calque (composite)
     nom: null, // null = nom par défaut ("Photo N"), sinon renommé par l'utilisateur
     verrouille: false, // empêche le déplacement sur le canvas et la suppression accidentelle
     visible: true, // false = exclu de la timeline (comme une piste "muette") sans être supprimé
@@ -4007,7 +4234,16 @@ function dupliquerCalquePhoto(id) {
   const index = EditorState.photos.findIndex((p) => p.id === id);
   if (index === -1) return;
   const original = EditorState.photos[index];
-  const copie = { ...original, id: ++elementIdCounter, nom: original.nom ? `${original.nom} (copie)` : null, verrouille: false };
+  const copie = {
+    ...original,
+    id: ++elementIdCounter,
+    nom: original.nom ? `${original.nom} (copie)` : null,
+    verrouille: false,
+    // Copie profonde des médias superposés (id propres) : un spread simple
+    // partagerait le même tableau que l'original, et le modifier sur l'un
+    // l'aurait modifié sur l'autre.
+    sousMedias: (original.sousMedias || []).map((sm) => ({ ...sm, id: ++elementIdCounter })),
+  };
   EditorState.photos.splice(index + 1, 0, copie);
   rafraichirListePhotos();
   pousserHistorique();
@@ -5024,8 +5260,13 @@ function rendreVueEtendue(zoomOut) {
 }
 
 function serialiserPhoto(p) {
-  const { img, bgOverrideVideoEl, bgOverrideImageEl, ...donnees } = p;
-  return { ...donnees, hasMedia: !!img, bgOverrideHasMedia: !!(bgOverrideVideoEl || bgOverrideImageEl) };
+  const { img, bgOverrideVideoEl, bgOverrideImageEl, sousMedias, ...donnees } = p;
+  return {
+    ...donnees,
+    hasMedia: !!img,
+    bgOverrideHasMedia: !!(bgOverrideVideoEl || bgOverrideImageEl),
+    sousMedias: (sousMedias || []).map(serialiserPhoto),
+  };
 }
 
 function serialiserTextBlock(b) {
