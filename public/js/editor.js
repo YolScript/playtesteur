@@ -67,6 +67,9 @@ const EditorState = {
   // Cadre décoratif plein cadre, dessiné par-dessus tout le reste.
   cadreDecoratif: { type: 'none', couleur: '#ffffff', epaisseur: 24 },
 
+  // [{ id, temps, nom }] — repères nommés sur la timeline visuelle.
+  marqueurs: [],
+
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
   // État de l'export : la timeline avance toujours en temps réel (1x),
   // identique à une lecture normale, pour que la durée exportée corresponde

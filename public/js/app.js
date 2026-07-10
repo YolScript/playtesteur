@@ -921,13 +921,83 @@ async function viewMesApps() {
 
 async function afficherEmailCompteService() {
   const hint = document.getElementById('service-account-hint');
+  let serviceEmail = 'playtesteur@gen-lang-client-0484128331.iam.gserviceaccount.com';
   try {
     const { email } = await Api.get('/api/apps/service-account');
     if (email) {
-      hint.innerHTML = `<p class="form-hint" style="margin-top:4px;">Ajoutez <strong>${escapeHtml(email)}</strong> dans Play Console → Utilisateurs et autorisations pour que l'import fonctionne sur cette app.</p>`;
+      serviceEmail = email;
     }
   } catch (_) {
     // Silencieux : indication facultative.
+  }
+
+  hint.innerHTML = `
+    <div class="tuto-import-container" style="margin-top: 14px; margin-bottom: 10px;">
+      <div class="tuto-import-header" id="tuto-import-toggle" style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--primary); font-size: 13px; font-weight: 600; user-select: none;">
+        <span class="tuto-chevron" style="display: inline-block; transition: transform var(--transition-fast); transform: rotate(0deg); font-size: 10px;">▶</span>
+        <span>Guide d'import : Configurer l'accès Play Console</span>
+      </div>
+      <div class="tuto-import-body hidden" id="tuto-import-content" style="margin-top: 10px; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 13px; line-height: 1.5; color: var(--text-muted); backdrop-filter: blur(var(--glass-blur));">
+        <p style="margin-bottom: 12px; color: var(--text-white);">Pour que l'importation de votre fiche fonctionne, vous devez autoriser notre compte de service sur votre Google Play Console :</p>
+        <ol style="margin-left: 20px; display: flex; flex-direction: column; gap: 10px; padding-left: 0; list-style-position: inside;">
+          <li style="margin-bottom: 4px;">Rendez-vous sur la <a href="https://play.google.com/console/" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 600;">Google Play Console</a> puis allez dans <strong>Utilisateurs et autorisations</strong>.</li>
+          <li style="margin-bottom: 4px;">Cliquez sur <strong>Inviter de nouveaux utilisateurs</strong>.</li>
+          <li style="margin-bottom: 4px;">Saisissez l'adresse e-mail suivante (cliquez pour copier) :
+            <div style="margin-top: 8px;">
+              <span class="copy-email-bubble" data-copy-email="${escapeHtml(serviceEmail)}" style="display: inline-flex; align-items: center; gap: 8px; background: rgba(0, 230, 118, 0.08); border: 1px solid rgba(0, 230, 118, 0.2); padding: 8px 14px; border-radius: var(--radius-md); color: var(--primary); cursor: pointer; font-family: monospace; font-weight: 600; font-size: 12px; transition: var(--transition-fast); user-select: all; box-shadow: var(--shadow-sm);">
+                <span class="copy-email-text" style="word-break: break-all;">${escapeHtml(serviceEmail)}</span>
+                <span class="copy-icon" style="font-size: 14px; flex-shrink: 0;">📋</span>
+              </span>
+            </div>
+          </li>
+          <li style="margin-bottom: 4px;">Dans l'onglet <strong>Autorisations d'application</strong> (ou autorisations globales), cochez la case :
+            <div style="margin-top: 8px; padding: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; gap: 10px; align-items: flex-start; text-align: left;">
+              <input type="checkbox" checked disabled style="width: 16px; height: 16px; accent-color: var(--accent-blue); flex-shrink: 0; cursor: not-allowed; margin-top: 2px;" />
+              <div>
+                <strong style="color: var(--text-white); display: block; font-size: 13px;">Afficher les informations sur les applications et télécharger les rapports groupés (lecture seule)</strong>
+                <span style="font-size: 12px; display: block; margin-top: 4px; color: var(--text-muted); line-height: 1.4;">
+                  Afficher toutes les informations liées à l'appli (y compris les projets de services de jeux Play associés), sauf les données financières. Les utilisateurs avec cette autorisation peuvent aussi télécharger des rapports groupés.
+                </span>
+              </div>
+            </div>
+          </li>
+          <li>Envoyez l'invitation pour valider.</li>
+        </ol>
+      </div>
+    </div>
+  `;
+
+  const toggle = document.getElementById('tuto-import-toggle');
+  const content = document.getElementById('tuto-import-content');
+  const chevron = toggle.querySelector('.tuto-chevron');
+
+  toggle.addEventListener('click', () => {
+    const isHidden = content.classList.contains('hidden');
+    if (isHidden) {
+      content.classList.remove('hidden');
+      chevron.style.transform = 'rotate(90deg)';
+    } else {
+      content.classList.add('hidden');
+      chevron.style.transform = 'rotate(0deg)';
+    }
+  });
+
+  const copyBubble = hint.querySelector('.copy-email-bubble');
+  if (copyBubble) {
+    copyBubble.addEventListener('click', async () => {
+      const emailText = copyBubble.dataset.copyEmail;
+      try {
+        await navigator.clipboard.writeText(emailText);
+        toast('Adresse e-mail copiée !', 'success');
+        const copyIcon = copyBubble.querySelector('.copy-icon');
+        copyIcon.textContent = '✓';
+        setTimeout(() => {
+          copyIcon.textContent = '📋';
+        }, 2000);
+      } catch (err) {
+        toast("Impossible de copier l'adresse.", 'error');
+      }
+    });
   }
 }
 
