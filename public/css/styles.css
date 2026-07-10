@@ -1284,6 +1284,34 @@ tbody tr:hover { background: var(--bg-card-hover); }
 .editor-remove-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 .editor-remove-btn:disabled:hover { color: var(--text-muted); background: none; }
 
+.editor-crop-editor { display: flex; flex-direction: column; gap: 6px; }
+.editor-crop-editor-stage {
+    position: relative;
+    width: 100%;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: #000;
+    touch-action: none;
+}
+.editor-crop-editor-img { display: block; width: 100%; height: auto; user-select: none; pointer-events: none; }
+.editor-crop-rect {
+    position: absolute;
+    border: 2px solid var(--accent-color, #00e676);
+    background: rgba(0, 230, 118, 0.12);
+    cursor: move;
+    box-sizing: border-box;
+}
+.editor-crop-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--accent-color, #00e676);
+    border-radius: 3px;
+    bottom: -7px;
+    right: -7px;
+    cursor: nwse-resize;
+}
+
 .editor-projet-liste { display: flex; flex-direction: column; gap: 8px; }
 .editor-projet-item {
     background: var(--bg-input);

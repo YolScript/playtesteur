@@ -2989,6 +2989,18 @@ function renderPhotoLayerHtml(p, index) {
             <label class="editor-mini-label">Hauteur<input type="range" data-croph-for="${p.id}" min="20" max="100" value="${Math.round((p.cropH ?? 1) * 100)}"></label>
           </div>
           <div class="editor-row">
+            <button type="button" class="editor-add-btn" data-cropvisuel-toggle-for="${p.id}">Recadrer visuellement</button>
+          </div>
+          <div class="editor-crop-editor hidden" id="editor-crop-editor-${p.id}">
+            <div class="editor-crop-editor-stage" id="editor-crop-editor-stage-${p.id}">
+              <img class="editor-crop-editor-img" id="editor-crop-editor-img-${p.id}" alt="" draggable="false">
+              <div class="editor-crop-rect" data-cropvisuel-rect-for="${p.id}">
+                <div class="editor-crop-handle" data-handle="se"></div>
+              </div>
+            </div>
+            <span class="form-hint">Glissez le cadre pour déplacer le recadrage, son coin bas-droit pour le redimensionner. Disponible pour les images (pas les vidéos).</span>
+          </div>
+          <div class="editor-row">
             <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-cropratiolock-for="${p.id}" ${p.cropRatioVerrouille ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Verrouiller le ratio largeur/hauteur</span></label>
           </div>
           <span class="form-hint">Haut/Gauche déplacent le point de départ du recadrage, Largeur/Hauteur ajustent la zone gardée de l'image originale. Le verrou garde les proportions actuelles quand vous ajustez l'un des deux curseurs.</span>
@@ -3142,6 +3154,93 @@ function bindCalqueHeadEvents(item, rafraichirFn, dupliquerFn, type) {
   }
   const dupliqueBtn = document.querySelector(`[data-calqueduplique-for="${item.id}"]`);
   if (dupliqueBtn) dupliqueBtn.addEventListener('click', () => dupliquerFn(item.id));
+}
+
+// Recadrage visuel : positionne le cadre de sélection (en %) d'après
+// cropX/Y/W/H, et resynchronise les curseurs Haut/Gauche/Largeur/Hauteur
+// pour qu'ils restent cohérents avec une manipulation à la souris.
+function positionnerRectCrop(p) {
+  const rect = document.querySelector(`[data-cropvisuel-rect-for="${p.id}"]`);
+  if (!rect) return;
+  rect.style.left = `${(p.cropX ?? 0) * 100}%`;
+  rect.style.top = `${(p.cropY ?? 0) * 100}%`;
+  rect.style.width = `${(p.cropW ?? 1) * 100}%`;
+  rect.style.height = `${(p.cropH ?? 1) * 100}%`;
+}
+
+function synchroniserCropSliders(p) {
+  const setVal = (selecteur, valeur) => {
+    const el = document.querySelector(selecteur);
+    if (el) el.value = Math.round(valeur * 100);
+  };
+  setVal(`[data-cropx-for="${p.id}"]`, p.cropX ?? 0);
+  setVal(`[data-cropy-for="${p.id}"]`, p.cropY ?? 0);
+  setVal(`[data-cropw-for="${p.id}"]`, p.cropW ?? 1);
+  setVal(`[data-croph-for="${p.id}"]`, p.cropH ?? 1);
+}
+
+// Glisser-déposer du recadrage directement sur l'image source : le cadre se
+// déplace (ancré en haut-gauche, comme les curseurs existants) et se
+// redimensionne depuis son coin bas-droit, en respectant le verrou de ratio
+// s'il est actif.
+function bindCropVisuel(p) {
+  const stage = document.getElementById(`editor-crop-editor-stage-${p.id}`);
+  const rect = document.querySelector(`[data-cropvisuel-rect-for="${p.id}"]`);
+  if (!stage || !rect) return;
+
+  const appliquer = (cropX, cropY, cropW, cropH) => {
+    const minTaille = 0.1;
+    cropW = Math.max(minTaille, Math.min(1, cropW));
+    cropH = Math.max(minTaille, Math.min(1, cropH));
+    cropX = Math.max(0, Math.min(1 - cropW, cropX));
+    cropY = Math.max(0, Math.min(1 - cropH, cropY));
+    p.cropX = cropX;
+    p.cropY = cropY;
+    p.cropW = cropW;
+    p.cropH = cropH;
+    positionnerRectCrop(p);
+    synchroniserCropSliders(p);
+  };
+
+  let action = null;
+  const demarrer = (type) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    action = {
+      type,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      depart: { cropX: p.cropX ?? 0, cropY: p.cropY ?? 0, cropW: p.cropW ?? 1, cropH: p.cropH ?? 1 },
+    };
+    stage.setPointerCapture(e.pointerId);
+  };
+
+  rect.addEventListener('pointerdown', demarrer('move'));
+  const poignee = rect.querySelector('[data-handle="se"]');
+  if (poignee) poignee.addEventListener('pointerdown', demarrer('resize'));
+
+  stage.addEventListener('pointermove', (e) => {
+    if (!action) return;
+    const stageRect = stage.getBoundingClientRect();
+    const dx = (e.clientX - action.startClientX) / stageRect.width;
+    const dy = (e.clientY - action.startClientY) / stageRect.height;
+    const d = action.depart;
+    if (action.type === 'move') {
+      appliquer(d.cropX + dx, d.cropY + dy, d.cropW, d.cropH);
+    } else {
+      const ratio = d.cropH > 0 ? d.cropW / d.cropH : 1;
+      const cropW = d.cropW + dx;
+      const cropH = p.cropRatioVerrouille ? cropW / ratio : d.cropH + dy;
+      appliquer(d.cropX, d.cropY, cropW, cropH);
+    }
+  });
+
+  ['pointerup', 'pointercancel'].forEach((evtName) => {
+    stage.addEventListener(evtName, () => {
+      if (action) pousserHistorique();
+      action = null;
+    });
+  });
 }
 
 function bindPhotoLayerEvents() {
@@ -3323,6 +3422,25 @@ function bindPhotoLayerEvents() {
     }
     const cropRatioLockInput = document.querySelector(`[data-cropratiolock-for="${p.id}"]`);
     if (cropRatioLockInput) cropRatioLockInput.addEventListener('change', (e) => (p.cropRatioVerrouille = e.target.checked));
+
+    const cropVisuelToggle = document.querySelector(`[data-cropvisuel-toggle-for="${p.id}"]`);
+    const cropEditor = document.getElementById(`editor-crop-editor-${p.id}`);
+    if (cropVisuelToggle && cropEditor) {
+      cropVisuelToggle.addEventListener('click', () => {
+        if (!p.img || p.img.tagName === 'VIDEO') {
+          toast('Le recadrage visuel est disponible pour les images (pas les vidéos).', 'error');
+          return;
+        }
+        const seraOuvert = cropEditor.classList.contains('hidden');
+        cropEditor.classList.toggle('hidden', !seraOuvert);
+        if (seraOuvert) {
+          const imgEl = document.getElementById(`editor-crop-editor-img-${p.id}`);
+          if (imgEl) imgEl.src = p.img.src;
+          positionnerRectCrop(p);
+        }
+      });
+      bindCropVisuel(p);
+    }
 
     const bgOverrideSelect = document.querySelector(`[data-bgoverride-for="${p.id}"]`);
     if (bgOverrideSelect) {
