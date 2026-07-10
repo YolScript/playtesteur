@@ -3131,7 +3131,8 @@ function renderPhotoLayerHtml(p, index) {
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
       ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`)}
-      <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres créent de nouvelles cartes juste en dessous.</span>
+      <span class="form-hint">Astuce : Ctrl+clic (ou Maj+clic) sur plusieurs fichiers dans la fenêtre pour en importer d'un coup — le premier remplace celui-ci, les autres rejoignent le même groupe juste en dessous, avec leurs propres réglages.</span>
+      ${p.groupeId ? `<div class="editor-row" style="justify-content:flex-end;"><button type="button" class="editor-add-btn" data-dissocier-groupe-for="${p.id}" title="Sortir ce média du groupe">Dissocier du groupe</button></div>` : ''}
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
         <label class="editor-mini-label">Taille<input type="range" data-scale-for="${p.id}" min="5" max="80" value="${Math.round(p.scale * 100)}"></label>
@@ -3486,6 +3487,9 @@ function bindPhotoLayerEvents() {
     const jump = () => allerAuSegment((s) => s.type === 'photo' && s.data.id === p.id);
     bindCalqueHeadEvents(p, rafraichirListePhotos, dupliquerCalquePhoto, 'photo');
 
+    const dissocierBtn = document.querySelector(`[data-dissocier-groupe-for="${p.id}"]`);
+    if (dissocierBtn) dissocierBtn.addEventListener('click', () => dissocierDuGroupe(p.id));
+
     const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
     if (fileInput) {
       fileInput.addEventListener('change', async (e) => {
@@ -3497,32 +3501,31 @@ function bindPhotoLayerEvents() {
         jump();
 
         // Sélection multiple : le premier fichier remplace le média de ce
-        // calque, chaque fichier supplémentaire crée un nouveau calque juste
-        // après — pratique pour importer toute une série de photos/vidéos
-        // d'un coup plutôt que de cliquer "+ Ajouter" pour chacune.
+        // calque, chaque fichier supplémentaire rejoint le même groupe
+        // (groupeId partagé) — les cartes restent réunies visuellement sous
+        // celle-ci, chacune avec ses propres réglages, et se déroulent l'une
+        // après l'autre dans la timeline (comportement séquentiel déjà en
+        // place pour EditorState.photos).
         if (autres.length) {
-          let indexInsertion = EditorState.photos.indexOf(p);
-          let dernierAjoutId = null;
-          for (const file of autres) {
-            const nouvelle = creerPhotoParDefaut(++elementIdCounter);
-            nouvelle.img = await chargerMediaPhoto(file);
-            indexInsertion += 1;
-            EditorState.photos.splice(indexInsertion, 0, nouvelle);
-            dernierAjoutId = nouvelle.id;
-          }
+          if (!p.groupeId) p.groupeId = idProjetUnique();
+          await ajouterMediasAuGroupe(p.groupeId, autres, p.id);
           rafraichirListePhotos();
           pousserHistorique();
-          toast(`${autres.length} photo(s)/vidéo(s) supplémentaire(s) ajoutée(s) juste en dessous — faites défiler pour les voir.`, 'success');
-          // Repère visuellement la dernière carte ajoutée (sélection multiple
-          // = plusieurs nouvelles cartes d'un coup, faciles à manquer si on
-          // ne fait pas défiler la liste).
-          const dernierCard = document.querySelector(`[data-photo-drag="${dernierAjoutId}"]`);
-          if (dernierCard) {
-            dernierCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            dernierCard.classList.add('editor-photo-layer-flash');
-            setTimeout(() => dernierCard.classList.remove('editor-photo-layer-flash'), 1600);
-          }
+          toast(`${autres.length} média(s) ajouté(s) au même groupe.`, 'success');
         }
+      });
+    }
+    const groupAddInput = document.getElementById(`editor-groupadd-input-${p.groupeId}`);
+    if (groupAddInput && !groupAddInput.dataset.bound) {
+      groupAddInput.dataset.bound = '1';
+      groupAddInput.addEventListener('change', async (e) => {
+        const fichiers = Array.from(e.target.files || []);
+        if (!fichiers.length) return;
+        await ajouterMediasAuGroupe(p.groupeId, fichiers, p.id);
+        rafraichirListePhotos();
+        pousserHistorique();
+        toast(`${fichiers.length} média(s) ajouté(s) au groupe.`, 'success');
+        e.target.value = '';
       });
     }
     const captionInput = document.querySelector(`[data-caption-for="${p.id}"]`);
@@ -3806,12 +3809,78 @@ function bindPhotoDragReorder() {
   });
 }
 
+// Insère `fichiers` dans le même groupe visuel que `groupeId` (à la suite du
+// dernier membre déjà présent, ou juste après `apresId` si le groupe vient
+// d'être créé) — chaque média garde ses propres réglages complets, seul
+// l'affichage les réunit sous une carte commune.
+async function ajouterMediasAuGroupe(groupeId, fichiers, apresId) {
+  let indexInsertion = -1;
+  EditorState.photos.forEach((p, i) => {
+    if (p.groupeId === groupeId) indexInsertion = i;
+  });
+  if (indexInsertion === -1) indexInsertion = EditorState.photos.findIndex((p) => p.id === apresId);
+  if (indexInsertion === -1) indexInsertion = EditorState.photos.length - 1;
+  for (const file of fichiers) {
+    const nouvelle = creerPhotoParDefaut(++elementIdCounter);
+    nouvelle.img = await chargerMediaPhoto(file);
+    nouvelle.groupeId = groupeId;
+    indexInsertion += 1;
+    EditorState.photos.splice(indexInsertion, 0, nouvelle);
+  }
+}
+
+// Retire un calque de son groupe (la carte redevient indépendante, toujours
+// à la même place dans la timeline).
+function dissocierDuGroupe(id) {
+  const p = EditorState.photos.find((ph) => ph.id === id);
+  if (!p) return;
+  p.groupeId = null;
+  rafraichirListePhotos();
+  pousserHistorique();
+}
+
 function rafraichirListePhotos() {
   const container = document.getElementById('editor-photos-list');
   if (!container) return;
-  container.innerHTML =
-    EditorState.photos.map((p, i) => renderPhotoLayerHtml(p, i)).join('') ||
-    '<p class="form-hint">Aucune photo/vidéo ajoutée pour le moment.</p>';
+  if (!EditorState.photos.length) {
+    container.innerHTML = '<p class="form-hint">Aucune photo/vidéo ajoutée pour le moment.</p>';
+    bindPhotoLayerEvents();
+    purgerSelectionGroupee('photo', EditorState.photos);
+    return;
+  }
+  // Regroupe les cartes CONSÉCUTIVES qui partagent un groupeId sous un même
+  // conteneur visuel (elles se suivent toujours dans la timeline puisque
+  // ajouterMediasAuGroupe insère juste après le dernier membre du groupe).
+  const blocs = [];
+  EditorState.photos.forEach((p, i) => {
+    const dernierBloc = blocs[blocs.length - 1];
+    if (p.groupeId && dernierBloc && dernierBloc.groupeId === p.groupeId) {
+      dernierBloc.items.push({ p, i });
+    } else {
+      blocs.push({ groupeId: p.groupeId || null, items: [{ p, i }] });
+    }
+  });
+  container.innerHTML = blocs
+    .map((bloc) => {
+      if (bloc.items.length === 1) {
+        // Un groupe réduit à un seul membre (les autres ont été supprimés/
+        // dissociés) redevient une carte normale — le wrapper "groupe" n'a
+        // de sens qu'à partir de 2 médias.
+        return renderPhotoLayerHtml(bloc.items[0].p, bloc.items[0].i);
+      }
+      const interieur = bloc.items.map(({ p, i }) => renderPhotoLayerHtml(p, i)).join('');
+      return `
+        <div class="editor-photo-groupe">
+          <div class="editor-photo-groupe-head">
+            <span>Groupe de ${bloc.items.length} médias — se déroulent l'un après l'autre, réglages indépendants</span>
+            <label class="editor-file-picker editor-file-picker-mini" for="editor-groupadd-input-${bloc.groupeId}">+ Ajouter au groupe</label>
+            <input type="file" id="editor-groupadd-input-${bloc.groupeId}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input" multiple>
+          </div>
+          <div class="editor-photo-groupe-body">${interieur}</div>
+        </div>
+      `;
+    })
+    .join('');
   bindPhotoLayerEvents();
   purgerSelectionGroupee('photo', EditorState.photos);
 }
@@ -3819,6 +3888,7 @@ function rafraichirListePhotos() {
 function creerPhotoParDefaut(id) {
   return {
     id,
+    groupeId: null, // médias importés ensemble (sélection multiple) : regroupés visuellement, réglages indépendants
     nom: null, // null = nom par défaut ("Photo N"), sinon renommé par l'utilisateur
     verrouille: false, // empêche le déplacement sur le canvas et la suppression accidentelle
     visible: true, // false = exclu de la timeline (comme une piste "muette") sans être supprimé
