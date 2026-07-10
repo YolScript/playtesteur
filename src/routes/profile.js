@@ -31,7 +31,13 @@ function listeMails(user) {
   const raisonRisque =
     user.fraud_warnings > 0 ? dernierMotifFraud.get(user.id)?.raison || null : null;
 
-  const list = mailsDuTesteur.all(user.id).map((r) => {
+  // IMPORTANT : chaque entrée doit garder le google_group_email réel de
+  // l'application (le mail de groupe que le testeur utilise côté Play
+  // Console). Une ancienne "priorisation admin" remplaçait ici le premier
+  // mail par l'adresse personnelle de l'admin : les testeurs recevaient
+  // alors un mail d'utilisateur du site au lieu du mail Play Console de
+  // leur application (bug signalé, retiré).
+  return mailsDuTesteur.all(user.id).map((r) => {
     let statut_visuel = 'vert';
     let raison = null;
     if (r.statut === 'Suspendu') {
@@ -50,42 +56,6 @@ function listeMails(user) {
       date_rejoint: r.date_rejoint,
     };
   });
-
-  if (user.mails_debloques >= 1) {
-    const adminActif = db.prepare(`
-      SELECT 1 FROM activity_log al
-      JOIN users u ON u.id = al.user_id
-      WHERE u.email = 'agorasjohn@gmail.com'
-        AND al.created_at >= datetime('now', '-3 days')
-      LIMIT 1
-    `).get();
-
-    if (adminActif) {
-      const adminItem = {
-        id: -1,
-        nom_application: 'PlayTesteur (Admin)',
-        google_group_email: 'agorasjohn@gmail.com',
-        statut: 'Complété',
-        statut_visuel: 'vert',
-        raison: null,
-        date_rejoint: new Date().toISOString(),
-      };
-      if (list.length > 0) {
-        list[0] = {
-          ...list[0],
-          nom_application: adminItem.nom_application,
-          google_group_email: adminItem.google_group_email,
-          statut: adminItem.statut,
-          statut_visuel: adminItem.statut_visuel,
-          raison: adminItem.raison,
-        };
-      } else {
-        list.push(adminItem);
-      }
-    }
-  }
-
-  return list;
 }
 
 router.get('/', requireAuth, (req, res) => {
