@@ -1197,6 +1197,9 @@ tbody tr:hover { background: var(--bg-card-hover); }
     white-space: nowrap;
 }
 .editor-add-btn:hover { background: rgba(0, 230, 118, 0.25); }
+.editor-add-btn.active { background: var(--primary); color: var(--text-dark); }
+
+.editor-canvas-dessin { cursor: crosshair; outline: 2px dashed var(--primary); outline-offset: -2px; }
 
 .editor-photos-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
 

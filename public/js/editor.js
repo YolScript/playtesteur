@@ -57,6 +57,13 @@ const EditorState = {
   // au même titre que les blocs de texte (indépendants de la timeline photo).
   shapes: [],
 
+  // [{ id, points:[{x,y}], couleur, epaisseur, opacite, startTime, endTime }]
+  // — traits de dessin libre (pinceau), un calque plein cadre par trait.
+  drawings: [],
+  modeDessin: false,
+  dessinCouleur: '#ff2d95',
+  dessinEpaisseur: 6,
+
   playback: { playing: false, currentTime: 0, lastFrameTs: null },
   // État de l'export : la timeline avance toujours en temps réel (1x),
   // identique à une lecture normale, pour que la durée exportée corresponde
@@ -142,8 +149,8 @@ let elementIdCounter = 0;
 const CHAMPS_HISTORIQUE = [
   'bgType', 'bgColor', 'bgGradient', 'bgAdjust', 'overlay', 'bgChromaKey',
   'audioVolume', 'audioFadeIn', 'audioFadeOut', 'audioTrimStart', 'voiceVolume',
-  'fontFamily', 'intro', 'outro', 'photos', 'textBlocks', 'shapes', 'imageExportFormat',
-  'effects', 'transitionType',
+  'fontFamily', 'intro', 'outro', 'photos', 'textBlocks', 'shapes', 'drawings',
+  'imageExportFormat', 'effects', 'transitionType',
 ];
 // Références aux éléments média déjà chargés : à réattacher telles quelles
 // (jamais clonées, jamais recréées) lors d'une restauration.
@@ -200,6 +207,7 @@ function restaurerSnapshot(snap) {
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
   rafraichirListeFormes();
+  rafraichirPanneauDessin();
   rafraichirPanneauApresRestauration();
   Historique.enPause = false;
 }
@@ -429,6 +437,7 @@ async function restaurerProjetComplet({ etat, medias }) {
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
   rafraichirListeFormes();
+  rafraichirPanneauDessin();
   rafraichirPanneauApresRestauration();
   Historique.enPause = false;
   initHistorique();
@@ -448,6 +457,7 @@ async function nouveauProjetVide() {
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
   rafraichirListeFormes();
+  rafraichirPanneauDessin();
   rafraichirPanneauApresRestauration();
   Historique.enPause = false;
   initHistorique();
@@ -1050,6 +1060,7 @@ async function initEditeur() {
   rafraichirListePhotos();
   rafraichirListeTextBlocks();
   rafraichirListeFormes();
+  bindModeDessin();
 
   arreterEditeur();
   await initMoteur3D(canvas);
@@ -2424,6 +2435,57 @@ function mettreAJourFormes(now) {
   });
 }
 
+function dessinActif(d, now) {
+  if (d.visible === false) return false;
+  if (d.startTime != null && now < d.startTime) return false;
+  if (d.endTime != null && now > d.endTime) return false;
+  return true;
+}
+
+// Un trait de dessin libre occupe tout le cadre (les points peuvent partir
+// n'importe où), contrairement aux formes/textes qui ont une boîte propre.
+function dessinerTrait(d, layerName) {
+  const { width, height } = EditorState.three;
+  const layer = getOrCreateCanvasLayer(layerName);
+  sizeLayerCanvas(layer, width, height);
+  const ctx = layer.ctx;
+  ctx.clearRect(0, 0, width, height);
+  if (d.points.length >= 2) {
+    ctx.globalAlpha = Number(d.opacite ?? 1);
+    ctx.strokeStyle = d.couleur || '#ff2d95';
+    ctx.lineWidth = Number(d.epaisseur) || 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    d.points.forEach((pt, i) => {
+      const x = pt.x * width;
+      const y = pt.y * height;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  placerLayer(layer, width / 2, height / 2, d.z ?? 9, 0, 0, 0);
+  layer.mesh.scale.set(width, height, 1);
+}
+
+function mettreAJourDessins(now) {
+  EditorState.drawings.forEach((d) => {
+    const layerName = `dessin-${d.id}`;
+    if (!dessinActif(d, now) || d.points.length < 2) {
+      hideLayer(layerName);
+      return;
+    }
+    dessinerTrait(d, layerName);
+  });
+  Object.keys(EditorState.three.layers).forEach((name) => {
+    if (name.startsWith('dessin-') && !EditorState.drawings.some((d) => `dessin-${d.id}` === name)) {
+      hideLayer(name);
+    }
+  });
+}
+
 function mettreAJourBlocsTexte(now, tGlobal) {
   const boxes = {};
   EditorState.textBlocks.forEach((b) => {
@@ -2857,6 +2919,7 @@ function renderEditorFrame() {
 
   EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime, tGlobal);
   mettreAJourFormes(EditorState.playback.currentTime);
+  mettreAJourDessins(EditorState.playback.currentTime);
 
   ts.bloomPass.enabled = EditorState.effects.bloomActive;
   let strength = Number(EditorState.effects.bloomStrength) || 0;
@@ -3378,27 +3441,9 @@ function renderSousMediaHtml(sm, index) {
       <div class="editor-row">
         <label class="editor-mini-label">X<input type="range" data-smx-for="${sm.id}" min="0" max="100" value="${Math.round((sm.x ?? 0.5) * 100)}"></label>
         <label class="editor-mini-label">Y<input type="range" data-smy-for="${sm.id}" min="0" max="100" value="${Math.round((sm.y ?? 0.5) * 100)}"></label>
-      </div>
-      <div class="editor-row">
         <label class="editor-mini-label">Taille<input type="range" data-smscale-for="${sm.id}" min="5" max="80" value="${Math.round((sm.scale ?? 0.22) * 100)}"></label>
-        <label class="editor-mini-label">Rotation<input type="range" data-smrotz-for="${sm.id}" min="-45" max="45" value="${sm.rotZ || 0}"></label>
       </div>
-      <div class="editor-row">
-        <select data-smshape-for="${sm.id}">
-          <option value="rect" ${(!sm.maskShape || sm.maskShape === 'rect') ? 'selected' : ''}>Rectangle arrondi</option>
-          <option value="circle" ${sm.maskShape === 'circle' ? 'selected' : ''}>Cercle / ellipse</option>
-          <option value="hexagon" ${sm.maskShape === 'hexagon' ? 'selected' : ''}>Hexagone</option>
-        </select>
-        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-smborder-for="${sm.id}" ${sm.borderActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Bordure</span></label>
-      </div>
-      <div class="editor-row">
-        <label class="editor-mini-label">Luminosité<input type="range" data-smbrightness-for="${sm.id}" min="40" max="180" value="${sm.imgBrightness ?? 100}"></label>
-        <label class="editor-mini-label">Saturation<input type="range" data-smsaturation-for="${sm.id}" min="0" max="200" value="${sm.imgSaturation ?? 100}"></label>
-      </div>
-      <div class="editor-row">
-        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-smshadow-for="${sm.id}" ${sm.shadowActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Ombre portée</span></label>
-        <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-smchromakey-for="${sm.id}" ${sm.chromaKeyActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Clé chromatique (fond vert)</span></label>
-      </div>
+      ${renderReglagesAvancesPhotoHtml(sm)}
     </div>
   `;
 }
@@ -3407,6 +3452,7 @@ function renderPhotoLayerHtml(p, index) {
   return `
     <div class="editor-photo-layer ${p.verrouille ? 'verrouille' : ''}" draggable="${!p.verrouille}" data-photo-drag="${p.id}">
       ${renderCalqueHeadHtml(p, `Photo/Vidéo ${index + 1}`, 'photo')}
+      <span class="editor-mini-heading">Média principal (réglages ci-dessous et dans les sections pliables)</span>
       ${markupFilePickerPhoto(`editor-photo-input-${p.id}`, `editor-photo-filename-${p.id}`, p.img)}
       <textarea class="editor-photo-caption" data-caption-for="${p.id}" rows="2" placeholder="Texte lié à cette photo...">${p.texte || ''}</textarea>
       <div class="editor-row">
@@ -3428,6 +3474,39 @@ function renderPhotoLayerHtml(p, index) {
         </div>
       </details>
 
+      ${renderReglagesAvancesPhotoHtml(p)}
+
+      <details class="editor-accordion-nested">
+        <summary>Fond de cette photo</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <select data-bgoverride-for="${p.id}">
+              <option value="none" ${(!p.bgOverrideType || p.bgOverrideType === 'none') ? 'selected' : ''}>Fond global</option>
+              <option value="video" ${p.bgOverrideType === 'video' ? 'selected' : ''}>Vidéo propre à cette photo</option>
+              <option value="image" ${p.bgOverrideType === 'image' ? 'selected' : ''}>Image propre à cette photo</option>
+              <option value="color" ${p.bgOverrideType === 'color' ? 'selected' : ''}>Couleur unie</option>
+            </select>
+          </div>
+          <div class="editor-row">
+            <input type="file" data-bgoverridefile-for="${p.id}" accept="video/mp4,image/png,image/jpeg" class="editor-file-input" id="editor-bgoverride-file-${p.id}">
+            <label class="editor-file-picker" for="editor-bgoverride-file-${p.id}">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+              <span>Choisir un fichier</span>
+            </label>
+            <input type="color" data-bgoverridecolor-for="${p.id}" value="${p.bgOverrideColor || '#12151c'}">
+          </div>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+// Réglages avancés partagés par un calque photo principal ET ses médias
+// superposés (même moteur de rendu, mettreAJourPhoto() lit les mêmes champs
+// quel que soit l'appelant) — extrait une fois pour éviter que les deux
+// panneaux ne divergent en fonctionnalités.
+function renderReglagesAvancesPhotoHtml(p) {
+  return `
       <details class="editor-accordion-nested">
         <summary>Forme &amp; bordure</summary>
         <div class="editor-accordion-nested-body">
@@ -3536,28 +3615,6 @@ function renderPhotoLayerHtml(p, index) {
       </details>
 
       <details class="editor-accordion-nested">
-        <summary>Fond de cette photo</summary>
-        <div class="editor-accordion-nested-body">
-          <div class="editor-row">
-            <select data-bgoverride-for="${p.id}">
-              <option value="none" ${(!p.bgOverrideType || p.bgOverrideType === 'none') ? 'selected' : ''}>Fond global</option>
-              <option value="video" ${p.bgOverrideType === 'video' ? 'selected' : ''}>Vidéo propre à cette photo</option>
-              <option value="image" ${p.bgOverrideType === 'image' ? 'selected' : ''}>Image propre à cette photo</option>
-              <option value="color" ${p.bgOverrideType === 'color' ? 'selected' : ''}>Couleur unie</option>
-            </select>
-          </div>
-          <div class="editor-row">
-            <input type="file" data-bgoverridefile-for="${p.id}" accept="video/mp4,image/png,image/jpeg" class="editor-file-input" id="editor-bgoverride-file-${p.id}">
-            <label class="editor-file-picker" for="editor-bgoverride-file-${p.id}">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
-              <span>Choisir un fichier</span>
-            </label>
-            <input type="color" data-bgoverridecolor-for="${p.id}" value="${p.bgOverrideColor || '#12151c'}">
-          </div>
-        </div>
-      </details>
-
-      <details class="editor-accordion-nested">
         <summary>Rotation 3D</summary>
         <div class="editor-accordion-nested-body">
           <div class="editor-row">
@@ -3599,7 +3656,6 @@ function renderPhotoLayerHtml(p, index) {
           </div>
         </div>
       </details>
-    </div>
   `;
 }
 
@@ -3778,6 +3834,7 @@ function bindCropVisuel(p) {
 // SelectionCalques (la sélection groupée reste au niveau des calques
 // principaux).
 function bindSousMediaEvents(p) {
+  const jumpVersParent = () => allerAuSegment((s) => s.type === 'photo' && s.data.id === p.id);
   (p.sousMedias || []).forEach((sm) => {
     const nomInput = document.querySelector(`[data-smnom-for="${sm.id}"]`);
     if (nomInput) nomInput.addEventListener('change', (e) => (sm.nom = e.target.value.trim() || null));
@@ -3810,21 +3867,200 @@ function bindSousMediaEvents(p) {
     if (yInput) yInput.addEventListener('input', (e) => (sm.y = Number(e.target.value) / 100));
     const scaleInput = document.querySelector(`[data-smscale-for="${sm.id}"]`);
     if (scaleInput) scaleInput.addEventListener('input', (e) => (sm.scale = Number(e.target.value) / 100));
-    const rotzInput = document.querySelector(`[data-smrotz-for="${sm.id}"]`);
-    if (rotzInput) rotzInput.addEventListener('input', (e) => (sm.rotZ = Number(e.target.value)));
-    const shapeInput = document.querySelector(`[data-smshape-for="${sm.id}"]`);
-    if (shapeInput) shapeInput.addEventListener('change', (e) => (sm.maskShape = e.target.value));
-    const borderInput = document.querySelector(`[data-smborder-for="${sm.id}"]`);
-    if (borderInput) borderInput.addEventListener('change', (e) => (sm.borderActive = e.target.checked));
-    const brightnessInput = document.querySelector(`[data-smbrightness-for="${sm.id}"]`);
-    if (brightnessInput) brightnessInput.addEventListener('input', (e) => (sm.imgBrightness = Number(e.target.value)));
-    const saturationInput = document.querySelector(`[data-smsaturation-for="${sm.id}"]`);
-    if (saturationInput) saturationInput.addEventListener('input', (e) => (sm.imgSaturation = Number(e.target.value)));
-    const shadowInput = document.querySelector(`[data-smshadow-for="${sm.id}"]`);
-    if (shadowInput) shadowInput.addEventListener('change', (e) => (sm.shadowActive = e.target.checked));
-    const chromaKeyInput = document.querySelector(`[data-smchromakey-for="${sm.id}"]`);
-    if (chromaKeyInput) chromaKeyInput.addEventListener('change', (e) => (sm.chromaKeyActive = e.target.checked));
+
+    // Même jeu complet de réglages (forme, filtres, ombre/glow, chromakey,
+    // recadrage, rotation 3D, effets énergétiques/particules, spectre) que
+    // le média principal — voir renderReglagesAvancesPhotoHtml.
+    bindReglagesAvancesPhotoEvents(sm, jumpVersParent);
   });
+}
+
+// Câble les réglages avancés partagés (voir renderReglagesAvancesPhotoHtml)
+// — utilisé aussi bien pour le calque photo principal que pour chacun de
+// ses médias superposés, `jump` recentre la timeline sur le bon segment
+// dans les deux cas (le segment du calque principal).
+function bindReglagesAvancesPhotoEvents(p, jump) {
+  ['rotx', 'roty', 'rotz'].forEach((axe, i) => {
+    const input = document.querySelector(`[data-${axe}-for="${p.id}"]`);
+    if (!input) return;
+    const champ = ['rotX', 'rotY', 'rotZ'][i];
+    input.addEventListener('input', (e) => {
+      p[champ] = Number(e.target.value);
+      jump();
+    });
+  });
+  const floatInput = document.querySelector(`[data-float-for="${p.id}"]`);
+  if (floatInput) {
+    floatInput.addEventListener('change', (e) => {
+      p.floatActive = e.target.checked;
+    });
+  }
+  const saberInput = document.querySelector(`[data-saber-for="${p.id}"]`);
+  if (saberInput) {
+    saberInput.addEventListener('change', (e) => {
+      p.saberActive = e.target.checked;
+      jump();
+    });
+  }
+  const saberColorInput = document.querySelector(`[data-sabercolor-for="${p.id}"]`);
+  if (saberColorInput) {
+    saberColorInput.addEventListener('input', (e) => {
+      p.saberColor = e.target.value;
+    });
+  }
+  const particlesInput = document.querySelector(`[data-particles-for="${p.id}"]`);
+  if (particlesInput) {
+    particlesInput.addEventListener('change', (e) => {
+      p.particlesActive = e.target.checked;
+      jump();
+    });
+  }
+  const spectrumInput = document.querySelector(`[data-spectrum-for="${p.id}"]`);
+  if (spectrumInput) {
+    spectrumInput.addEventListener('change', (e) => {
+      if (e.target.checked && !EditorState.audioEl) {
+        toast('Importez une musique de fond pour activer le spectre audio.', 'error');
+        e.target.checked = false;
+        return;
+      }
+      p.spectrumActive = e.target.checked;
+      jump();
+    });
+  }
+  const spectrumColorInput = document.querySelector(`[data-spectrumcolor-for="${p.id}"]`);
+  if (spectrumColorInput) {
+    spectrumColorInput.addEventListener('input', (e) => {
+      p.spectrumColor = e.target.value;
+    });
+  }
+  const saberCountInput = document.querySelector(`[data-sabercount-for="${p.id}"]`);
+  if (saberCountInput) {
+    saberCountInput.addEventListener('input', (e) => {
+      p.saberCount = Number(e.target.value);
+    });
+  }
+  const saberSizeInput = document.querySelector(`[data-sabersize-for="${p.id}"]`);
+  if (saberSizeInput) {
+    saberSizeInput.addEventListener('input', (e) => {
+      p.saberSize = Number(e.target.value) / 100;
+    });
+  }
+  const spectrumCountInput = document.querySelector(`[data-spectrumcount-for="${p.id}"]`);
+  if (spectrumCountInput) {
+    spectrumCountInput.addEventListener('input', (e) => {
+      p.spectrumCount = Number(e.target.value);
+    });
+  }
+  const spectrumSizeInput = document.querySelector(`[data-spectrumsize-for="${p.id}"]`);
+  if (spectrumSizeInput) {
+    spectrumSizeInput.addEventListener('input', (e) => {
+      p.spectrumSize = Number(e.target.value) / 100;
+      jump();
+    });
+  }
+  const shapeInput = document.querySelector(`[data-shape-for="${p.id}"]`);
+  if (shapeInput) shapeInput.addEventListener('change', (e) => (p.maskShape = e.target.value));
+
+  const borderInput = document.querySelector(`[data-border-for="${p.id}"]`);
+  if (borderInput) borderInput.addEventListener('change', (e) => (p.borderActive = e.target.checked));
+  const borderColorInput = document.querySelector(`[data-bordercolor-for="${p.id}"]`);
+  if (borderColorInput) borderColorInput.addEventListener('input', (e) => (p.borderColor = e.target.value));
+  const borderWidthInput = document.querySelector(`[data-borderwidth-for="${p.id}"]`);
+  if (borderWidthInput) borderWidthInput.addEventListener('input', (e) => (p.borderWidth = Number(e.target.value)));
+
+  const shadowInput = document.querySelector(`[data-shadow-for="${p.id}"]`);
+  if (shadowInput) shadowInput.addEventListener('change', (e) => (p.shadowActive = e.target.checked));
+  const shadowColorInput = document.querySelector(`[data-shadowcolor-for="${p.id}"]`);
+  if (shadowColorInput) shadowColorInput.addEventListener('input', (e) => (p.shadowColor = e.target.value));
+  const shadowOpacityInput = document.querySelector(`[data-shadowopacity-for="${p.id}"]`);
+  if (shadowOpacityInput) shadowOpacityInput.addEventListener('input', (e) => (p.shadowOpacity = Number(e.target.value) / 100));
+  const shadowBlurInput = document.querySelector(`[data-shadowblur-for="${p.id}"]`);
+  if (shadowBlurInput) shadowBlurInput.addEventListener('input', (e) => (p.shadowBlur = Number(e.target.value) / 100));
+  const shadowOffsetInput = document.querySelector(`[data-shadowoffset-for="${p.id}"]`);
+  if (shadowOffsetInput) shadowOffsetInput.addEventListener('input', (e) => (p.shadowOffsetY = Number(e.target.value) / 100));
+
+  const glowInput = document.querySelector(`[data-glow-for="${p.id}"]`);
+  if (glowInput) glowInput.addEventListener('change', (e) => (p.glowActive = e.target.checked));
+  const glowColorInput = document.querySelector(`[data-glowcolor-for="${p.id}"]`);
+  if (glowColorInput) glowColorInput.addEventListener('input', (e) => (p.glowColor = e.target.value));
+  const glowStrengthInput = document.querySelector(`[data-glowstrength-for="${p.id}"]`);
+  if (glowStrengthInput) glowStrengthInput.addEventListener('input', (e) => (p.glowStrength = Number(e.target.value) / 100));
+
+  const brightnessInput = document.querySelector(`[data-brightness-for="${p.id}"]`);
+  if (brightnessInput) brightnessInput.addEventListener('input', (e) => (p.imgBrightness = Number(e.target.value)));
+  const contrastInput = document.querySelector(`[data-contrast-for="${p.id}"]`);
+  if (contrastInput) contrastInput.addEventListener('input', (e) => (p.imgContrast = Number(e.target.value)));
+  const saturationInput = document.querySelector(`[data-saturation-for="${p.id}"]`);
+  if (saturationInput) saturationInput.addEventListener('input', (e) => (p.imgSaturation = Number(e.target.value)));
+  const blurInput = document.querySelector(`[data-blur-for="${p.id}"]`);
+  if (blurInput) blurInput.addEventListener('input', (e) => (p.imgBlur = Number(e.target.value)));
+  const grayscaleInput = document.querySelector(`[data-grayscale-for="${p.id}"]`);
+  if (grayscaleInput) grayscaleInput.addEventListener('change', (e) => (p.imgGrayscale = e.target.checked));
+  const sepiaInput = document.querySelector(`[data-sepia-for="${p.id}"]`);
+  if (sepiaInput) sepiaInput.addEventListener('change', (e) => (p.imgSepia = e.target.checked));
+  const vignetteInput = document.querySelector(`[data-vignette-for="${p.id}"]`);
+  if (vignetteInput) vignetteInput.addEventListener('change', (e) => (p.vignette = e.target.checked));
+  const vignetteStrengthInput = document.querySelector(`[data-vignettestrength-for="${p.id}"]`);
+  if (vignetteStrengthInput) {
+    vignetteStrengthInput.addEventListener('input', (e) => (p.vignetteStrength = Number(e.target.value) / 100));
+  }
+
+  const chromaKeyInput = document.querySelector(`[data-chromakey-for="${p.id}"]`);
+  if (chromaKeyInput) chromaKeyInput.addEventListener('change', (e) => (p.chromaKeyActive = e.target.checked));
+  const chromaKeyColorInput = document.querySelector(`[data-chromakeycolor-for="${p.id}"]`);
+  if (chromaKeyColorInput) chromaKeyColorInput.addEventListener('input', (e) => (p.chromaKeyColor = e.target.value));
+  const chromaKeyToleranceInput = document.querySelector(`[data-chromakeytolerance-for="${p.id}"]`);
+  if (chromaKeyToleranceInput) {
+    chromaKeyToleranceInput.addEventListener('input', (e) => (p.chromaKeyTolerance = Number(e.target.value) / 100));
+  }
+
+  const cropXInput = document.querySelector(`[data-cropx-for="${p.id}"]`);
+  if (cropXInput) cropXInput.addEventListener('input', (e) => (p.cropX = Number(e.target.value) / 100));
+  const cropYInput = document.querySelector(`[data-cropy-for="${p.id}"]`);
+  if (cropYInput) cropYInput.addEventListener('input', (e) => (p.cropY = Number(e.target.value) / 100));
+  const cropWInput = document.querySelector(`[data-cropw-for="${p.id}"]`);
+  const cropHInput = document.querySelector(`[data-croph-for="${p.id}"]`);
+  if (cropWInput) {
+    cropWInput.addEventListener('input', (e) => {
+      const ratio = p.cropH > 0 ? p.cropW / p.cropH : 1;
+      p.cropW = Number(e.target.value) / 100;
+      if (p.cropRatioVerrouille) {
+        p.cropH = Math.min(1, Math.max(0.2, p.cropW / ratio));
+        if (cropHInput) cropHInput.value = Math.round(p.cropH * 100);
+      }
+    });
+  }
+  if (cropHInput) {
+    cropHInput.addEventListener('input', (e) => {
+      const ratio = p.cropH > 0 ? p.cropW / p.cropH : 1;
+      p.cropH = Number(e.target.value) / 100;
+      if (p.cropRatioVerrouille) {
+        p.cropW = Math.min(1, Math.max(0.2, p.cropH * ratio));
+        if (cropWInput) cropWInput.value = Math.round(p.cropW * 100);
+      }
+    });
+  }
+  const cropRatioLockInput = document.querySelector(`[data-cropratiolock-for="${p.id}"]`);
+  if (cropRatioLockInput) cropRatioLockInput.addEventListener('change', (e) => (p.cropRatioVerrouille = e.target.checked));
+
+  const cropVisuelToggle = document.querySelector(`[data-cropvisuel-toggle-for="${p.id}"]`);
+  const cropEditor = document.getElementById(`editor-crop-editor-${p.id}`);
+  if (cropVisuelToggle && cropEditor) {
+    cropVisuelToggle.addEventListener('click', () => {
+      if (!p.img || p.img.tagName === 'VIDEO') {
+        toast('Le recadrage visuel est disponible pour les images (pas les vidéos).', 'error');
+        return;
+      }
+      const seraOuvert = cropEditor.classList.contains('hidden');
+      cropEditor.classList.toggle('hidden', !seraOuvert);
+      if (seraOuvert) {
+        const imgEl = document.getElementById(`editor-crop-editor-img-${p.id}`);
+        if (imgEl) imgEl.src = p.img.src;
+        positionnerRectCrop(p);
+      }
+    });
+    bindCropVisuel(p);
+  }
 }
 
 function bindPhotoLayerEvents() {
@@ -3887,187 +4123,7 @@ function bindPhotoLayerEvents() {
         p.duree = Math.max(0.5, Number(e.target.value) || 3);
       });
     }
-    ['rotx', 'roty', 'rotz'].forEach((axe, i) => {
-      const input = document.querySelector(`[data-${axe}-for="${p.id}"]`);
-      if (!input) return;
-      const champ = ['rotX', 'rotY', 'rotZ'][i];
-      input.addEventListener('input', (e) => {
-        p[champ] = Number(e.target.value);
-        jump();
-      });
-    });
-    const floatInput = document.querySelector(`[data-float-for="${p.id}"]`);
-    if (floatInput) {
-      floatInput.addEventListener('change', (e) => {
-        p.floatActive = e.target.checked;
-      });
-    }
-    const saberInput = document.querySelector(`[data-saber-for="${p.id}"]`);
-    if (saberInput) {
-      saberInput.addEventListener('change', (e) => {
-        p.saberActive = e.target.checked;
-        jump();
-      });
-    }
-    const saberColorInput = document.querySelector(`[data-sabercolor-for="${p.id}"]`);
-    if (saberColorInput) {
-      saberColorInput.addEventListener('input', (e) => {
-        p.saberColor = e.target.value;
-      });
-    }
-    const particlesInput = document.querySelector(`[data-particles-for="${p.id}"]`);
-    if (particlesInput) {
-      particlesInput.addEventListener('change', (e) => {
-        p.particlesActive = e.target.checked;
-        jump();
-      });
-    }
-    const spectrumInput = document.querySelector(`[data-spectrum-for="${p.id}"]`);
-    if (spectrumInput) {
-      spectrumInput.addEventListener('change', (e) => {
-        if (e.target.checked && !EditorState.audioEl) {
-          toast('Importez une musique de fond pour activer le spectre audio.', 'error');
-          e.target.checked = false;
-          return;
-        }
-        p.spectrumActive = e.target.checked;
-        jump();
-      });
-    }
-    const spectrumColorInput = document.querySelector(`[data-spectrumcolor-for="${p.id}"]`);
-    if (spectrumColorInput) {
-      spectrumColorInput.addEventListener('input', (e) => {
-        p.spectrumColor = e.target.value;
-      });
-    }
-    const saberCountInput = document.querySelector(`[data-sabercount-for="${p.id}"]`);
-    if (saberCountInput) {
-      saberCountInput.addEventListener('input', (e) => {
-        p.saberCount = Number(e.target.value);
-      });
-    }
-    const saberSizeInput = document.querySelector(`[data-sabersize-for="${p.id}"]`);
-    if (saberSizeInput) {
-      saberSizeInput.addEventListener('input', (e) => {
-        p.saberSize = Number(e.target.value) / 100;
-      });
-    }
-    const spectrumCountInput = document.querySelector(`[data-spectrumcount-for="${p.id}"]`);
-    if (spectrumCountInput) {
-      spectrumCountInput.addEventListener('input', (e) => {
-        p.spectrumCount = Number(e.target.value);
-      });
-    }
-    const spectrumSizeInput = document.querySelector(`[data-spectrumsize-for="${p.id}"]`);
-    if (spectrumSizeInput) {
-      spectrumSizeInput.addEventListener('input', (e) => {
-        p.spectrumSize = Number(e.target.value) / 100;
-        jump();
-      });
-    }
-    const shapeInput = document.querySelector(`[data-shape-for="${p.id}"]`);
-    if (shapeInput) shapeInput.addEventListener('change', (e) => (p.maskShape = e.target.value));
-
-    const borderInput = document.querySelector(`[data-border-for="${p.id}"]`);
-    if (borderInput) borderInput.addEventListener('change', (e) => (p.borderActive = e.target.checked));
-    const borderColorInput = document.querySelector(`[data-bordercolor-for="${p.id}"]`);
-    if (borderColorInput) borderColorInput.addEventListener('input', (e) => (p.borderColor = e.target.value));
-    const borderWidthInput = document.querySelector(`[data-borderwidth-for="${p.id}"]`);
-    if (borderWidthInput) borderWidthInput.addEventListener('input', (e) => (p.borderWidth = Number(e.target.value)));
-
-    const shadowInput = document.querySelector(`[data-shadow-for="${p.id}"]`);
-    if (shadowInput) shadowInput.addEventListener('change', (e) => (p.shadowActive = e.target.checked));
-    const shadowColorInput = document.querySelector(`[data-shadowcolor-for="${p.id}"]`);
-    if (shadowColorInput) shadowColorInput.addEventListener('input', (e) => (p.shadowColor = e.target.value));
-    const shadowOpacityInput = document.querySelector(`[data-shadowopacity-for="${p.id}"]`);
-    if (shadowOpacityInput) shadowOpacityInput.addEventListener('input', (e) => (p.shadowOpacity = Number(e.target.value) / 100));
-    const shadowBlurInput = document.querySelector(`[data-shadowblur-for="${p.id}"]`);
-    if (shadowBlurInput) shadowBlurInput.addEventListener('input', (e) => (p.shadowBlur = Number(e.target.value) / 100));
-    const shadowOffsetInput = document.querySelector(`[data-shadowoffset-for="${p.id}"]`);
-    if (shadowOffsetInput) shadowOffsetInput.addEventListener('input', (e) => (p.shadowOffsetY = Number(e.target.value) / 100));
-
-    const glowInput = document.querySelector(`[data-glow-for="${p.id}"]`);
-    if (glowInput) glowInput.addEventListener('change', (e) => (p.glowActive = e.target.checked));
-    const glowColorInput = document.querySelector(`[data-glowcolor-for="${p.id}"]`);
-    if (glowColorInput) glowColorInput.addEventListener('input', (e) => (p.glowColor = e.target.value));
-    const glowStrengthInput = document.querySelector(`[data-glowstrength-for="${p.id}"]`);
-    if (glowStrengthInput) glowStrengthInput.addEventListener('input', (e) => (p.glowStrength = Number(e.target.value) / 100));
-
-    const brightnessInput = document.querySelector(`[data-brightness-for="${p.id}"]`);
-    if (brightnessInput) brightnessInput.addEventListener('input', (e) => (p.imgBrightness = Number(e.target.value)));
-    const contrastInput = document.querySelector(`[data-contrast-for="${p.id}"]`);
-    if (contrastInput) contrastInput.addEventListener('input', (e) => (p.imgContrast = Number(e.target.value)));
-    const saturationInput = document.querySelector(`[data-saturation-for="${p.id}"]`);
-    if (saturationInput) saturationInput.addEventListener('input', (e) => (p.imgSaturation = Number(e.target.value)));
-    const blurInput = document.querySelector(`[data-blur-for="${p.id}"]`);
-    if (blurInput) blurInput.addEventListener('input', (e) => (p.imgBlur = Number(e.target.value)));
-    const grayscaleInput = document.querySelector(`[data-grayscale-for="${p.id}"]`);
-    if (grayscaleInput) grayscaleInput.addEventListener('change', (e) => (p.imgGrayscale = e.target.checked));
-    const sepiaInput = document.querySelector(`[data-sepia-for="${p.id}"]`);
-    if (sepiaInput) sepiaInput.addEventListener('change', (e) => (p.imgSepia = e.target.checked));
-    const vignetteInput = document.querySelector(`[data-vignette-for="${p.id}"]`);
-    if (vignetteInput) vignetteInput.addEventListener('change', (e) => (p.vignette = e.target.checked));
-    const vignetteStrengthInput = document.querySelector(`[data-vignettestrength-for="${p.id}"]`);
-    if (vignetteStrengthInput) {
-      vignetteStrengthInput.addEventListener('input', (e) => (p.vignetteStrength = Number(e.target.value) / 100));
-    }
-
-    const chromaKeyInput = document.querySelector(`[data-chromakey-for="${p.id}"]`);
-    if (chromaKeyInput) chromaKeyInput.addEventListener('change', (e) => (p.chromaKeyActive = e.target.checked));
-    const chromaKeyColorInput = document.querySelector(`[data-chromakeycolor-for="${p.id}"]`);
-    if (chromaKeyColorInput) chromaKeyColorInput.addEventListener('input', (e) => (p.chromaKeyColor = e.target.value));
-    const chromaKeyToleranceInput = document.querySelector(`[data-chromakeytolerance-for="${p.id}"]`);
-    if (chromaKeyToleranceInput) {
-      chromaKeyToleranceInput.addEventListener('input', (e) => (p.chromaKeyTolerance = Number(e.target.value) / 100));
-    }
-
-    const cropXInput = document.querySelector(`[data-cropx-for="${p.id}"]`);
-    if (cropXInput) cropXInput.addEventListener('input', (e) => (p.cropX = Number(e.target.value) / 100));
-    const cropYInput = document.querySelector(`[data-cropy-for="${p.id}"]`);
-    if (cropYInput) cropYInput.addEventListener('input', (e) => (p.cropY = Number(e.target.value) / 100));
-    const cropWInput = document.querySelector(`[data-cropw-for="${p.id}"]`);
-    const cropHInput = document.querySelector(`[data-croph-for="${p.id}"]`);
-    if (cropWInput) {
-      cropWInput.addEventListener('input', (e) => {
-        const ratio = p.cropH > 0 ? p.cropW / p.cropH : 1;
-        p.cropW = Number(e.target.value) / 100;
-        if (p.cropRatioVerrouille) {
-          p.cropH = Math.min(1, Math.max(0.2, p.cropW / ratio));
-          if (cropHInput) cropHInput.value = Math.round(p.cropH * 100);
-        }
-      });
-    }
-    if (cropHInput) {
-      cropHInput.addEventListener('input', (e) => {
-        const ratio = p.cropH > 0 ? p.cropW / p.cropH : 1;
-        p.cropH = Number(e.target.value) / 100;
-        if (p.cropRatioVerrouille) {
-          p.cropW = Math.min(1, Math.max(0.2, p.cropH * ratio));
-          if (cropWInput) cropWInput.value = Math.round(p.cropW * 100);
-        }
-      });
-    }
-    const cropRatioLockInput = document.querySelector(`[data-cropratiolock-for="${p.id}"]`);
-    if (cropRatioLockInput) cropRatioLockInput.addEventListener('change', (e) => (p.cropRatioVerrouille = e.target.checked));
-
-    const cropVisuelToggle = document.querySelector(`[data-cropvisuel-toggle-for="${p.id}"]`);
-    const cropEditor = document.getElementById(`editor-crop-editor-${p.id}`);
-    if (cropVisuelToggle && cropEditor) {
-      cropVisuelToggle.addEventListener('click', () => {
-        if (!p.img || p.img.tagName === 'VIDEO') {
-          toast('Le recadrage visuel est disponible pour les images (pas les vidéos).', 'error');
-          return;
-        }
-        const seraOuvert = cropEditor.classList.contains('hidden');
-        cropEditor.classList.toggle('hidden', !seraOuvert);
-        if (seraOuvert) {
-          const imgEl = document.getElementById(`editor-crop-editor-img-${p.id}`);
-          if (imgEl) imgEl.src = p.img.src;
-          positionnerRectCrop(p);
-        }
-      });
-      bindCropVisuel(p);
-    }
+    bindReglagesAvancesPhotoEvents(p, jump);
 
     const bgOverrideSelect = document.querySelector(`[data-bgoverride-for="${p.id}"]`);
     if (bgOverrideSelect) {
@@ -4827,6 +4883,78 @@ function dupliquerForme(id) {
 }
 
 /* -------------------------------------------------------------------- */
+/* Dessin libre (pinceau)                                                */
+/* -------------------------------------------------------------------- */
+function creerDessinParDefaut(id) {
+  return {
+    id,
+    nom: null,
+    verrouille: false,
+    visible: true,
+    points: [],
+    couleur: EditorState.dessinCouleur || '#ff2d95',
+    epaisseur: Number(EditorState.dessinEpaisseur) || 6,
+    opacite: 1,
+    z: 9,
+    startTime: null,
+    endTime: null,
+  };
+}
+
+function rafraichirPanneauDessin() {
+  const compteEl = document.getElementById('editor-dessin-compte');
+  if (compteEl) {
+    compteEl.textContent = EditorState.drawings.length
+      ? `${EditorState.drawings.length} trait(s)`
+      : 'Aucun trait dessiné';
+  }
+  const toggleBtn = document.getElementById('editor-dessin-toggle');
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('active', EditorState.modeDessin);
+    toggleBtn.textContent = EditorState.modeDessin ? 'Dessin activé (cliquer pour arrêter)' : 'Activer le dessin libre';
+  }
+  const canvas = document.getElementById('editor-canvas');
+  if (canvas) canvas.classList.toggle('editor-canvas-dessin', EditorState.modeDessin);
+}
+
+function annulerDernierTrait() {
+  if (!EditorState.drawings.length) return;
+  const dernier = EditorState.drawings[EditorState.drawings.length - 1];
+  hideLayer(`dessin-${dernier.id}`);
+  EditorState.drawings.pop();
+  rafraichirPanneauDessin();
+  pousserHistorique();
+}
+
+function effacerTousLesDessins() {
+  if (!EditorState.drawings.length) return;
+  if (!confirm('Effacer tous les traits de dessin libre ?')) return;
+  EditorState.drawings.forEach((d) => hideLayer(`dessin-${d.id}`));
+  EditorState.drawings = [];
+  rafraichirPanneauDessin();
+  pousserHistorique();
+}
+
+function bindModeDessin() {
+  const toggleBtn = document.getElementById('editor-dessin-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      EditorState.modeDessin = !EditorState.modeDessin;
+      rafraichirPanneauDessin();
+    });
+  }
+  const couleurInput = document.getElementById('editor-dessin-couleur');
+  if (couleurInput) couleurInput.addEventListener('input', (e) => (EditorState.dessinCouleur = e.target.value));
+  const epaisseurInput = document.getElementById('editor-dessin-epaisseur');
+  if (epaisseurInput) epaisseurInput.addEventListener('input', (e) => (EditorState.dessinEpaisseur = Number(e.target.value)));
+  const undoBtn = document.getElementById('editor-dessin-undo');
+  if (undoBtn) undoBtn.addEventListener('click', annulerDernierTrait);
+  const clearBtn = document.getElementById('editor-dessin-clear');
+  if (clearBtn) clearBtn.addEventListener('click', effacerTousLesDessins);
+  rafraichirPanneauDessin();
+}
+
+/* -------------------------------------------------------------------- */
 /* Glisser-déposer sur le canvas (texte / photo active) — raycasting 3D  */
 /* -------------------------------------------------------------------- */
 function pointerToNdc(canvas, evt) {
@@ -4916,6 +5044,13 @@ function nomsSousMediaLayerNames() {
 
 function bindEditorDrag3D(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
+    if (EditorState.modeDessin) {
+      const trait = creerDessinParDefaut(++elementIdCounter);
+      EditorState.drawings.push(trait);
+      EditorState.dragging = { type: 'dessin', id: trait.id };
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
     const layers = EditorState.three.layers;
     const textLayerNames = nomsTextLayerNames();
     const formeLayerNames = nomsFormeLayerNames();
@@ -4950,10 +5085,17 @@ function bindEditorDrag3D(canvas) {
   });
 
   canvas.addEventListener('pointermove', (e) => {
+    if (EditorState.dragging && EditorState.dragging.type === 'dessin') {
+      const d = EditorState.drawings.find((dr) => dr.id === EditorState.dragging.id);
+      const frac = d && pointerToFraction(canvas, e, d.z ?? 9);
+      if (d && frac) d.points.push({ x: frac.fx, y: frac.fy });
+      return;
+    }
     if (!EditorState.dragging) {
       const survole =
+        !EditorState.modeDessin &&
         raycastLayer(canvas, e, [...nomsTextLayerNames(), ...nomsFormeLayerNames(), ...nomsSousMediaLayerNames(), 'caption', 'photo']) !== null;
-      canvas.style.cursor = survole ? 'grab' : 'default';
+      canvas.style.cursor = EditorState.modeDessin ? 'crosshair' : survole ? 'grab' : 'default';
       return;
     }
     canvas.style.cursor = 'grabbing';
@@ -5003,9 +5145,21 @@ function bindEditorDrag3D(canvas) {
 
   ['pointerup', 'pointercancel', 'pointerleave'].forEach((evtName) => {
     canvas.addEventListener(evtName, () => {
-      if (EditorState.dragging) pousserHistorique();
+      if (EditorState.dragging && EditorState.dragging.type === 'dessin') {
+        // Un simple clic sans glisser ne produit qu'un point (ou zéro) : pas
+        // un trait exploitable, on le retire plutôt que de polluer l'historique.
+        const index = EditorState.drawings.findIndex((d) => d.id === EditorState.dragging.id);
+        if (index !== -1 && EditorState.drawings[index].points.length < 2) {
+          EditorState.drawings.splice(index, 1);
+        } else {
+          pousserHistorique();
+        }
+        rafraichirPanneauDessin();
+      } else if (EditorState.dragging) {
+        pousserHistorique();
+      }
       EditorState.dragging = null;
-      canvas.style.cursor = 'default';
+      canvas.style.cursor = EditorState.modeDessin ? 'crosshair' : 'default';
       masquerGuidesAlignement();
     });
   });

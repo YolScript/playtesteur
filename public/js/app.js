@@ -1527,6 +1527,27 @@ function viewEditeur() {
         </details>
 
         <details class="editor-accordion">
+          <summary>Dessin libre</summary>
+          <div class="editor-accordion-body">
+            <span class="form-hint">Dessinez directement sur l'aperçu au pinceau — pratique pour annoter, souligner ou pointer un détail à main levée.</span>
+            <div class="editor-row">
+              <button type="button" id="editor-dessin-toggle" class="editor-add-btn">Activer le dessin libre</button>
+            </div>
+            <div class="editor-row">
+              <input type="color" id="editor-dessin-couleur" value="#ff2d95" title="Couleur du trait">
+              <label class="editor-mini-label">Épaisseur<input type="range" id="editor-dessin-epaisseur" min="1" max="30" value="6"></label>
+            </div>
+            <div class="editor-row">
+              <span id="editor-dessin-compte" class="form-hint">Aucun trait dessiné</span>
+            </div>
+            <div class="editor-row">
+              <button type="button" id="editor-dessin-undo" class="btn-secondary">Annuler le dernier trait</button>
+              <button type="button" id="editor-dessin-clear" class="editor-remove-btn">Tout effacer</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="editor-accordion">
           <summary>Effets lumineux (glow)</summary>
           <div class="editor-accordion-body">
             <label class="editor-toggle-row"><input type="checkbox" id="editor-bloom-toggle"><span class="editor-toggle-switch"></span><span>Activer le halo lumineux</span></label>
