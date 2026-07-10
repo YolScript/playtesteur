@@ -2311,9 +2311,14 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
 
   const measureCtx = layer.ctx;
   measureCtx.font = `${style} ${weight} ${size}px ${famille}`;
+  // letterSpacing n'est pas supporté par tous les moteurs (Chrome/Edge oui,
+  // certaines versions de Firefox/Safari l'ignorent silencieusement) : dans
+  // ce cas l'espacement reste simplement à 0, sans erreur.
+  const espacementLettres = `${Number(b.espacementLettres) || 0}px`;
+  measureCtx.letterSpacing = espacementLettres;
   const padX = 26;
   const padY = 18;
-  const lineHeight = size * 1.2;
+  const lineHeight = size * (Number(b.interligne) || 1.2);
 
   // Texte courbe : une seule ligne (les retours à la ligne n'ont pas de
   // sens sur un arc), dimensionnée d'après la sagittale de l'arc plutôt
@@ -2376,6 +2381,7 @@ function dessinerBlocTexte(b, layerName, now, tGlobal) {
 
   const align = b.align || 'center';
   ctx.font = `${style} ${weight} ${size}px ${famille}`;
+  ctx.letterSpacing = espacementLettres; // sizeLayerCanvas() a réinitialisé le contexte
   ctx.textAlign = align;
   ctx.textBaseline = 'top';
   const textX = align === 'left' ? padX : align === 'right' ? panelW - padX : panelW / 2;
@@ -3932,6 +3938,10 @@ function renderTextBlockHtml(b, index) {
             </select>
           </div>
           <div class="editor-row">
+            <label class="editor-mini-label">Interlignage<input type="range" data-interligne-for="${b.id}" min="80" max="250" value="${Math.round((b.interligne ?? 1.2) * 100)}"></label>
+            <label class="editor-mini-label">Espacement lettres<input type="range" data-espacementlettres-for="${b.id}" min="-4" max="30" value="${b.espacementLettres ?? 0}"></label>
+          </div>
+          <div class="editor-row">
             <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-bgpanel-for="${b.id}" ${b.bgPanelActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Fond derrière le texte</span></label>
           </div>
           <div class="editor-row">
@@ -4051,6 +4061,11 @@ function bindTextBlockEvents() {
 
     const alignInput = document.querySelector(`[data-align-for="${b.id}"]`);
     if (alignInput) alignInput.addEventListener('change', (e) => (b.align = e.target.value));
+
+    const interligneInput = document.querySelector(`[data-interligne-for="${b.id}"]`);
+    if (interligneInput) interligneInput.addEventListener('input', (e) => (b.interligne = Number(e.target.value) / 100));
+    const espacementLettresInput = document.querySelector(`[data-espacementlettres-for="${b.id}"]`);
+    if (espacementLettresInput) espacementLettresInput.addEventListener('input', (e) => (b.espacementLettres = Number(e.target.value)));
 
     const bgPanelInput = document.querySelector(`[data-bgpanel-for="${b.id}"]`);
     if (bgPanelInput) bgPanelInput.addEventListener('change', (e) => (b.bgPanelActive = e.target.checked));
@@ -4183,6 +4198,8 @@ function creerTextBlockParDefaut(id, decalage) {
     gradientColor1: '#00e5ff',
     gradientColor2: '#ff2d95',
     gradientAngle: 90,
+    interligne: 1.2,
+    espacementLettres: 0,
   };
 }
 
