@@ -2913,7 +2913,7 @@ function markupFilePickerPhoto(inputId, filenameId) {
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
         <span>Choisir un fichier</span>
       </label>
-      <input type="file" id="${inputId}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input">
+      <input type="file" id="${inputId}" accept="image/png,image/jpeg,video/mp4" class="editor-file-input" multiple>
       <span class="editor-file-name" id="${filenameId}">Aucun fichier choisi</span>
     </div>
   `;
@@ -3379,11 +3379,29 @@ function bindPhotoLayerEvents() {
     const fileInput = document.getElementById(`editor-photo-input-${p.id}`);
     if (fileInput) {
       fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        afficherNomFichier(`editor-photo-filename-${p.id}`, file);
-        p.img = await chargerMediaPhoto(file);
+        const fichiers = Array.from(e.target.files || []);
+        if (!fichiers.length) return;
+        const [premier, ...autres] = fichiers;
+        afficherNomFichier(`editor-photo-filename-${p.id}`, premier);
+        p.img = await chargerMediaPhoto(premier);
         jump();
+
+        // Sélection multiple : le premier fichier remplace le média de ce
+        // calque, chaque fichier supplémentaire crée un nouveau calque juste
+        // après — pratique pour importer toute une série de photos/vidéos
+        // d'un coup plutôt que de cliquer "+ Ajouter" pour chacune.
+        if (autres.length) {
+          let indexInsertion = EditorState.photos.indexOf(p);
+          for (const file of autres) {
+            const nouvelle = creerPhotoParDefaut(++elementIdCounter);
+            nouvelle.img = await chargerMediaPhoto(file);
+            indexInsertion += 1;
+            EditorState.photos.splice(indexInsertion, 0, nouvelle);
+          }
+          rafraichirListePhotos();
+          pousserHistorique();
+          toast(`${autres.length} photo(s)/vidéo(s) supplémentaire(s) ajoutée(s).`, 'success');
+        }
       });
     }
     const captionInput = document.querySelector(`[data-caption-for="${p.id}"]`);
