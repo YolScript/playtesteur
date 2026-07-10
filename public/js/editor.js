@@ -1338,6 +1338,15 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
+function hexVersRgba(hex, alpha) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '#000000');
+  if (!m) return `rgba(0,0,0,${alpha})`;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -1908,24 +1917,49 @@ function mettreAJourPhoto(p, tGlobal, layerName) {
   if (EditorState.modeContours) {
     dessinerContourAsset(ctx, ox, oy, w, h, radius, shape, `#${p.id} photo`, { x: p.x, y: p.y, z: p.z || 0 });
   } else {
+  // Lueur externe (glow) : même principe que l'ombre ci-dessous — remplie
+  // avec la couleur choisie, floutée, puis évidée à l'intérieur pour ne
+  // garder que le halo qui déborde du masque.
+  if (p.glowActive) {
+    ctx.save();
+    const glowColor = p.glowColor || '#00e5ff';
+    const glowStrength = Number(p.glowStrength) || 0.5;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = h * 0.22 * glowStrength;
+    maskShapePath(ctx, shape, ox, oy, w, h, radius);
+    ctx.fillStyle = glowColor;
+    ctx.fill();
+    ctx.shadowBlur = h * 0.1 * glowStrength;
+    maskShapePath(ctx, shape, ox, oy, w, h, radius);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation = 'destination-out';
+    maskShapePath(ctx, shape, ox, oy, w, h, radius);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Ombre portée qui déborde du masque, sans remplir l'intérieur en noir
   // opaque : sinon les PNG à fond transparent laissaient voir ce noir à
   // travers leurs zones transparentes au lieu du fond de la scène. On
   // peint le fill + son flou débordant, puis on efface la partie
   // intérieure (destination-out) — il ne reste que le halo qui dépasse.
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.55)';
-  ctx.shadowBlur = h * 0.14;
-  ctx.shadowOffsetY = h * 0.08;
-  maskShapePath(ctx, shape, ox, oy, w, h, radius);
-  ctx.fillStyle = '#000';
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-  ctx.globalCompositeOperation = 'destination-out';
-  maskShapePath(ctx, shape, ox, oy, w, h, radius);
-  ctx.fill();
-  ctx.restore();
+  if (p.shadowActive !== false) {
+    ctx.save();
+    ctx.shadowColor = hexVersRgba(p.shadowColor || '#000000', p.shadowOpacity ?? 0.55);
+    ctx.shadowBlur = h * (p.shadowBlur ?? 0.14);
+    ctx.shadowOffsetY = h * (p.shadowOffsetY ?? 0.08);
+    maskShapePath(ctx, shape, ox, oy, w, h, radius);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation = 'destination-out';
+    maskShapePath(ctx, shape, ox, oy, w, h, radius);
+    ctx.fill();
+    ctx.restore();
+  }
 
   // Crop : fraction de l'image source utilisée (cropX/Y = coin haut-gauche,
   // cropW/H = largeur/hauteur, en fractions 0..1 de l'image originale).
@@ -2978,6 +3012,26 @@ function renderPhotoLayerHtml(p, index) {
       </details>
 
       <details class="editor-accordion-nested">
+        <summary>Ombre &amp; lueur</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-shadow-for="${p.id}" ${p.shadowActive !== false ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Ombre portée</span></label>
+            <input type="color" data-shadowcolor-for="${p.id}" value="${p.shadowColor || '#000000'}" title="Couleur de l'ombre">
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Opacité<input type="range" data-shadowopacity-for="${p.id}" min="0" max="100" value="${Math.round((p.shadowOpacity ?? 0.55) * 100)}"></label>
+            <label class="editor-mini-label">Flou<input type="range" data-shadowblur-for="${p.id}" min="0" max="30" value="${Math.round((p.shadowBlur ?? 0.14) * 100)}"></label>
+            <label class="editor-mini-label">Décalage<input type="range" data-shadowoffset-for="${p.id}" min="0" max="20" value="${Math.round((p.shadowOffsetY ?? 0.08) * 100)}"></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-glow-for="${p.id}" ${p.glowActive ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Lueur externe (glow)</span></label>
+            <input type="color" data-glowcolor-for="${p.id}" value="${p.glowColor || '#00e5ff'}" title="Couleur de la lueur">
+            <label class="editor-mini-label">Intensité<input type="range" data-glowstrength-for="${p.id}" min="10" max="100" value="${Math.round((p.glowStrength ?? 0.5) * 100)}"></label>
+          </div>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
         <summary>Filtres image</summary>
         <div class="editor-accordion-nested-body">
           <div class="editor-row">
@@ -3402,6 +3456,24 @@ function bindPhotoLayerEvents() {
     const borderWidthInput = document.querySelector(`[data-borderwidth-for="${p.id}"]`);
     if (borderWidthInput) borderWidthInput.addEventListener('input', (e) => (p.borderWidth = Number(e.target.value)));
 
+    const shadowInput = document.querySelector(`[data-shadow-for="${p.id}"]`);
+    if (shadowInput) shadowInput.addEventListener('change', (e) => (p.shadowActive = e.target.checked));
+    const shadowColorInput = document.querySelector(`[data-shadowcolor-for="${p.id}"]`);
+    if (shadowColorInput) shadowColorInput.addEventListener('input', (e) => (p.shadowColor = e.target.value));
+    const shadowOpacityInput = document.querySelector(`[data-shadowopacity-for="${p.id}"]`);
+    if (shadowOpacityInput) shadowOpacityInput.addEventListener('input', (e) => (p.shadowOpacity = Number(e.target.value) / 100));
+    const shadowBlurInput = document.querySelector(`[data-shadowblur-for="${p.id}"]`);
+    if (shadowBlurInput) shadowBlurInput.addEventListener('input', (e) => (p.shadowBlur = Number(e.target.value) / 100));
+    const shadowOffsetInput = document.querySelector(`[data-shadowoffset-for="${p.id}"]`);
+    if (shadowOffsetInput) shadowOffsetInput.addEventListener('input', (e) => (p.shadowOffsetY = Number(e.target.value) / 100));
+
+    const glowInput = document.querySelector(`[data-glow-for="${p.id}"]`);
+    if (glowInput) glowInput.addEventListener('change', (e) => (p.glowActive = e.target.checked));
+    const glowColorInput = document.querySelector(`[data-glowcolor-for="${p.id}"]`);
+    if (glowColorInput) glowColorInput.addEventListener('input', (e) => (p.glowColor = e.target.value));
+    const glowStrengthInput = document.querySelector(`[data-glowstrength-for="${p.id}"]`);
+    if (glowStrengthInput) glowStrengthInput.addEventListener('input', (e) => (p.glowStrength = Number(e.target.value) / 100));
+
     const brightnessInput = document.querySelector(`[data-brightness-for="${p.id}"]`);
     if (brightnessInput) brightnessInput.addEventListener('input', (e) => (p.imgBrightness = Number(e.target.value)));
     const contrastInput = document.querySelector(`[data-contrast-for="${p.id}"]`);
@@ -3619,6 +3691,14 @@ function creerPhotoParDefaut(id) {
     chromaKeyActive: false,
     chromaKeyColor: '#00ff00',
     chromaKeyTolerance: 0.35,
+    shadowActive: true,
+    shadowColor: '#000000',
+    shadowOpacity: 0.55,
+    shadowBlur: 0.14,
+    shadowOffsetY: 0.08,
+    glowActive: false,
+    glowColor: '#00e5ff',
+    glowStrength: 0.5,
   };
 }
 
