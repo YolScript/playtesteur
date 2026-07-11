@@ -34,7 +34,7 @@ function calculerStreak(joursTries) {
 // Classement général des testeurs : apps testées + streak de jours
 // consécutifs, dérivés de l'historique des tests validés.
 router.get('/', requireAuth, (req, res) => {
-  const users = db.prepare('SELECT id, pseudo, avatar_url FROM users WHERE suspendu = 0').all();
+  const users = db.prepare('SELECT id, pseudo, avatar_url, score_global FROM users WHERE suspendu = 0').all();
 
   const joursParUser = db
     .prepare(
@@ -65,6 +65,7 @@ router.get('/', requireAuth, (req, res) => {
       avatar_url: u.avatar_url,
       apps_testees: nbMap[u.id] || 0,
       jours_consecutifs: calculerStreak(joursMap[u.id] || []),
+      points: u.score_global,
     }))
     .filter((u) => u.apps_testees > 0)
     .sort((a, b) => b.apps_testees - a.apps_testees || b.jours_consecutifs - a.jours_consecutifs);

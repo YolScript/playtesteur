@@ -119,6 +119,57 @@ if (!colonnesUsers.includes('masquer_infos')) {
   db.exec('ALTER TABLE users ADD COLUMN masquer_infos INTEGER NOT NULL DEFAULT 0');
 }
 
+// Le score n'est plus plafonné à 100 (classement par points et dépenses de
+// points sans limite haute, voir services/scoring.js) : la contrainte CHECK
+// d'origine bornait score_global à [0,100]. SQLite ne permet pas de modifier
+// une contrainte CHECK existante -> reconstruction de la table. Migration
+// idempotente : ne s'exécute que si l'ancienne contrainte est encore
+// présente (détectée via le SQL stocké dans sqlite_master).
+//
+// IMPORTANT : on crée la table de remplacement sous un nom temporaire, on
+// DROP l'ancienne "users", puis on RENOMME le remplacement vers "users" —
+// jamais l'inverse (renommer "users" vers un nom temporaire). ALTER TABLE
+// RENAME réécrit les clauses REFERENCES des AUTRES tables qui pointent vers
+// le nom renommé ; en renommant "users" en premier, les FK de applications,
+// historique_tests, fraud_log, messages, tickets, ticket_messages et
+// activity_log se seraient retrouvées à pointer vers un nom de table qui
+// n'existe plus une fois l'ancienne table supprimée (testé, ça casse tout).
+// En ne renommant QUE la nouvelle table (jamais l'ancienne), le nom "users"
+// référencé par ces FK redevient valide sans qu'aucune ne soit réécrite.
+const schemaUsersActuel =
+  db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`).get()?.sql || '';
+if (schemaUsersActuel.includes('score_global BETWEEN 0 AND 100')) {
+  db.exec('PRAGMA foreign_keys = OFF;');
+  db.exec(`
+    CREATE TABLE users_migration_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pseudo TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      google_id TEXT UNIQUE,
+      avatar_url TEXT,
+      pseudo_play_store TEXT,
+      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'administrator')),
+      statut_profil TEXT NOT NULL DEFAULT 'En_Attente' CHECK (statut_profil IN ('En_Attente', 'Validé')),
+      score_global INTEGER NOT NULL DEFAULT 0 CHECK (score_global >= 0),
+      mails_debloques INTEGER NOT NULL DEFAULT 0 CHECK (mails_debloques BETWEEN 0 AND 12),
+      derniere_date_test TEXT,
+      fraud_warnings INTEGER NOT NULL DEFAULT 0,
+      suspendu INTEGER NOT NULL DEFAULT 0,
+      masquer_infos INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    INSERT INTO users_migration_new (id, pseudo, email, google_id, avatar_url, pseudo_play_store, role, statut_profil, score_global, mails_debloques, derniere_date_test, fraud_warnings, suspendu, masquer_infos, created_at)
+    SELECT id, pseudo, email, google_id, avatar_url, pseudo_play_store, role, statut_profil, score_global, mails_debloques, derniere_date_test, fraud_warnings, suspendu, masquer_infos, created_at
+    FROM users;
+
+    DROP TABLE users;
+
+    ALTER TABLE users_migration_new RENAME TO users;
+  `);
+  db.exec('PRAGMA foreign_keys = ON;');
+}
+
 // Avis saisi directement sur le site (remplace la vérification via l'API
 // Google Play Reviews, trop peu fiable : voir historique du projet).
 const colonnesHistorique = db.prepare('PRAGMA table_info(historique_tests)').all().map((c) => c.name);

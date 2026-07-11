@@ -269,7 +269,9 @@ async function viewDashboard() {
   // 0/12 sans action possible.
   const catalogueVide = catalogue.length === 0;
 
-  const pctScore = Math.round((user.score_global / 100) * 100);
+  // Le score n'est plus plafonné à 100 (voir services/scoring.js) : la
+  // barre visuelle reste pleine au-delà, seul le nombre affiché continue de grimper.
+  const pctScore = Math.min(100, Math.round((user.score_global / 100) * 100));
   const pctMails = Math.round((user.mails_debloques / user.mails_max) * 100);
 
   // Un slot n'est "rempli" que s'il compte réellement dans mails_debloques :
@@ -671,7 +673,7 @@ async function viewClassement() {
   container.innerHTML = `
     <div class="table-wrapper">
       <table>
-        <thead><tr><th>Rang</th><th>Testeur</th><th>Applications testées</th><th>Jours consécutifs</th></tr></thead>
+        <thead><tr><th>Rang</th><th>Testeur</th><th>Points</th><th>Applications testées</th><th>Jours consécutifs</th></tr></thead>
         <tbody>
           ${classement
             .map(
@@ -679,6 +681,7 @@ async function viewClassement() {
             <tr>
               <td data-label="Rang" style="font-size:18px; font-weight:700;">${medailles[i] || `#${i + 1}`}</td>
               <td data-label="Testeur">${escapeHtml(u.pseudo)}</td>
+              <td data-label="Points">${u.points}</td>
               <td data-label="Applications testées">${u.apps_testees}</td>
               <td data-label="Jours consécutifs">${u.jours_consecutifs > 0 ? `🔥 ${u.jours_consecutifs}` : '—'}</td>
             </tr>

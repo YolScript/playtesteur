@@ -3,7 +3,7 @@
 // réutilisant exactement la même règle de palier que le job de minuit.
 const db = require('../db/init');
 const googleGroups = require('../services/googleGroups');
-const { palierMaxMails, MAX_SCORE, MAX_MAILS } = require('./scoring');
+const { palierMaxMails, MAX_MAILS } = require('./scoring');
 
 const findUserById = db.prepare('SELECT * FROM users WHERE id = ?');
 const majUser = db.prepare('UPDATE users SET score_global = ?, mails_debloques = ? WHERE id = ?');
@@ -48,7 +48,10 @@ async function ajusterScore(userId, delta) {
   const user = findUserById.get(userId);
   if (!user) throw new Error('Utilisateur introuvable.');
 
-  const score_global = clamp(user.score_global + delta, 0, MAX_SCORE);
+  // score_global n'est plus plafonné en haut (voir scoring.js) : seul le
+  // plancher de 0 s'applique ici, pour ne pas faire redescendre à 100 un
+  // utilisateur qui l'a déjà dépassé via ses tests.
+  const score_global = Math.max(0, user.score_global + delta);
   const mailsAutorises = palierMaxMails(score_global);
   const nbMailsEjectes = Math.max(0, user.mails_debloques - mailsAutorises);
   const mails_debloques = clamp(user.mails_debloques - nbMailsEjectes, 0, MAX_MAILS);
