@@ -134,6 +134,42 @@ router.post('/import', requireAuth, async (req, res) => {
   }
 });
 
+// Liste les pistes de test Play Console disponibles pour un package (pour
+// choisir sur laquelle appliquer le groupe de testeurs automatiquement).
+router.post('/pistes-test', requireAuth, async (req, res) => {
+  const { package_name } = req.body || {};
+  if (!package_name || !package_name.trim()) {
+    return res.status(400).json({ erreur: 'Le nom du package est requis.' });
+  }
+  try {
+    const pistes = await playReviews.listerPistesTest(package_name);
+    res.json({ pistes });
+  } catch (err) {
+    res.status(400).json({ erreur: err.message });
+  }
+});
+
+// Applique automatiquement le groupe de testeurs sur une piste de test Play
+// Console donnée, via l'API Android Publisher (edits.testers) — évite de
+// devoir coller manuellement l'adresse dans Play Console.
+router.post('/appliquer-groupe-play-console', requireAuth, async (req, res) => {
+  const { package_name, track, google_group_email } = req.body || {};
+  if (!package_name || !track || !google_group_email) {
+    return res.status(400).json({ erreur: 'Package, piste de test et adresse de groupe sont requis.' });
+  }
+  try {
+    await playReviews.configurerGroupeTesteurs(package_name, track, google_group_email);
+    logActivity(
+      req.session.userId,
+      'A appliqué le groupe testeurs sur Play Console',
+      `${package_name} — piste ${track}`
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ erreur: err.message });
+  }
+});
+
 // Valide une adresse de groupe fournie par le développeur (groupe Google
 // grand public gratuit @googlegroups.com, ou groupe Workspace sur le domaine
 // configuré). Rejette explicitement les autres domaines (ex : une adresse

@@ -136,6 +136,72 @@ async function importerFicheApp(packageName) {
   }
 }
 
+// Liste les pistes de test existantes d'un package (internal, alpha, beta,
+// production, ou pistes personnalisées) — pour laisser le développeur
+// choisir sur laquelle appliquer le groupe de testeurs automatiquement.
+async function listerPistesTest(packageName) {
+  if (!packageName || !packageName.trim()) return [];
+
+  const { devMode, androidpublisher } = resoudreConfig();
+  if (devMode) return ['internal', 'alpha', 'beta', 'production'];
+
+  const pkg = packageName.trim();
+  let editId;
+  try {
+    const edit = await androidpublisher.edits.insert({ packageName: pkg });
+    editId = edit.data.id;
+    const { data } = await androidpublisher.edits.tracks.list({ editId, packageName: pkg });
+    return (data.tracks || []).map((t) => t.track);
+  } catch (err) {
+    if (err.code === 404 || err.code === 403) {
+      throw new Error(
+        "Application introuvable ou inaccessible pour le compte de service Play Console (vérifiez le nom du package et les autorisations)."
+      );
+    }
+    throw err;
+  } finally {
+    if (editId) {
+      androidpublisher.edits.delete({ editId, packageName: pkg }).catch(() => {});
+    }
+  }
+}
+
+// Applique la liste des groupes testeurs d'une piste de test dans Play
+// Console (remplace la liste actuelle par le groupe de l'app sur
+// PlayTesteur), via l'API Android Publisher (edits.testers). Nécessite que
+// le compte de service ait l'autorisation "Gérer les canaux de test et
+// modifier les listes de testeurs".
+async function configurerGroupeTesteurs(packageName, track, groupEmail) {
+  const { devMode, androidpublisher } = resoudreConfig();
+  if (devMode) return; // Simulation : rien à appliquer réellement.
+
+  const pkg = packageName.trim();
+  let editId;
+  try {
+    const edit = await androidpublisher.edits.insert({ packageName: pkg });
+    editId = edit.data.id;
+    await androidpublisher.edits.testers.patch({
+      editId,
+      packageName: pkg,
+      track,
+      requestBody: { googleGroups: [groupEmail] },
+    });
+    await androidpublisher.edits.commit({ editId, packageName: pkg });
+    editId = null; // Le commit consomme l'edit : pas besoin (et pas possible) de le supprimer ensuite.
+  } catch (err) {
+    if (err.code === 404 || err.code === 403) {
+      throw new Error(
+        "Piste de test introuvable ou inaccessible pour le compte de service Play Console (vérifiez le nom de la piste et les autorisations)."
+      );
+    }
+    throw err;
+  } finally {
+    if (editId) {
+      androidpublisher.edits.delete({ editId, packageName: pkg }).catch(() => {});
+    }
+  }
+}
+
 const AVIS_SIMULES = [
   { author: 'Léa M.', rating: 5, text: "Super application, exactement ce qu'il me fallait !", date: null },
   { author: 'Karim B.', rating: 4, text: 'Bonne app, quelques bugs mineurs mais rien de bloquant.', date: null },
@@ -177,4 +243,6 @@ module.exports = {
   },
   importerFicheApp,
   listerAvis,
+  listerPistesTest,
+  configurerGroupeTesteurs,
 };

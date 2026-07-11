@@ -1186,6 +1186,12 @@ async function viewMesApps() {
           <input type="text" name="google_group_email" placeholder="mon-app-testeurs@googlegroups.com" />
           <p class="form-hint" style="margin-top:6px;">Adresse suggérée automatiquement à partir du nom du package (modifiable). <strong>Ne collez jamais votre propre adresse email ici</strong> : ce champ doit contenir l'adresse du groupe, pas la vôtre.</p>
           <div id="guide-groupe"></div>
+          <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button type="button" class="btn-secondary" id="btn-detecter-pistes">Détecter les pistes de test Play Console</button>
+            <select id="select-piste-test" class="hidden" style="background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:8px 12px; color:var(--text-white);"></select>
+            <button type="button" class="btn-primary hidden" id="btn-appliquer-piste">Appliquer le groupe sur cette piste</button>
+          </div>
+          <p class="form-hint" style="margin-top:6px;">Applique automatiquement l'adresse du groupe ci-dessus comme liste de testeurs de la piste choisie dans Play Console — évite de le coller manuellement là-bas. Nécessite un package renseigné, un groupe rempli, et qu'au moins une piste de test existe déjà dans Play Console.</p>
         </div>
         <div style="display:flex; gap:10px;">
           <button type="submit" class="btn-primary" id="submit-form-btn">Créer le groupe de test</button>
@@ -1302,6 +1308,59 @@ async function viewMesApps() {
     // saisie) : évite de coller par erreur une adresse email personnelle.
     if (val && !submitForm.google_group_email.value.trim()) {
       submitForm.google_group_email.value = `${val}@googlegroups.com`;
+    }
+  });
+
+  const btnDetecterPistes = document.getElementById('btn-detecter-pistes');
+  const selectPiste = document.getElementById('select-piste-test');
+  const btnAppliquerPiste = document.getElementById('btn-appliquer-piste');
+
+  btnDetecterPistes.addEventListener('click', async () => {
+    const packageName = submitForm.package_name.value.trim();
+    if (!packageName) {
+      toast('Renseignez le nom du package avant de détecter les pistes.', 'error');
+      return;
+    }
+    btnDetecterPistes.disabled = true;
+    btnDetecterPistes.textContent = 'Détection...';
+    try {
+      const { pistes } = await Api.post('/api/apps/pistes-test', { package_name: packageName });
+      if (!pistes || pistes.length === 0) {
+        toast('Aucune piste de test trouvée pour ce package.', 'error');
+        selectPiste.classList.add('hidden');
+        btnAppliquerPiste.classList.add('hidden');
+        return;
+      }
+      selectPiste.innerHTML = pistes.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+      selectPiste.classList.remove('hidden');
+      btnAppliquerPiste.classList.remove('hidden');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      btnDetecterPistes.disabled = false;
+      btnDetecterPistes.textContent = 'Détecter les pistes de test Play Console';
+    }
+  });
+
+  btnAppliquerPiste.addEventListener('click', async () => {
+    const packageName = submitForm.package_name.value.trim();
+    const groupEmail = submitForm.google_group_email.value.trim();
+    const track = selectPiste.value;
+    if (!packageName || !groupEmail || !track) return;
+    btnAppliquerPiste.disabled = true;
+    btnAppliquerPiste.textContent = 'Application...';
+    try {
+      await Api.post('/api/apps/appliquer-groupe-play-console', {
+        package_name: packageName,
+        track,
+        google_group_email: groupEmail,
+      });
+      toast(`Groupe appliqué sur la piste "${track}" dans Play Console.`, 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      btnAppliquerPiste.disabled = false;
+      btnAppliquerPiste.textContent = 'Appliquer le groupe sur cette piste';
     }
   });
 
