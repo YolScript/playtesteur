@@ -501,6 +501,10 @@ button.mail-slot:hover { transform: scale(1.12); box-shadow: var(--shadow-md); }
     box-shadow: var(--shadow-sm);
 }
 
+.app-card-mine {
+    border-color: var(--color-warning);
+}
+
 .app-card:hover {
     transform: translateY(-4px);
     border-color: rgba(0, 230, 118, 0.2);

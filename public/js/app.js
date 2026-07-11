@@ -637,14 +637,15 @@ async function viewCatalogue() {
   }
 
   grid.innerHTML = applications
-    .map(
-      (app) => `
-      <div class="app-card">
+    .map((app) => {
+      const estMonApp = app.developpeur_id === state.user.id;
+      return `
+      <div class="app-card${estMonApp ? ' app-card-mine' : ''}">
         <div class="app-card-top">
           <div class="app-logo">${app.logo_url ? `<img src="${escapeHtml(app.logo_url)}" alt="" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;">` : '📱'}</div>
           <div>
             <div class="app-card-title">${escapeHtml(app.nom_application)}</div>
-            ${BADGE_APP[app.statut] || ''}
+            ${estMonApp ? '<span class="badge badge-attente">Votre application</span>' : BADGE_APP[app.statut] || ''}
           </div>
         </div>
         <p class="app-card-desc">${escapeHtml(app.description || 'Pas de description.')}</p>
@@ -652,11 +653,11 @@ async function viewCatalogue() {
         <div class="gauge-row"><span class="gauge-label">Testeurs</span><span class="gauge-value">${app.mails_recrutes} / ${app.mails_max}</span></div>
         <div class="gauge-bar-bg"><div class="gauge-bar-fill" style="width:${Math.round((app.mails_recrutes / app.mails_max) * 100)}%"></div></div>
         <div class="app-card-actions">
-          <button class="btn-primary btn-block" data-app="${app.id}">Voir / Rejoindre</button>
+          <button class="btn-primary btn-block" data-app="${app.id}">${estMonApp ? 'Gérer' : 'Voir / Rejoindre'}</button>
         </div>
       </div>
-    `
-    )
+    `;
+    })
     .join('');
 
   grid.querySelectorAll('[data-app]').forEach((btn) => {
@@ -744,6 +745,15 @@ async function viewAppDetail(id) {
       ${
         estMonApp
           ? `
+      <div class="section-title">Testeurs</div>
+      <div id="app-testeurs"><p class="form-hint">Chargement des testeurs...</p></div>
+      `
+          : ''
+      }
+
+      ${
+        estMonApp
+          ? `
       <div class="section-title">Avis des testeurs</div>
       <div id="app-avis">${renderAvisTesteurs(avisTesteurs)}</div>
       `
@@ -770,6 +780,7 @@ async function viewAppDetail(id) {
 
   document.getElementById('btn-back').addEventListener('click', () => history.back());
   if (!estMonApp) chargerAvisApp(app.id);
+  if (estMonApp) chargerTesteursApp(app.id);
 
   if (estMonApp || dejaRejoint) {
     demarrerChat(app.id);
@@ -1002,6 +1013,62 @@ async function chargerAvisApp(appId) {
       .join('');
   } catch (err) {
     container.innerHTML = `<p class="form-hint">Avis indisponibles pour le moment.</p>`;
+  }
+}
+
+// Liste des testeurs d'une application, réservée à son propriétaire, avec
+// bouton pour retirer un testeur (accès Google Group révoqué, slot libéré).
+async function chargerTesteursApp(appId) {
+  const container = document.getElementById('app-testeurs');
+  if (!container) return;
+  try {
+    const { testeurs } = await Api.get(`/api/apps/${appId}/testeurs`);
+    if (!testeurs || testeurs.length === 0) {
+      container.innerHTML = `<p class="form-hint">Aucun testeur pour le moment.</p>`;
+      return;
+    }
+    container.innerHTML = `
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Testeur</th><th>Tests réalisés</th><th>Dernière action</th><th>Statut</th><th></th></tr></thead>
+          <tbody>
+            ${testeurs
+              .map(
+                (t) => `
+              <tr>
+                <td data-label="Testeur">${escapeHtml(t.pseudo)}<br><span class="form-hint">${escapeHtml(t.email)}</span></td>
+                <td data-label="Tests réalisés">${t.tests_completes}</td>
+                <td data-label="Dernière action">${tempsRelatif(t.derniere_action)}</td>
+                <td data-label="Statut">${BADGE_HISTORIQUE[t.statut] || t.statut}</td>
+                <td data-label="">${
+                  t.statut !== 'Suspendu'
+                    ? `<button class="btn-secondary" data-retirer="${t.testeur_id}">Retirer</button>`
+                    : ''
+                }</td>
+              </tr>
+            `
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    container.querySelectorAll('[data-retirer]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Retirer ce testeur du test ? Son accès au groupe Google sera révoqué.')) return;
+        btn.disabled = true;
+        try {
+          await Api.post(`/api/apps/${appId}/testeurs/${btn.dataset.retirer}/retirer`);
+          toast('Testeur retiré.', 'success');
+          chargerTesteursApp(appId);
+        } catch (err) {
+          toast(err.message, 'error');
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<p class="form-hint">Testeurs indisponibles pour le moment.</p>`;
   }
 }
 

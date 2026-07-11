@@ -28,13 +28,28 @@ const findAvisApp = db.prepare(`
   WHERE h.application_id = ? AND h.statut = 'Complété' AND h.avis_texte IS NOT NULL
   ORDER BY h.date_action DESC
 `);
+const findTesteursApp = db.prepare(`
+  SELECT h.id AS historique_id, h.testeur_id, h.statut, h.date_rejoint, h.date_action,
+         u.pseudo, u.email,
+         (SELECT COUNT(*) FROM historique_tests h2 WHERE h2.testeur_id = u.id AND h2.statut = 'Complété') AS tests_completes
+  FROM historique_tests h
+  JOIN users u ON u.id = h.testeur_id
+  WHERE h.application_id = ?
+  ORDER BY h.date_rejoint DESC
+`);
+const suspendreHistoriqueApp = db.prepare(`UPDATE historique_tests SET statut = 'Suspendu' WHERE id = ?`);
+const decrementerMailsAppRetrait = db.prepare(
+  'UPDATE applications SET mails_recrutes = MAX(0, mails_recrutes - 1) WHERE id = ?'
+);
 
-// Catalogue public : toutes les apps en recrutement, hors mes propres apps et
-// hors apps déjà testées avec succès ou définitivement rejetées (anti-doublon).
-// Une app avec un test "En_Cours" (rejointe mais pas encore validée) reste
-// visible pour que le testeur puisse continuer et valider son avis.
-// Les administrateurs peuvent voir toutes les applications (y compris les leurs,
-// les déjà testées/rejointes et les complétées).
+// Catalogue public : toutes les apps en recrutement, hors apps déjà testées
+// avec succès ou définitivement rejetées (anti-doublon). Une app avec un
+// test "En_Cours" (rejointe mais pas encore validée) reste visible pour que
+// le testeur puisse continuer et valider son avis. Les applications du
+// développeur connecté restent toujours visibles, épinglées en haut, pour
+// qu'il puisse suivre leur recrutement sans changer de page.
+// Les administrateurs peuvent voir toutes les applications (y compris les
+// leurs, les déjà testées/rejointes et les complétées).
 router.get('/', requireAuth, (req, res) => {
   const isAdmin = req.session.role === 'administrator';
   let rows;
@@ -49,15 +64,18 @@ router.get('/', requireAuth, (req, res) => {
     rows = db
       .prepare(
         `SELECT a.* FROM applications a
-         WHERE a.statut = 'En_Cours'
-           AND a.developpeur_id != ?
-           AND NOT EXISTS (
-             SELECT 1 FROM historique_tests h
-             WHERE h.application_id = a.id AND h.testeur_id = ? AND h.statut != 'En_Cours'
-           )
-         ORDER BY a.mails_recrutes ASC, a.created_at ASC`
+         WHERE a.developpeur_id = ?
+            OR (
+              a.statut = 'En_Cours'
+              AND a.developpeur_id != ?
+              AND NOT EXISTS (
+                SELECT 1 FROM historique_tests h
+                WHERE h.application_id = a.id AND h.testeur_id = ? AND h.statut != 'En_Cours'
+              )
+            )
+         ORDER BY (a.developpeur_id = ?) DESC, a.mails_recrutes ASC, a.created_at ASC`
       )
-      .all(req.session.userId, req.session.userId);
+      .all(req.session.userId, req.session.userId, req.session.userId, req.session.userId);
   }
   res.json({ applications: rows.map(publicApplication) });
 });
@@ -285,6 +303,65 @@ router.post('/:id/avis', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[apps.avis]', err);
     res.status(500).json({ erreur: "Impossible d'enregistrer votre avis pour le moment." });
+  }
+});
+
+// Liste des testeurs d'une application, réservée à son propriétaire :
+// pseudo, email, statut, nombre de tests complétés sur toute la plateforme
+// (indicateur de fiabilité) et date de dernière action (pour repérer les
+// testeurs inactifs à retirer).
+router.get('/:id/testeurs', requireAuth, (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+  if (app.developpeur_id !== req.session.userId) {
+    return res.status(403).json({ erreur: 'Réservé au propriétaire de cette application.' });
+  }
+
+  const testeurs = findTesteursApp.all(app.id).map((r) => ({
+    historique_id: r.historique_id,
+    testeur_id: r.testeur_id,
+    pseudo: r.pseudo,
+    email: r.email,
+    statut: r.statut,
+    tests_completes: r.tests_completes,
+    derniere_action: r.date_action || r.date_rejoint,
+  }));
+  res.json({ testeurs });
+});
+
+// Retire un testeur du test (accès Google Group révoqué, slot libéré si le
+// test était complété). Réservé au propriétaire de l'application.
+router.post('/:id/testeurs/:testeurId/retirer', requireAuth, async (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+  if (app.developpeur_id !== req.session.userId) {
+    return res.status(403).json({ erreur: 'Réservé au propriétaire de cette application.' });
+  }
+
+  const historique = findHistorique.get(req.params.testeurId, app.id);
+  if (!historique || historique.statut === 'Suspendu') {
+    return res.status(400).json({ erreur: 'Ce testeur ne fait déjà plus partie du test.' });
+  }
+
+  const testeur = findUserById.get(req.params.testeurId);
+
+  try {
+    suspendreHistoriqueApp.run(historique.id);
+    if (historique.statut === 'Complété') {
+      decrementerMailsAppRetrait.run(app.id);
+    }
+    if (app.google_group_email && testeur) {
+      try {
+        await googleGroups.retirerMembre(app.google_group_email, testeur.email);
+      } catch (err) {
+        console.error('[apps.retirerTesteur] éjection groupe échouée', app.google_group_email, err.message);
+      }
+    }
+    logActivity(req.session.userId, 'A retiré un testeur', `${testeur?.pseudo || '?'} — ${app.nom_application}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[apps.retirerTesteur]', err);
+    res.status(500).json({ erreur: 'Impossible de retirer ce testeur pour le moment.' });
   }
 });
 
