@@ -23,8 +23,9 @@ const insertHistorique = db.prepare(
 );
 
 // Catalogue public : toutes les apps en recrutement, hors mes propres apps et
-// hors apps déjà testées ou rejointes (anti-doublon : une fois testée, une
-// app est définitivement masquée pour ce testeur).
+// hors apps déjà testées avec succès ou définitivement rejetées (anti-doublon).
+// Une app avec un test "En_Cours" (rejointe mais pas encore validée) reste
+// visible pour que le testeur puisse continuer et valider son avis.
 // Les administrateurs peuvent voir toutes les applications (y compris les leurs,
 // les déjà testées/rejointes et les complétées).
 router.get('/', requireAuth, (req, res) => {
@@ -45,7 +46,7 @@ router.get('/', requireAuth, (req, res) => {
            AND a.developpeur_id != ?
            AND NOT EXISTS (
              SELECT 1 FROM historique_tests h
-             WHERE h.application_id = a.id AND h.testeur_id = ?
+             WHERE h.application_id = a.id AND h.testeur_id = ? AND h.statut != 'En_Cours'
            )
          ORDER BY a.mails_recrutes ASC, a.created_at ASC`
       )

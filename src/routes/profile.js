@@ -10,12 +10,16 @@ const findById = db.prepare('SELECT * FROM users WHERE id = ?');
 const majMasquerInfos = db.prepare('UPDATE users SET masquer_infos = ? WHERE id = ?');
 const majPseudo = db.prepare('UPDATE users SET pseudo = ? WHERE id = ?');
 
+// Un mail n'est "débloqué" qu'une fois le test validé (avis Play Store
+// détecté) : un test tout juste rejoint (statut En_Cours) ne doit pas
+// apparaître ici, sinon le testeur voit un mail "actif" avant même d'avoir
+// terminé son test.
 const mailsDuTesteur = db.prepare(`
   SELECT h.id, h.statut, h.date_rejoint, h.date_action,
          a.nom_application, a.google_group_email
   FROM historique_tests h
   JOIN applications a ON a.id = h.application_id
-  WHERE h.testeur_id = ?
+  WHERE h.testeur_id = ? AND h.statut != 'En_Cours'
   ORDER BY h.date_rejoint DESC
   LIMIT 12
 `);
