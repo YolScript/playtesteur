@@ -7,27 +7,42 @@
 // le parcours (inscription, ajout au groupe, éjection) sans compte Workspace.
 const { resoudreCredentials } = require('./googleCredentials');
 
-const IMPERSONATE = process.env.GOOGLE_ADMIN_IMPERSONATE_EMAIL;
-const DOMAIN = process.env.GOOGLE_GROUPS_DOMAIN;
-const credentials = resoudreCredentials('GOOGLE_SERVICE_ACCOUNT_KEY_PATH', 'GOOGLE_SERVICE_ACCOUNT_KEY_JSON');
+// La configuration est résolue À CHAQUE APPEL (avec cache invalidé quand
+// elle change) plutôt que figée au chargement du module : la page admin
+// peut ainsi renseigner les variables (via siteConfig → process.env) et
+// voir l'API basculer de DEV à PRODUCTION sans redémarrer le serveur.
+let cacheConfig = null;
+let avertissementDevAffiche = false;
 
-const devMode = !credentials || !IMPERSONATE || !DOMAIN;
+function resoudreConfig() {
+  const impersonate = process.env.GOOGLE_ADMIN_IMPERSONATE_EMAIL;
+  const domain = process.env.GOOGLE_GROUPS_DOMAIN;
+  const credentials = resoudreCredentials('GOOGLE_SERVICE_ACCOUNT_KEY_PATH', 'GOOGLE_SERVICE_ACCOUNT_KEY_JSON');
+  const empreinte = [impersonate || '', domain || '', credentials?.client_email || ''].join('|');
+  if (cacheConfig && cacheConfig.empreinte === empreinte) return cacheConfig;
 
-let directory = null;
-if (!devMode) {
-  const { google } = require('googleapis');
-  const auth = new google.auth.JWT({
-    email: credentials.client_email,
-    key: credentials.private_key,
-    scopes: [
-      'https://www.googleapis.com/auth/admin.directory.group',
-      'https://www.googleapis.com/auth/admin.directory.group.member',
-    ],
-    subject: IMPERSONATE,
-  });
-  directory = google.admin({ version: 'directory_v1', auth });
-} else {
-  console.warn('[googleGroups] MODE DEV actif : variables Google Workspace absentes, groupes simulés en mémoire.');
+  const devMode = !credentials || !impersonate || !domain;
+  let directory = null;
+  if (!devMode) {
+    const { google } = require('googleapis');
+    const auth = new google.auth.JWT({
+      email: credentials.client_email,
+      key: credentials.private_key,
+      scopes: [
+        'https://www.googleapis.com/auth/admin.directory.group',
+        'https://www.googleapis.com/auth/admin.directory.group.member',
+      ],
+      subject: impersonate,
+    });
+    directory = google.admin({ version: 'directory_v1', auth });
+    avertissementDevAffiche = false;
+  } else if (!avertissementDevAffiche) {
+    console.warn('[googleGroups] MODE DEV actif : variables Google Workspace absentes, groupes simulés en mémoire.');
+    avertissementDevAffiche = true;
+  }
+
+  cacheConfig = { empreinte, devMode, directory, domain };
+  return cacheConfig;
 }
 
 // Groupes et membres simulés en mode dev : Map<groupEmail, Set<memberEmail>>
@@ -43,15 +58,16 @@ function slugify(text) {
 }
 
 async function creerGroupe(appId, nomApplication) {
-  const domaine = DOMAIN || 'playtesteur.dev';
+  const config = resoudreConfig();
+  const domaine = config.domain || 'playtesteur.dev';
   const groupEmail = `app-${appId}-${slugify(nomApplication)}@${domaine}`;
 
-  if (devMode) {
+  if (config.devMode) {
     devGroups.set(groupEmail, new Set());
     return groupEmail;
   }
 
-  await directory.groups.insert({
+  await config.directory.groups.insert({
     requestBody: {
       email: groupEmail,
       name: `PlayTesteur - ${nomApplication}`,
@@ -62,14 +78,15 @@ async function creerGroupe(appId, nomApplication) {
 }
 
 async function ajouterMembre(groupEmail, userEmail) {
-  if (devMode) {
+  const config = resoudreConfig();
+  if (config.devMode) {
     if (!devGroups.has(groupEmail)) devGroups.set(groupEmail, new Set());
     devGroups.get(groupEmail).add(userEmail);
     return;
   }
 
   try {
-    await directory.members.insert({
+    await config.directory.members.insert({
       groupKey: groupEmail,
       requestBody: { email: userEmail, role: 'MEMBER' },
     });
@@ -80,13 +97,14 @@ async function ajouterMembre(groupEmail, userEmail) {
 }
 
 async function retirerMembre(groupEmail, userEmail) {
-  if (devMode) {
+  const config = resoudreConfig();
+  if (config.devMode) {
     devGroups.get(groupEmail)?.delete(userEmail);
     return;
   }
 
   try {
-    await directory.members.delete({ groupKey: groupEmail, memberKey: userEmail });
+    await config.directory.members.delete({ groupKey: groupEmail, memberKey: userEmail });
   } catch (err) {
     // 404 = déjà absent du groupe, on ignore silencieusement
     if (err.code !== 404) throw err;
@@ -99,8 +117,9 @@ async function retirerMembre(groupEmail, userEmail) {
 // membres : l'adhésion passe par le testeur lui-même via l'URL du groupe
 // (réglage du groupe : "Qui peut rejoindre : tout le monde sur le web").
 function estGroupeGere(groupEmail) {
-  if (devMode) return false;
-  return !!groupEmail && groupEmail.toLowerCase().endsWith(`@${String(DOMAIN).toLowerCase()}`);
+  const config = resoudreConfig();
+  if (config.devMode) return false;
+  return !!groupEmail && groupEmail.toLowerCase().endsWith(`@${String(config.domain).toLowerCase()}`);
 }
 
 // URL de la page du groupe où le testeur clique "Rejoindre le groupe".
@@ -111,4 +130,15 @@ function urlAdhesion(groupEmail) {
   return `https://groups.google.com/a/${domaine}/g/${local}`;
 }
 
-module.exports = { devMode, creerGroupe, ajouterMembre, retirerMembre, estGroupeGere, urlAdhesion };
+module.exports = {
+  // Getter : reflète l'état réel à chaque lecture (la config peut changer
+  // en cours de route via la page admin, sans redémarrage).
+  get devMode() {
+    return resoudreConfig().devMode;
+  },
+  creerGroupe,
+  ajouterMembre,
+  retirerMembre,
+  estGroupeGere,
+  urlAdhesion,
+};

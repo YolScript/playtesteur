@@ -383,11 +383,44 @@ async function viewDashboard() {
         <button class="btn-secondary" id="go-tickets">Ouvrir un ticket</button>
       </div>
     </div>
+
+    ${
+      user.role === 'administrator'
+        ? `
+    <div class="section-title">⚙️ Configuration du site (admin)</div>
+    <div class="profile-card" id="site-config-card">
+      <div class="stats-grid" id="site-config-modes" style="margin-bottom:16px;"></div>
+      <div id="site-config-msg"></div>
+      <form id="site-config-form">
+        <div class="form-group">
+          <label>Email admin Google Workspace / Cloud Identity (GOOGLE_ADMIN_IMPERSONATE_EMAIL)</label>
+          <input type="text" name="GOOGLE_ADMIN_IMPERSONATE_EMAIL" placeholder="admin@votredomaine.fr" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Domaine des groupes (GOOGLE_GROUPS_DOMAIN)</label>
+          <input type="text" name="GOOGLE_GROUPS_DOMAIN" placeholder="votredomaine.fr" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Clé JSON du compte de service (GOOGLE_SERVICE_ACCOUNT_KEY_JSON)</label>
+          <textarea name="GOOGLE_SERVICE_ACCOUNT_KEY_JSON" rows="3" placeholder='Coller le contenu complet du fichier JSON téléchargé depuis Google Cloud (laisser vide pour ne pas changer)' autocomplete="off" style="width:100%; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:10px 14px; color:var(--text-white); font-family:monospace; font-size:12px;"></textarea>
+          <p class="form-hint" id="site-config-key-status" style="margin-top:6px;"></p>
+        </div>
+        <p class="form-hint" style="margin-bottom:12px;">Ces réglages activent la gestion automatique des groupes de testeurs (API Google Groups). Sans Workspace/Cloud Identity, laissez vide : les groupes gratuits @googlegroups.com fonctionnent sans configuration. Prise en compte immédiate, sans redémarrage.</p>
+        <button type="submit" class="btn-primary">Enregistrer la configuration</button>
+      </form>
+    </div>
+    `
+        : ''
+    }
   `;
 
   document.getElementById('go-catalogue').addEventListener('click', () => (location.hash = '#/catalogue'));
   document.getElementById('go-mesapps').addEventListener('click', () => (location.hash = '#/mes-apps'));
   document.getElementById('go-tickets').addEventListener('click', () => (location.hash = '#/tickets'));
+
+  if (user.role === 'administrator') {
+    initSiteConfigCard();
+  }
 
   document.querySelectorAll('[data-copy-mail]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -501,6 +534,61 @@ async function viewDashboard() {
   if (wrapper) {
     setupEditPseudo(wrapper);
   }
+}
+
+/* ==========================================================================
+   CONFIGURATION DU SITE (page Compte, admin uniquement)
+   ========================================================================== */
+async function initSiteConfigCard() {
+  const form = document.getElementById('site-config-form');
+  const modesEl = document.getElementById('site-config-modes');
+  const msgEl = document.getElementById('site-config-msg');
+  const keyStatusEl = document.getElementById('site-config-key-status');
+  if (!form) return;
+
+  const afficherEtat = (etat) => {
+    modesEl.innerHTML = `
+      <div class="stat-card"><div class="stat-label">Connexion Google</div><div class="stat-value" style="font-size:16px;">${escapeHtml(etat.modes.auth_mode)}</div></div>
+      <div class="stat-card"><div class="stat-label">API Google Groups</div><div class="stat-value" style="font-size:16px;">${escapeHtml(etat.modes.groups_mode)}</div></div>
+      <div class="stat-card"><div class="stat-label">API Play Reviews</div><div class="stat-value" style="font-size:16px;">${escapeHtml(etat.modes.reviews_mode)}</div></div>
+    `;
+    const impersonate = etat.valeurs.GOOGLE_ADMIN_IMPERSONATE_EMAIL;
+    const domaine = etat.valeurs.GOOGLE_GROUPS_DOMAIN;
+    if (impersonate && !impersonate.secrete) form.GOOGLE_ADMIN_IMPERSONATE_EMAIL.value = impersonate.valeur;
+    if (domaine && !domaine.secrete) form.GOOGLE_GROUPS_DOMAIN.value = domaine.valeur;
+    const cle = etat.valeurs.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
+    keyStatusEl.textContent = cle && cle.presente
+      ? '🔑 Une clé de compte de service est déjà enregistrée (laisser vide pour la conserver).'
+      : 'Aucune clé enregistrée pour le moment.';
+  };
+
+  try {
+    afficherEtat(await Api.get('/api/admin/config'));
+  } catch (err) {
+    msgEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+    return;
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+      GOOGLE_ADMIN_IMPERSONATE_EMAIL: form.GOOGLE_ADMIN_IMPERSONATE_EMAIL.value.trim(),
+      GOOGLE_GROUPS_DOMAIN: form.GOOGLE_GROUPS_DOMAIN.value.trim(),
+    };
+    // Clé JSON : champ vide = conserver l'existante (on n'envoie pas la clé).
+    const cleSaisie = form.GOOGLE_SERVICE_ACCOUNT_KEY_JSON.value.trim();
+    if (cleSaisie) payload.GOOGLE_SERVICE_ACCOUNT_KEY_JSON = cleSaisie;
+
+    try {
+      const etat = await Api.post('/api/admin/config', payload);
+      form.GOOGLE_SERVICE_ACCOUNT_KEY_JSON.value = '';
+      afficherEtat(etat);
+      msgEl.innerHTML = '';
+      toast('Configuration enregistrée et appliquée.', 'success');
+    } catch (err) {
+      msgEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+    }
+  });
 }
 
 /* ==========================================================================

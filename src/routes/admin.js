@@ -6,6 +6,8 @@ const googleGroups = require('../services/googleGroups');
 const googleAuth = require('../services/googleAuth');
 const { ajusterScore } = require('../services/sanctions');
 const { logActivity } = require('../services/activityLog');
+const siteConfig = require('../services/siteConfig');
+const playReviews = require('../services/playReviews');
 
 const router = express.Router();
 
@@ -45,9 +47,58 @@ router.get('/stats', (req, res) => {
     api_google: {
       auth_mode: googleAuth.devMode ? 'DEV (simulé)' : 'PRODUCTION',
       groups_mode: googleGroups.devMode ? 'DEV (simulé)' : 'PRODUCTION',
-      reviews_mode: require('../services/playReviews').devMode ? 'DEV (simulé)' : 'PRODUCTION',
+      reviews_mode: playReviews.devMode ? 'DEV (simulé)' : 'PRODUCTION',
     },
   });
+});
+
+/* --------------------------------------------------------------------
+   Configuration du site (page Compte, admin uniquement) : renseigne les
+   intégrations Google sans toucher au .env ni redémarrer le serveur.
+   -------------------------------------------------------------------- */
+function etatConfig() {
+  const valeurs = {};
+  for (const cle of siteConfig.CLES_ENV) {
+    valeurs[cle] = siteConfig.CLES_SECRETES.includes(cle)
+      ? { secrete: true, presente: !!(siteConfig.lire(cle) || process.env[cle]) }
+      : { secrete: false, valeur: siteConfig.lire(cle) || process.env[cle] || '' };
+  }
+  return {
+    valeurs,
+    modes: {
+      auth_mode: googleAuth.devMode ? 'DEV (simulé)' : 'PRODUCTION',
+      groups_mode: googleGroups.devMode ? 'DEV (simulé)' : 'PRODUCTION',
+      reviews_mode: playReviews.devMode ? 'DEV (simulé)' : 'PRODUCTION',
+    },
+    service_account_email: playReviews.serviceAccountEmail || null,
+  };
+}
+
+router.get('/config', (req, res) => {
+  res.json(etatConfig());
+});
+
+router.post('/config', (req, res) => {
+  const entrees = req.body || {};
+  try {
+    for (const cle of siteConfig.CLES_ENV) {
+      if (entrees[cle] === undefined) continue; // champ absent = inchangé
+      const valeur = String(entrees[cle] || '').trim();
+      if (cle === 'GOOGLE_SERVICE_ACCOUNT_KEY_JSON' && valeur) {
+        try {
+          JSON.parse(valeur);
+        } catch (_) {
+          return res.status(400).json({ erreur: 'La clé du compte de service doit être le contenu JSON complet du fichier téléchargé depuis Google Cloud.' });
+        }
+      }
+      siteConfig.definir(cle, valeur);
+    }
+    logActivity(req.session.userId, 'A modifié la configuration du site');
+    res.json(etatConfig());
+  } catch (err) {
+    console.error('[admin.config]', err);
+    res.status(500).json({ erreur: "Impossible d'enregistrer la configuration." });
+  }
 });
 
 router.get('/users', (req, res) => {
