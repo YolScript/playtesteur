@@ -273,6 +273,22 @@ router.put('/:id', requireAuth, (req, res) => {
   res.json({ application: publicApplication(findAppById.get(app.id)) });
 });
 
+// Supprime une application : son créateur, ou un administrateur (n'importe
+// laquelle). Les historiques de test et messages associés suivent via
+// ON DELETE CASCADE.
+router.delete('/:id', requireAuth, (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+  const isAdmin = req.session.role === 'administrator';
+  if (!isAdmin && app.developpeur_id !== req.session.userId) {
+    return res.status(403).json({ erreur: "Vous n'êtes pas le créateur de cette application." });
+  }
+
+  db.prepare('DELETE FROM applications WHERE id = ?').run(app.id);
+  logActivity(req.session.userId, 'A supprimé une application', app.nom_application);
+  res.json({ ok: true });
+});
+
 // Rejoindre le test d'une application. Deux cas :
 // - Groupe géré par l'API (Workspace configuré) : ajout automatique du mail.
 // - Groupe externe (@googlegroups.com fourni par le développeur, gratuit) :

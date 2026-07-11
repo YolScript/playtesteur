@@ -1537,6 +1537,7 @@ async function chargerMesApps(onEdit) {
         <div class="gauge-bar-bg"><div class="gauge-bar-fill" style="width:${Math.round((app.mails_recrutes / app.mails_max) * 100)}%"></div></div>
         <div class="app-card-actions">
           <button class="btn-secondary btn-block" data-edit-app="${app.id}">Éditer</button>
+          <button class="btn-secondary btn-block" data-delete-app="${app.id}" style="color:var(--color-danger);">Supprimer</button>
         </div>
       </div>
     `
@@ -1546,6 +1547,22 @@ async function chargerMesApps(onEdit) {
   grid.querySelectorAll('[data-edit-app]').forEach((btn) => {
     const app = applications.find((a) => String(a.id) === btn.dataset.editApp);
     btn.addEventListener('click', () => onEdit(app));
+  });
+
+  grid.querySelectorAll('[data-delete-app]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const app = applications.find((a) => String(a.id) === btn.dataset.deleteApp);
+      if (!confirm(`Supprimer définitivement "${app.nom_application}" ? Cette action est irréversible : tous les historiques de test et messages associés seront perdus.`)) return;
+      btn.disabled = true;
+      try {
+        await Api.delete(`/api/apps/${app.id}`);
+        toast('Application supprimée.', 'success');
+        chargerMesApps(onEdit);
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+      }
+    });
   });
 }
 
@@ -1740,7 +1757,7 @@ async function viewAdmin() {
     <div class="section-title">Applications</div>
     <div class="table-wrapper">
       <table>
-        <thead><tr><th>Nom</th><th>Créateur</th><th>Statut</th><th>Testeurs</th><th>Créée le</th></tr></thead>
+        <thead><tr><th>Nom</th><th>Créateur</th><th>Statut</th><th>Testeurs</th><th>Créée le</th><th></th></tr></thead>
         <tbody id="apps-tbody"></tbody>
       </table>
     </div>
@@ -1892,10 +1909,27 @@ async function viewAdmin() {
         <td data-label="Statut">${BADGE_APP[a.statut] || ''}</td>
         <td data-label="Testeurs">${a.mails_recrutes}/${a.mails_max} <button class="btn-ghost" data-toggle-testeurs="${a.id}">Voir testeurs</button></td>
         <td data-label="Créée le">${escapeHtml(a.created_at)}</td>
+        <td data-label=""><button class="btn-xs btn-danger" data-delete-app-admin="${a.id}">Supprimer</button></td>
       </tr>
     `
     )
     .join('');
+
+  document.querySelectorAll('[data-delete-app-admin]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const appId = btn.dataset.deleteAppAdmin;
+      if (!confirm('Supprimer définitivement cette application ? Cette action est irréversible : tous les historiques de test et messages associés seront perdus.')) return;
+      btn.disabled = true;
+      try {
+        await Api.delete(`/api/apps/${appId}`);
+        toast('Application supprimée.', 'success');
+        viewAdmin();
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+  });
 
   document.querySelectorAll('[data-toggle-testeurs]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -1928,7 +1962,7 @@ async function viewAdmin() {
           .getElementById(`app-row-${appId}`)
           .insertAdjacentHTML(
             'afterend',
-            `<tr id="app-testeurs-${appId}"><td colspan="5" style="background:var(--bg-input);">${contenu}</td></tr>`
+            `<tr id="app-testeurs-${appId}"><td colspan="6" style="background:var(--bg-input);">${contenu}</td></tr>`
           );
         btn.textContent = 'Masquer testeurs';
       } catch (err) {
