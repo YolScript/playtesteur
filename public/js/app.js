@@ -259,8 +259,15 @@ function showFormError(message) {
    DASHBOARD
    ========================================================================== */
 async function viewDashboard() {
-  const { user, mails } = await Api.get('/api/profile');
+  const [{ user, mails }, { applications: catalogue }] = await Promise.all([
+    Api.get('/api/profile'),
+    Api.get('/api/apps'),
+  ]);
   state.user = user;
+  // Rien à tester dans le catalogue = la jauge "Mails actifs" n'a aucune
+  // utilité (impossible d'en gagner) : on la masque plutôt que d'afficher
+  // 0/12 sans action possible.
+  const catalogueVide = catalogue.length === 0;
 
   const pctScore = Math.round((user.score_global / 100) * 100);
   const pctMails = Math.round((user.mails_debloques / user.mails_max) * 100);
@@ -324,11 +331,15 @@ async function viewDashboard() {
                 : `<p class="form-hint" style="margin-top:8px;">Palier maximum atteint 🎉</p>`
           }
         </div>
-        <div>
+        ${
+          catalogueVide
+            ? ''
+            : `<div>
           <div class="gauge-row"><span class="gauge-label">Mails actifs</span><span class="gauge-value">${user.mails_debloques} / ${user.mails_max}</span></div>
           <div class="gauge-bar-bg"><div class="gauge-bar-fill gauge-mails" style="width:${pctMails}%"></div></div>
           <div class="mails-grid" id="mails-grid" style="${user.masquer_infos ? 'filter:blur(5px); pointer-events:none; user-select:none;' : ''}">${mailSlots}</div>
-        </div>
+        </div>`
+        }
       </div>
     </div>
 
