@@ -327,7 +327,7 @@ async function viewDashboard() {
         <div>
           <div class="gauge-row"><span class="gauge-label">Mails actifs</span><span class="gauge-value">${user.mails_debloques} / ${user.mails_max}</span></div>
           <div class="gauge-bar-bg"><div class="gauge-bar-fill gauge-mails" style="width:${pctMails}%"></div></div>
-          <div class="mails-grid">${mailSlots}</div>
+          <div class="mails-grid" id="mails-grid" style="${user.masquer_infos ? 'filter:blur(5px); pointer-events:none; user-select:none;' : ''}">${mailSlots}</div>
         </div>
       </div>
     </div>
@@ -454,6 +454,12 @@ async function viewDashboard() {
       document.getElementById('profile-email-value').textContent = updated.masquer_infos
         ? '••••••••@••••••.•••'
         : updated.email;
+      const mailsGrid = document.getElementById('mails-grid');
+      if (mailsGrid) {
+        mailsGrid.style.filter = updated.masquer_infos ? 'blur(5px)' : '';
+        mailsGrid.style.pointerEvents = updated.masquer_infos ? 'none' : '';
+        mailsGrid.style.userSelect = updated.masquer_infos ? 'none' : '';
+      }
       toast(masquer ? 'Informations personnelles masquées.' : 'Informations personnelles visibles.', 'success');
     } catch (err) {
       e.target.checked = !masquer;
