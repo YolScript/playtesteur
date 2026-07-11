@@ -7,6 +7,7 @@ const cron = require('node-cron');
 
 require('./src/db/init'); // initialise le schéma au démarrage
 const { runMidnightJob } = require('./src/jobs/midnightJob');
+const SqliteSessionStore = require('./src/services/sessionStore');
 
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
@@ -21,6 +22,7 @@ const PORT = parseInt(process.env.PORT, 10) || 8090;
 app.use(express.json());
 app.use(
   session({
+    store: new SqliteSessionStore(),
     secret: process.env.SESSION_SECRET || 'dev-secret-a-changer',
     resave: false,
     saveUninitialized: false,

@@ -1325,13 +1325,16 @@ async function viewMesApps() {
     btnDetecterPistes.textContent = 'Détection...';
     try {
       const { pistes } = await Api.post('/api/apps/pistes-test', { package_name: packageName });
-      if (!pistes || pistes.length === 0) {
-        toast('Aucune piste de test trouvée pour ce package.', 'error');
+      // Ne propose que la piste "alpha" (test fermé classique) : éviter tout
+      // risque d'appliquer par erreur le groupe de testeurs sur "production".
+      const pistesAlpha = (pistes || []).filter((p) => p === 'alpha');
+      if (pistesAlpha.length === 0) {
+        toast('Piste "alpha" introuvable pour ce package (vérifiez qu\'une piste de test fermé nommée "alpha" existe dans Play Console).', 'error');
         selectPiste.classList.add('hidden');
         btnAppliquerPiste.classList.add('hidden');
         return;
       }
-      selectPiste.innerHTML = pistes.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+      selectPiste.innerHTML = pistesAlpha.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
       selectPiste.classList.remove('hidden');
       btnAppliquerPiste.classList.remove('hidden');
     } catch (err) {
