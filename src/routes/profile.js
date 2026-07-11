@@ -3,12 +3,29 @@ const db = require('../db/init');
 const { requireAuth } = require('../middleware/auth');
 const { publicUser } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
+const { TESTS_REQUIS_ONBOARDING } = require('../services/validation');
 
 const router = express.Router();
 
 const findById = db.prepare('SELECT * FROM users WHERE id = ?');
 const majMasquerInfos = db.prepare('UPDATE users SET masquer_infos = ? WHERE id = ?');
 const majPseudo = db.prepare('UPDATE users SET pseudo = ? WHERE id = ?');
+const compterTestsCompletes = db.prepare(
+  `SELECT COUNT(*) AS n FROM historique_tests WHERE testeur_id = ? AND statut = 'Complété'`
+);
+
+// Avant que le profil passe "Validé" (TESTS_REQUIS_ONBOARDING tests
+// complétés), le score/mail quotidien ne s'incrémente pas encore (voir
+// services/validation.js) : la jauge de progression doit refléter cette
+// règle plutôt que le palier de score, sinon le message affiché est faux
+// ("encore 1 point" alors que ce sont des tests qui manquent, pas des points).
+function enrichirUser(user) {
+  return {
+    ...publicUser(user),
+    tests_completes: compterTestsCompletes.get(user.id).n,
+    tests_requis_onboarding: TESTS_REQUIS_ONBOARDING,
+  };
+}
 
 // Un mail n'est "débloqué" qu'une fois le test validé (avis Play Store
 // détecté) : un test tout juste rejoint (statut En_Cours) ne doit pas
@@ -71,7 +88,7 @@ function listeMails(user) {
 
 router.get('/', requireAuth, (req, res) => {
   const user = findById.get(req.session.userId);
-  res.json({ user: publicUser(user), mails: listeMails(user) });
+  res.json({ user: enrichirUser(user), mails: listeMails(user) });
 });
 
 // Masquage purement visuel de l'email : n'affecte que l'affichage côté
@@ -79,7 +96,7 @@ router.get('/', requireAuth, (req, res) => {
 router.post('/masquer-infos', requireAuth, (req, res) => {
   const masquer = !!req.body?.masquer;
   majMasquerInfos.run(masquer ? 1 : 0, req.session.userId);
-  res.json({ user: publicUser(findById.get(req.session.userId)) });
+  res.json({ user: enrichirUser(findById.get(req.session.userId)) });
 });
 
 // Modification visuelle du pseudo par l'utilisateur
@@ -92,7 +109,7 @@ router.post('/pseudo', requireAuth, (req, res) => {
     return res.status(400).json({ erreur: 'Le pseudo ne peut pas dépasser 50 caractères.' });
   }
   majPseudo.run(pseudo, req.session.userId);
-  res.json({ user: publicUser(findById.get(req.session.userId)) });
+  res.json({ user: enrichirUser(findById.get(req.session.userId)) });
 });
 
 module.exports = router;

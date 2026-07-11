@@ -265,9 +265,13 @@ async function viewDashboard() {
   const pctScore = Math.round((user.score_global / 100) * 100);
   const pctMails = Math.round((user.mails_debloques / user.mails_max) * 100);
 
+  // Un slot n'est "rempli" que s'il compte réellement dans mails_debloques :
+  // pendant les 10 premiers tests (avant validation du profil), un test
+  // "Complété" n'incrémente pas encore ce compteur (voir services/validation.js),
+  // donc ne doit pas s'afficher comme un mail actif malgré son statut.
   const mailSlots = Array.from({ length: user.mails_max })
     .map((_, i) => {
-      const mail = mails[i];
+      const mail = i < user.mails_debloques ? mails[i] : null;
       if (!mail) return '<div class="mail-slot">✉</div>';
       const copiable = mail.statut_visuel === 'vert' || mail.statut_visuel === 'orange';
       const titre =
@@ -313,9 +317,11 @@ async function viewDashboard() {
           <div class="gauge-row"><span class="gauge-label">Score global</span><span class="gauge-value">${user.score_global} / 100</span></div>
           <div class="gauge-bar-bg"><div class="gauge-bar-fill" style="width:${pctScore}%"></div></div>
           ${
-            user.score_prochain_palier !== null
-              ? `<p class="form-hint" style="margin-top:8px;">Encore ${Math.max(0, user.score_prochain_palier - user.score_global)} points pour débloquer le mail n°${user.mails_debloques + 1}.</p>`
-              : `<p class="form-hint" style="margin-top:8px;">Palier maximum atteint 🎉</p>`
+            user.statut_profil !== 'Validé'
+              ? `<p class="form-hint" style="margin-top:8px;">Encore ${Math.max(0, user.tests_requis_onboarding - user.tests_completes)} test(s) validé(s) pour activer votre profil et débloquer votre premier mail actif (les points ne comptent pas encore pendant cette phase).</p>`
+              : user.score_prochain_palier !== null
+                ? `<p class="form-hint" style="margin-top:8px;">Encore ${Math.max(0, user.score_prochain_palier - user.score_global)} points pour débloquer le mail n°${user.mails_debloques + 1}.</p>`
+                : `<p class="form-hint" style="margin-top:8px;">Palier maximum atteint 🎉</p>`
           }
         </div>
         <div>

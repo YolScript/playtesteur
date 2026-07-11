@@ -10,6 +10,12 @@ const { applyDailyTestGain } = require('./scoring');
 const { logActivity } = require('./activityLog');
 
 const MIN_AVIS_LENGTH = 20;
+// Nombre de tests à valider avant que le profil passe "Validé" et que le
+// gain de score/mails quotidien (applyDailyTestGain) démarre. Avant ce
+// palier, les tests comptent pour l'atteindre mais ne rapportent ni score
+// ni mail (onboarding/probation) — exporté pour que l'UI puisse afficher
+// une progression cohérente ("encore X tests", pas "encore X points").
+const TESTS_REQUIS_ONBOARDING = 10;
 
 const findUserById = db.prepare('SELECT * FROM users WHERE id = ?');
 const completerHistorique = db.prepare(
@@ -52,7 +58,7 @@ async function validerAvis(historique, app, user, texte, note) {
   const nbTestsCompletes = countDistinctCompletedTests.get(user.id).n;
 
   if (user.statut_profil !== 'Validé') {
-    if (nbTestsCompletes >= 10) {
+    if (nbTestsCompletes >= TESTS_REQUIS_ONBOARDING) {
       // Ticket d'entrée franchi : profil validé + 1er mail débloqué.
       validerProfil.run(user.id);
     }
@@ -70,4 +76,4 @@ async function validerAvis(historique, app, user, texte, note) {
   return { valide: true, user: findUserById.get(user.id) };
 }
 
-module.exports = { validerAvis, MIN_AVIS_LENGTH };
+module.exports = { validerAvis, MIN_AVIS_LENGTH, TESTS_REQUIS_ONBOARDING };
