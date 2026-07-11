@@ -818,7 +818,7 @@ function renderTesteurBloc(app, dejaRejoint, dejaValide) {
   return `
     <div class="detail-steps">
       <div class="detail-step ${dejaRejoint ? 'done' : ''}"><span class="step-num">1</span>Rejoindre le groupe de test (accès Play Store débloqué)</div>
-      <div class="detail-step ${dejaRejoint ? '' : ''}"><span class="step-num">2</span>Installer l'application depuis le Play Store</div>
+      <div class="detail-step ${dejaRejoint ? 'done' : ''}"><span class="step-num">2</span>Installer l'application depuis le Play Store</div>
       <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">3</span>Laisser un avis avec votre pseudo Play Store</div>
       <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">4</span>Vérification automatique &amp; gain du mail actif</div>
     </div>
