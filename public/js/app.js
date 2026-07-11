@@ -1416,7 +1416,7 @@ async function afficherEmailCompteService() {
         <span>Guide d'import : Configurer l'accès Play Console</span>
       </div>
       <div class="tuto-import-body hidden" id="tuto-import-content" style="margin-top: 10px; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 13px; line-height: 1.5; color: var(--text-muted); backdrop-filter: blur(var(--glass-blur));">
-        <p style="margin-bottom: 12px; color: var(--text-white);">Pour que l'importation de votre fiche fonctionne, vous devez autoriser notre compte de service sur votre Google Play Console :</p>
+        <p style="margin-bottom: 12px; color: var(--text-white);">Pour que l'importation de fiche et l'application automatique du groupe de testeurs fonctionnent, vous devez autoriser notre compte de service sur votre Google Play Console :</p>
         <ol style="margin-left: 20px; display: flex; flex-direction: column; gap: 10px; padding-left: 0; list-style-position: inside;">
           <li style="margin-bottom: 4px;">Rendez-vous sur la <a href="https://play.google.com/console/" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 600;">Google Play Console</a> puis allez dans <strong>Utilisateurs et autorisations</strong>.</li>
           <li style="margin-bottom: 4px;">Cliquez sur <strong>Inviter de nouveaux utilisateurs</strong>.</li>
@@ -1428,13 +1428,22 @@ async function afficherEmailCompteService() {
               </span>
             </div>
           </li>
-          <li style="margin-bottom: 4px;">Dans l'onglet <strong>Autorisations d'application</strong> (ou autorisations globales), cochez la case :
+          <li style="margin-bottom: 4px;">Dans l'onglet <strong>Autorisations d'application</strong> (ou autorisations globales), cochez ces deux cases :
             <div style="margin-top: 8px; padding: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; gap: 10px; align-items: flex-start; text-align: left;">
               <input type="checkbox" checked disabled style="width: 16px; height: 16px; accent-color: var(--accent-blue); flex-shrink: 0; cursor: not-allowed; margin-top: 2px;" />
               <div>
                 <strong style="color: var(--text-white); display: block; font-size: 13px;">Afficher les informations sur les applications et télécharger les rapports groupés (lecture seule)</strong>
                 <span style="font-size: 12px; display: block; margin-top: 4px; color: var(--text-muted); line-height: 1.4;">
                   Afficher toutes les informations liées à l'appli (y compris les projets de services de jeux Play associés), sauf les données financières. Les utilisateurs avec cette autorisation peuvent aussi télécharger des rapports groupés.
+                </span>
+              </div>
+            </div>
+            <div style="margin-top: 8px; padding: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; gap: 10px; align-items: flex-start; text-align: left;">
+              <input type="checkbox" checked disabled style="width: 16px; height: 16px; accent-color: var(--accent-blue); flex-shrink: 0; cursor: not-allowed; margin-top: 2px;" />
+              <div>
+                <strong style="color: var(--text-white); display: block; font-size: 13px;">Gérer les canaux de test et modifier les listes de testeurs</strong>
+                <span style="font-size: 12px; display: block; margin-top: 4px; color: var(--text-muted); line-height: 1.4;">
+                  Gérer les utilisateurs, les groupes et les domaines sur les listes de testeurs ; désactiver les versions de test ; modifier le ciblage par pays concernant les versions de test ; et configurer des utilisateurs qui importent du contenu et des testeurs pour le partage interne d'applications. Nécessaire pour le bouton « Appliquer le groupe sur cette piste ». Les utilisateurs disposant de cette autorisation ne peuvent pas publier d'applications en version production sur Google Play.
                 </span>
               </div>
             </div>
