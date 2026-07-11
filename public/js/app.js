@@ -893,7 +893,7 @@ async function chargerAvisApp(appId) {
   try {
     const { avis } = await Api.get(`/api/apps/${appId}/avis`);
     if (!avis || avis.length === 0) {
-      container.innerHTML = `<p class="form-hint">Aucun avis Play Store pour le moment.</p>`;
+      container.innerHTML = `<p class="form-hint">Aucun avis Play Store pour le moment. Note : un avis tout juste publié peut mettre jusqu'à 24-48h avant d'apparaître ici (délai d'indexation côté API Google), même s'il est déjà visible sur la fiche Play Store.</p>`;
       return;
     }
     container.innerHTML = avis

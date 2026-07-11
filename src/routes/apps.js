@@ -264,7 +264,8 @@ router.post('/:id/valider', requireAuth, async (req, res) => {
         return res.status(400).json({ erreur: "Renseignez d'abord votre pseudo Play Store dans votre profil." });
       }
       return res.status(404).json({
-        erreur: "Aucun avis correspondant à votre pseudo Play Store n'a été détecté pour le moment. Réessayez après publication de l'avis.",
+        erreur:
+          "Aucun avis correspondant à votre pseudo Play Store n'a été détecté pour le moment. Si vous venez de le publier, réessayez dans 24-48h : Google met du temps à indexer les avis récents côté API, même s'ils sont déjà visibles publiquement.",
       });
     }
     res.json({ ok: true, reviewId: result.reviewId, user: publicUser(result.user) });
