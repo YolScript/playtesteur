@@ -804,6 +804,16 @@ async function viewAppDetail(id) {
   }
 }
 
+// Lien Play Store adapté à l'appareil : sur Android, le schéma market://
+// ouvre directement l'app Play Store installée (et affiche "Ouvrir" au lieu
+// de "Installer" si l'app est déjà présente — pas besoin de la détecter
+// nous-mêmes). Ailleurs (iOS, desktop), lien web classique vers la fiche.
+function urlInstallationApp(packageName) {
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const id = encodeURIComponent(packageName);
+  return isAndroid ? `market://details?id=${id}` : `https://play.google.com/store/apps/details?id=${id}`;
+}
+
 function renderTesteurBloc(app, dejaRejoint, dejaValide) {
   return `
     <div class="detail-steps">
@@ -815,6 +825,11 @@ function renderTesteurBloc(app, dejaRejoint, dejaValide) {
     ${
       dejaRejoint && app.group_join_url
         ? `<a class="btn-secondary btn-block" href="${escapeHtml(app.group_join_url)}" target="_blank" rel="noopener" style="margin-bottom:10px; text-align:center; display:block;">👥 Rejoindre le groupe Google (obligatoire pour l'accès testeur)</a>`
+        : ''
+    }
+    ${
+      dejaRejoint && !dejaValide && app.package_name
+        ? `<a class="btn-secondary btn-block" href="${escapeHtml(urlInstallationApp(app.package_name))}" target="_blank" rel="noopener" style="margin-bottom:10px; text-align:center; display:block;">📲 Installer l'application depuis le Play Store</a>`
         : ''
     }
     ${
