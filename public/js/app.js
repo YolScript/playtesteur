@@ -1950,7 +1950,6 @@ async function viewAdmin() {
         <td data-label="Actions" class="row-detail">
           <div class="admin-actions">
             <div class="action-group">
-              <span class="action-group-label">Score</span>
               <div class="action-group-buttons">
                 <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="1" ${u.id === state.user.id ? 'disabled' : ''}>+1</button>
                 <button class="btn-xs btn-secondary" data-adjust="${u.id}" data-delta="5" ${u.id === state.user.id ? 'disabled' : ''}>+5</button>
@@ -1960,7 +1959,6 @@ async function viewAdmin() {
               </div>
             </div>
             <div class="action-group">
-              <span class="action-group-label">Modération</span>
               <div class="action-group-buttons">
                 <button class="btn-xs btn-secondary" data-warn="${u.id}" ${u.id === state.user.id ? 'disabled' : ''}>Avertir</button>
                 <button class="btn-xs btn-danger" data-exclude="${u.id}" ${u.id === state.user.id ? 'disabled' : ''}>Exclure</button>
@@ -2754,9 +2752,9 @@ function viewEditeur() {
         </details>
 
         <div class="editor-actions">
-          <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG</button>
-          <button id="editor-export-gif" class="btn-secondary" type="button">Exporter en GIF</button>
-          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080)</button>
+          <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.photo} pts</span></button>
+          <button id="editor-export-gif" class="btn-secondary" type="button">Exporter en GIF <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.gif} pts</span></button>
+          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080) <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.video} pts</span></button>
         </div>
       </div>
     </div>

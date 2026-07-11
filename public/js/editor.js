@@ -14,6 +14,11 @@
    y*height) restent valides pour la profondeur nulle.
    ========================================================================== */
 
+// Coût en points de chaque type d'export, débité côté serveur (voir
+// COUTS_EXPORT_EDITEUR dans src/routes/profile.js — le serveur décide du
+// coût, jamais le client). Dupliqué ici uniquement pour l'affichage.
+const COUTS_EXPORT_POINTS = { photo: 2, gif: 5, video: 10 };
+
 const EditorState = {
   bgType: null, // 'video' | 'image' | 'color' | 'gradient' | null
   bgVideoEl: null,
@@ -3474,7 +3479,7 @@ async function tenterExportPaye(type, fonctionExport) {
   try {
     const { user } = await Api.post('/api/profile/depenser-points-export', { type });
     if (typeof state !== 'undefined') state.user = user;
-    toast(`Export lancé (${{ photo: 2, gif: 5, video: 10 }[type]} points dépensés).`, 'success');
+    toast(`Export lancé (${COUTS_EXPORT_POINTS[type]} points dépensés).`, 'success');
     await fonctionExport();
   } catch (err) {
     toast(err.message, 'error');

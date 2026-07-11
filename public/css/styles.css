@@ -681,15 +681,6 @@ tbody tr:hover { background: var(--bg-card-hover); }
 .action-group { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-shrink: 0; }
 .action-group:not(:last-child) { padding-right: 14px; border-right: 1px solid var(--border-color); }
 
-.action-group-label {
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
-}
-
 .action-group-buttons { display: flex; gap: 5px; flex-wrap: nowrap; }
 
 .section-title { font-size: 16px; font-weight: 700; margin: 28px 0 12px; }
@@ -1607,6 +1598,15 @@ tbody tr:hover { background: var(--bg-card-hover); }
 
 .editor-actions { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
 .editor-actions button { flex: 1; }
+
+.editor-cost-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 9px;
+    border-radius: var(--radius-full);
+    background: rgba(0, 0, 0, 0.22);
+    white-space: nowrap;
+}
 
 .editor-add-btn {
     font-size: 12px;
