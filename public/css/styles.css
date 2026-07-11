@@ -658,20 +658,28 @@ tbody tr:hover { background: var(--bg-card-hover); }
 
 .btn-xs { padding: 5px 10px; font-size: 12px; font-weight: 600; border-radius: var(--radius-sm); }
 
+/* Les deux groupes (Score / Modération) sur une seule ligne plutôt
+   qu'empilés : sinon la cellule Actions imposait une hauteur de ligne bien
+   plus grande que les autres colonnes, laissant un grand vide à leur
+   niveau. Si la ligne déborde (peu de largeur), elle défile horizontalement
+   plutôt que de reprendre de la hauteur. */
 .admin-actions {
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 260px;
-    padding: 10px;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 14px;
+    padding: 8px 10px;
     background: var(--bg-input);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     backdrop-filter: blur(var(--glass-blur));
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
-.action-group { display: flex; flex-direction: column; gap: 6px; }
-.action-group:not(:last-child) { padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
+.action-group { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-shrink: 0; }
+.action-group:not(:last-child) { padding-right: 14px; border-right: 1px solid var(--border-color); }
 
 .action-group-label {
     font-size: 10px;
@@ -679,9 +687,10 @@ tbody tr:hover { background: var(--bg-card-hover); }
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    white-space: nowrap;
 }
 
-.action-group-buttons { display: flex; gap: 5px; flex-wrap: wrap; }
+.action-group-buttons { display: flex; gap: 5px; flex-wrap: nowrap; }
 
 .section-title { font-size: 16px; font-weight: 700; margin: 28px 0 12px; }
 
@@ -964,8 +973,10 @@ tbody tr:hover { background: var(--bg-card-hover); }
         transition: transform 0.2s ease;
     }
     .admin-user-row.expanded .row-toggle-chevron { transform: rotate(180deg); }
-    .admin-user-row .row-detail { display: none; }
-    .admin-user-row.expanded .row-detail { display: block; }
+    /* Spécificité : doit égaler/dépasser ".table-wrapper:not(...) td"
+       (qui met display:block sur tous les td) sinon le repli ne fait rien. */
+    .table-wrapper:not(.table-wrapper-scroll) .admin-user-row .row-detail { display: none; }
+    .table-wrapper:not(.table-wrapper-scroll) .admin-user-row.expanded .row-detail { display: block; }
 }
 
 /* ==========================================================================
