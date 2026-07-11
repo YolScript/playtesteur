@@ -1716,10 +1716,13 @@ async function chargerMesTickets() {
                 </div>`
               : ''
           }
+          <div class="ticket-thread-toggle" data-toggle-thread="${t.id}" style="cursor:pointer; color:var(--primary); font-size:13px; font-weight:600; margin-top:10px; user-select:none;">💬 Voir la discussion</div>
+          <div class="ticket-thread hidden" id="thread-${t.id}"></div>
         </div>
       `
       )
       .join('');
+    wireTicketThreadToggles(container, false);
   } catch (err) {
     container.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
@@ -2049,10 +2052,13 @@ async function chargerAdminTickets() {
               </div>
             </form>
           </div>
+          <div class="ticket-thread-toggle" data-toggle-thread="${t.id}" style="cursor:pointer; color:var(--primary); font-size:13px; font-weight:600; margin-top:10px; user-select:none;">💬 Voir la discussion</div>
+          <div class="ticket-thread hidden" id="thread-${t.id}"></div>
         </div>
       `
       )
       .join('');
+    wireTicketThreadToggles(container, true);
 
     container.querySelectorAll('[data-ticket-reply]').forEach((form) => {
       form.addEventListener('submit', async (e) => {
@@ -2063,8 +2069,8 @@ async function chargerAdminTickets() {
         const btn = form.querySelector('button[type="submit"]');
         btn.disabled = true;
         try {
-          await Api.post(`/api/tickets/${ticketId}/reply`, { reponse, statut });
-          toast('Ticket mis à jour.', 'success');
+          const r = await Api.post(`/api/tickets/${ticketId}/reply`, { reponse, statut });
+          toast(r.deleted ? 'Ticket fermé et supprimé.' : 'Ticket mis à jour.', 'success');
           chargerAdminTickets();
         } catch (err) {
           toast(err.message, 'error');
@@ -2072,6 +2078,95 @@ async function chargerAdminTickets() {
           btn.disabled = false;
         }
       });
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// Fil de discussion d'un ticket : accessible à son auteur et à l'admin,
+// avec réponse texte + photo (image convertie en base64 côté client,
+// enregistrée sur disque côté serveur — voir tickets.js saveBase64Image).
+function wireTicketThreadToggles(container, isAdmin) {
+  container.querySelectorAll('[data-toggle-thread]').forEach((toggle) => {
+    toggle.addEventListener('click', () => {
+      const ticketId = toggle.dataset.toggleThread;
+      const threadDiv = document.getElementById(`thread-${ticketId}`);
+      const estCache = threadDiv.classList.contains('hidden');
+      if (estCache) {
+        threadDiv.classList.remove('hidden');
+        toggle.textContent = '💬 Masquer la discussion';
+        chargerFilTicket(ticketId, threadDiv, isAdmin);
+      } else {
+        threadDiv.classList.add('hidden');
+        toggle.textContent = '💬 Voir la discussion';
+      }
+    });
+  });
+}
+
+async function chargerFilTicket(ticketId, container, isAdmin) {
+  container.innerHTML = '<p class="form-hint">Chargement...</p>';
+  try {
+    const { replies } = await Api.get(`/api/tickets/${ticketId}/messages`);
+    container.innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:8px; margin:10px 0; max-height:320px; overflow-y:auto;">
+        ${
+          replies.length === 0
+            ? '<p class="form-hint">Aucune réponse pour le moment.</p>'
+            : replies
+                .map(
+                  (m) => `
+              <div style="padding:8px 12px; background:var(--bg-input); border-radius:var(--radius-md); border:1px solid var(--border-color);">
+                <div style="display:flex; justify-content:space-between; gap:10px; font-size:12px;">
+                  <strong>${escapeHtml(m.sender_pseudo)}${m.sender_role === 'administrator' ? ' (admin)' : ''}</strong>
+                  <span class="form-hint">${tempsRelatif(m.created_at)}</span>
+                </div>
+                <p style="font-size:13px; margin-top:4px; white-space:pre-wrap;">${escapeHtml(m.message)}</p>
+                ${m.image_url ? `<img src="${escapeHtml(m.image_url)}" alt="" style="max-width:100%; max-height:220px; border-radius:var(--radius-sm); margin-top:6px; display:block;">` : ''}
+              </div>
+            `
+                )
+                .join('')
+        }
+      </div>
+      <form class="ticket-thread-reply-form" data-thread-reply="${ticketId}" style="display:flex; flex-direction:column; gap:8px;">
+        <textarea name="message" placeholder="Écrire une réponse..." rows="2" maxlength="2000" required minlength="2" style="width:100%; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:8px 12px; color:var(--text-white); font-family:var(--font-sans); resize:vertical;"></textarea>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input type="file" name="image" accept="image/png,image/jpeg,image/webp" style="font-size:12px; color:var(--text-muted); max-width:220px;" />
+          <button type="submit" class="btn-primary btn-xs">Envoyer</button>
+        </div>
+      </form>
+    `;
+
+    const form = container.querySelector('[data-thread-reply]');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const message = form.message.value.trim();
+      const file = form.image.files[0];
+      const submitBtn = form.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      try {
+        let image_data = null;
+        if (file) {
+          if (file.size > 5 * 1024 * 1024) {
+            throw new Error("L'image dépasse la taille maximale autorisée de 5 Mo.");
+          }
+          image_data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error("Impossible de lire l'image."));
+            reader.readAsDataURL(file);
+          });
+        }
+        await Api.post(`/api/tickets/${ticketId}/messages`, { message, image_data });
+        toast('Réponse envoyée.', 'success');
+        chargerFilTicket(ticketId, container, isAdmin);
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        submitBtn.disabled = false;
+      }
     });
   } catch (err) {
     container.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;

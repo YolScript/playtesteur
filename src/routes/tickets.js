@@ -65,6 +65,9 @@ const updateTicketStatut = db.prepare(
 const insertTicketMessage = db.prepare(
   `INSERT INTO ticket_messages (ticket_id, sender_id, message, image_url) VALUES (?, ?, ?, ?)`
 );
+// Un ticket fermé est supprimé plutôt que conservé (ses messages suivent
+// via ON DELETE CASCADE sur ticket_messages.ticket_id).
+const deleteTicket = db.prepare('DELETE FROM tickets WHERE id = ?');
 
 // ── Routes utilisateur (authentifié) ────────────────────────────────────
 router.use(requireAuth);
@@ -182,6 +185,14 @@ router.post('/:id/reply', requireAdmin, (req, res) => {
     insertTicketMessage.run(ticket.id, req.session.userId, reponseText, null);
   }
 
+  // Un ticket fermé est définitivement supprimé (avec son fil de discussion)
+  // plutôt que conservé indéfiniment en base.
+  if (nouveauStatut === 'Fermé') {
+    deleteTicket.run(ticket.id);
+    logActivity(req.session.userId, `Ticket #${ticket.id} fermé et supprimé`, ticket.sujet);
+    return res.json({ deleted: true, id: ticket.id });
+  }
+
   updateTicketAdmin.run(nouveauStatut, reponseText || ticket.reponse_admin, req.session.userId, ticket.id);
   logActivity(req.session.userId, `Ticket #${ticket.id} répondu`, `Statut: ${nouveauStatut}`);
 
@@ -195,6 +206,12 @@ router.post('/:id/status', requireAdmin, (req, res) => {
   if (!ticket) return res.status(404).json({ erreur: 'Ticket introuvable.' });
   if (!statut || !['Ouvert', 'En_Cours', 'Fermé'].includes(statut)) {
     return res.status(400).json({ erreur: 'Statut invalide.' });
+  }
+
+  if (statut === 'Fermé') {
+    deleteTicket.run(ticket.id);
+    logActivity(req.session.userId, `Ticket #${ticket.id} fermé et supprimé`, ticket.sujet);
+    return res.json({ deleted: true, id: ticket.id });
   }
 
   updateTicketStatut.run(statut, ticket.id);

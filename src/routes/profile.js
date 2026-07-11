@@ -3,7 +3,7 @@ const db = require('../db/init');
 const { requireAuth } = require('../middleware/auth');
 const { publicUser } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
-const { TESTS_REQUIS_ONBOARDING } = require('../services/validation');
+const { seuilOnboardingEffectif } = require('../services/validation');
 
 const router = express.Router();
 
@@ -23,7 +23,7 @@ function enrichirUser(user) {
   return {
     ...publicUser(user),
     tests_completes: compterTestsCompletes.get(user.id).n,
-    tests_requis_onboarding: TESTS_REQUIS_ONBOARDING,
+    tests_requis_onboarding: seuilOnboardingEffectif(),
   };
 }
 

@@ -30,6 +30,7 @@ const marquerAppComplete = db.prepare(
 const countDistinctCompletedTests = db.prepare(
   `SELECT COUNT(*) AS n FROM historique_tests WHERE testeur_id = ? AND statut = 'Complété'`
 );
+const countApplicationsTotal = db.prepare('SELECT COUNT(*) AS n FROM applications');
 const validerProfil = db.prepare(
   `UPDATE users SET statut_profil = 'Validé', mails_debloques = MAX(mails_debloques, 1) WHERE id = ?`
 );
@@ -37,6 +38,16 @@ const appliquerGainQuotidien = db.prepare(
   "UPDATE users SET score_global = ?, mails_debloques = ?, derniere_date_test = datetime('now') WHERE id = ?"
 );
 const marquerDateTestSansGain = db.prepare("UPDATE users SET derniere_date_test = datetime('now') WHERE id = ?");
+
+// Le palier des 10 tests n'a de sens que s'il y a effectivement plus de 10
+// applications à tester sur la plateforme : sinon il serait impossible à
+// atteindre (pas assez d'apps disponibles). Tant que ce n'est pas le cas, le
+// profil se valide dès le premier test. Exporté pour que l'UI affiche une
+// progression cohérente avec ce qui sera réellement exigé.
+function seuilOnboardingEffectif() {
+  const nbApplications = countApplicationsTotal.get().n;
+  return nbApplications > TESTS_REQUIS_ONBOARDING ? TESTS_REQUIS_ONBOARDING : 1;
+}
 
 // Valide un test en cours à partir d'un avis saisi sur le site.
 // Retourne { valide: false, raison } ou { valide: true, user }.
@@ -58,7 +69,7 @@ async function validerAvis(historique, app, user, texte, note) {
   const nbTestsCompletes = countDistinctCompletedTests.get(user.id).n;
 
   if (user.statut_profil !== 'Validé') {
-    if (nbTestsCompletes >= TESTS_REQUIS_ONBOARDING) {
+    if (nbTestsCompletes >= seuilOnboardingEffectif()) {
       // Ticket d'entrée franchi : profil validé + 1er mail débloqué.
       validerProfil.run(user.id);
     }
@@ -76,4 +87,4 @@ async function validerAvis(historique, app, user, texte, note) {
   return { valide: true, user: findUserById.get(user.id) };
 }
 
-module.exports = { validerAvis, MIN_AVIS_LENGTH, TESTS_REQUIS_ONBOARDING };
+module.exports = { validerAvis, MIN_AVIS_LENGTH, TESTS_REQUIS_ONBOARDING, seuilOnboardingEffectif };
