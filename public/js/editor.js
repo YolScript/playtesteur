@@ -822,13 +822,15 @@ async function rafraichirPanneauProjet() {
       ? projets
           .map(
             (p) => `
-        <div class="editor-projet-item ${p.id === EditorState.projetId ? 'active' : ''}">
-          <span class="editor-projet-item-nom" title="${escapeHtml(p.nom)}">${escapeHtml(p.nom)}</span>
-          <span class="editor-projet-item-date">${formaterDateProjet(p.updatedAt)}</span>
-          <div class="editor-projet-item-actions">
-            <button type="button" data-projet-charger="${p.id}" title="Charger">Charger</button>
-            <button type="button" data-projet-dupliquer="${p.id}" title="Dupliquer">Dupliquer</button>
-            <button type="button" data-projet-renommer="${p.id}" title="Renommer">Renommer</button>
+        <div class="editor-projet-card ${p.id === EditorState.projetId ? 'active' : ''}">
+          <div class="editor-projet-card-top">
+            <span class="editor-projet-card-nom" title="${escapeHtml(p.nom)}">${escapeHtml(p.nom)}</span>
+            <span class="editor-projet-card-date">${formaterDateProjet(p.updatedAt)}</span>
+          </div>
+          <div class="editor-projet-card-actions">
+            <button type="button" class="editor-icon-btn" data-projet-charger="${p.id}" title="Charger ce projet">📂</button>
+            <button type="button" class="editor-icon-btn" data-projet-dupliquer="${p.id}" title="Dupliquer">⧉</button>
+            <button type="button" class="editor-icon-btn" data-projet-renommer="${p.id}" title="Renommer">✎</button>
             <button type="button" data-projet-supprimer="${p.id}" title="Supprimer" class="editor-remove-btn">&times;</button>
           </div>
         </div>`
@@ -861,11 +863,13 @@ async function rafraichirPanneauProjet() {
       ? checkpoints
           .map(
             (c) => `
-        <div class="editor-projet-item">
-          <span class="editor-projet-item-nom" title="${escapeHtml(c.nom)}">${escapeHtml(c.nom)}</span>
-          <span class="editor-projet-item-date">${formaterDateProjet(c.createdAt)}</span>
-          <div class="editor-projet-item-actions">
-            <button type="button" data-checkpoint-restaurer="${c.id}" title="Restaurer">Restaurer</button>
+        <div class="editor-projet-card">
+          <div class="editor-projet-card-top">
+            <span class="editor-projet-card-nom" title="${escapeHtml(c.nom)}">${escapeHtml(c.nom)}</span>
+            <span class="editor-projet-card-date">${formaterDateProjet(c.createdAt)}</span>
+          </div>
+          <div class="editor-projet-card-actions">
+            <button type="button" class="editor-icon-btn" data-checkpoint-restaurer="${c.id}" title="Restaurer ce point de sauvegarde">↺</button>
             <button type="button" data-checkpoint-supprimer="${c.id}" title="Supprimer" class="editor-remove-btn">&times;</button>
           </div>
         </div>`
