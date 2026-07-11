@@ -1864,6 +1864,26 @@ async function chargerMesTickets() {
 /* ==========================================================================
    ADMIN
    ========================================================================== */
+const ADMIN_STAT_ICONS = {
+  utilisateurs: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>',
+  applications: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zM4 13h7v7H4v-7z"/></svg>',
+  auth: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1.2 14.2L7.4 11.8l1.4-1.4 1.99 2 5.4-5.4 1.4 1.4-6.8 6.8z"/></svg>',
+  groups: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z"/></svg>',
+  reviews: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
+};
+
+function statCardAdmin({ label, value, sub, icon, accent }) {
+  return `
+    <div class="stat-card accent-${accent}">
+      <div class="stat-card-icon-row">
+        <div class="stat-card-icon">${icon}</div>
+      </div>
+      <div class="stat-label">${label}</div>
+      <div class="stat-value" style="${typeof value === 'string' && value.length > 8 ? 'font-size:16px;' : ''}">${value}</div>
+      ${sub ? `<div class="stat-sub">${sub}</div>` : ''}
+    </div>`;
+}
+
 async function viewAdmin() {
   viewRoot.innerHTML = `<p class="page-subtitle">Chargement...</p>`;
 
@@ -1873,42 +1893,73 @@ async function viewAdmin() {
     Api.get('/api/admin/apps'),
   ]);
 
+  const modeAccent = (m) => (m.includes('DEV') ? 'warning' : 'success');
+  const unModeDev = [api_google.auth_mode, api_google.groups_mode, api_google.reviews_mode].some((m) => m.includes('DEV'));
+
   viewRoot.innerHTML = `
-    <h1 class="page-title">Tableau de bord administrateur</h1>
-    <p class="page-subtitle">État de la plateforme, files d'API Google et gestion des exclusions.</p>
+    <div class="admin-header">
+      <div>
+        <h1 class="page-title">Tableau de bord administrateur</h1>
+        <p class="page-subtitle" style="margin-bottom:0;">État de la plateforme, files d'API Google et gestion des exclusions.</p>
+      </div>
+      <div class="admin-mode-chip ${unModeDev ? 'is-dev' : 'is-prod'}">
+        <span class="admin-mode-dot"></span>
+        ${unModeDev ? 'Intégrations en mode DEV' : 'Toutes intégrations en production'}
+      </div>
+    </div>
 
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Utilisateurs</div><div class="stat-value">${utilisateurs.total}</div><div class="stat-sub">${utilisateurs.valides} validés · ${utilisateurs.suspendus} suspendus</div></div>
-      <div class="stat-card"><div class="stat-label">Applications</div><div class="stat-value">${appStats.total}</div><div class="stat-sub">${appStats.en_cours} en cours · ${appStats.completes} complètes · ${appStats.terminees} terminées</div></div>
-      <div class="stat-card"><div class="stat-label">Connexion Google</div><div class="stat-value" style="font-size:16px;">${api_google.auth_mode}</div></div>
-      <div class="stat-card"><div class="stat-label">API Google Groups</div><div class="stat-value" style="font-size:16px;">${api_google.groups_mode}</div></div>
-      <div class="stat-card"><div class="stat-label">API Play Reviews</div><div class="stat-value" style="font-size:16px;">${api_google.reviews_mode}</div></div>
+      ${statCardAdmin({ label: 'Utilisateurs', value: utilisateurs.total, sub: `${utilisateurs.valides} validés · ${utilisateurs.suspendus} suspendus`, icon: ADMIN_STAT_ICONS.utilisateurs, accent: 'info' })}
+      ${statCardAdmin({ label: 'Applications', value: appStats.total, sub: `${appStats.en_cours} en cours · ${appStats.completes} complètes · ${appStats.terminees} terminées`, icon: ADMIN_STAT_ICONS.applications, accent: 'success' })}
+      ${statCardAdmin({ label: 'Connexion Google', value: api_google.auth_mode, icon: ADMIN_STAT_ICONS.auth, accent: modeAccent(api_google.auth_mode) })}
+      ${statCardAdmin({ label: 'API Google Groups', value: api_google.groups_mode, icon: ADMIN_STAT_ICONS.groups, accent: modeAccent(api_google.groups_mode) })}
+      ${statCardAdmin({ label: 'API Play Reviews', value: api_google.reviews_mode, icon: ADMIN_STAT_ICONS.reviews, accent: modeAccent(api_google.reviews_mode) })}
     </div>
 
-    <div class="section-title">Utilisateurs</div>
-    <div class="table-wrapper">
-      <table>
-        <thead><tr><th>Pseudo</th><th>Email</th><th>Statut</th><th>Score</th><th>Mails</th><th>Avertissements</th><th>Activité</th><th>Actions</th></tr></thead>
-        <tbody id="users-tbody"></tbody>
-      </table>
+    <div class="admin-tabs" role="tablist">
+      <button type="button" class="admin-tab active" data-admin-tab="utilisateurs">Utilisateurs <span class="admin-tab-count">${users.length}</span></button>
+      <button type="button" class="admin-tab" data-admin-tab="applications">Applications <span class="admin-tab-count">${applications.length}</span></button>
+      <button type="button" class="admin-tab" data-admin-tab="activite">Console d'activité</button>
+      <button type="button" class="admin-tab" data-admin-tab="tickets">Tickets support <span class="admin-tab-count" id="admin-tab-count-tickets">–</span></button>
     </div>
 
-    <div class="section-title">Applications</div>
-    <div class="table-wrapper">
-      <table>
-        <thead><tr><th>Nom</th><th>Créateur</th><th>Statut</th><th>Testeurs</th><th>Créée le</th><th></th></tr></thead>
-        <tbody id="apps-tbody"></tbody>
-      </table>
+    <div class="admin-panel" data-admin-panel="utilisateurs">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Pseudo</th><th>Email</th><th>Statut</th><th>Score</th><th>Mails</th><th>Avertissements</th><th>Activité</th><th>Actions</th></tr></thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="section-title">Console d'activité</div>
-    <div class="profile-card" style="padding:16px;">
-      <div id="activity-console"><p class="form-hint">Chargement...</p></div>
+    <div class="admin-panel hidden" data-admin-panel="applications">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Nom</th><th>Créateur</th><th>Statut</th><th>Testeurs</th><th>Créée le</th><th></th></tr></thead>
+          <tbody id="apps-tbody"></tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="section-title">Tickets support</div>
-    <div id="admin-tickets-list"><p class="page-subtitle">Chargement...</p></div>
+    <div class="admin-panel hidden" data-admin-panel="activite">
+      <div class="profile-card" style="padding:16px;">
+        <div id="activity-console"><p class="form-hint">Chargement...</p></div>
+      </div>
+    </div>
+
+    <div class="admin-panel hidden" data-admin-panel="tickets">
+      <div id="admin-tickets-list"><p class="page-subtitle">Chargement...</p></div>
+    </div>
   `;
+
+  viewRoot.querySelectorAll('.admin-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      viewRoot.querySelectorAll('.admin-tab').forEach((t) => t.classList.remove('active'));
+      viewRoot.querySelectorAll('.admin-panel').forEach((p) => p.classList.add('hidden'));
+      tab.classList.add('active');
+      viewRoot.querySelector(`[data-admin-panel="${tab.dataset.adminTab}"]`).classList.remove('hidden');
+    });
+  });
 
   chargerConsoleActivite();
   chargerAdminTickets();
@@ -2157,6 +2208,9 @@ async function chargerAdminTickets() {
   if (!container) return;
   try {
     const { tickets } = await Api.get('/api/tickets/all');
+
+    const compteurEl = document.getElementById('admin-tab-count-tickets');
+    if (compteurEl) compteurEl.textContent = tickets.length;
 
     if (tickets.length === 0) {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">🎫</div><p>Aucun ticket pour le moment.</p></div>`;
