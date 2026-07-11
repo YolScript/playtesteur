@@ -681,7 +681,7 @@ async function viewClassement() {
   const medailles = ['🥇', '🥈', '🥉'];
 
   container.innerHTML = `
-    <div class="table-wrapper">
+    <div class="table-wrapper table-wrapper-scroll">
       <table>
         <thead><tr><th>Rang</th><th>Testeur</th><th>Titre</th><th>Points</th><th>Applications testées</th><th>Jours consécutifs</th></tr></thead>
         <tbody>

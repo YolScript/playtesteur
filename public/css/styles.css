@@ -728,18 +728,31 @@ tbody tr:hover { background: var(--bg-card-hover); }
 /* ==========================================================================
    BOTTOM NAVIGATION (mobile, façon Google Play Store)
    ========================================================================== */
+/* Avec 7-8 entrées (testeur + admin), aucune largeur d'écran mobile ne
+   peut toutes les afficher sans les compresser sous leur largeur de texte
+   minimale (constaté : ~61px/item incompressible, soit ~490px pour 8 items
+   -> chevauchement du texte sur tout écran < ~490px, y compris la plupart
+   des téléphones). Plutôt que de forcer un rétrécissement qui superpose le
+   texte, la barre défile horizontalement : chaque item garde une largeur
+   lisible fixe, on swipe pour voir le reste au lieu de tout écraser. */
 .bottom-nav {
     display: none;
     position: fixed;
     bottom: 0; left: 0; right: 0;
     z-index: 100;
-    justify-content: space-around;
+    justify-content: flex-start;
     align-items: center;
+    gap: 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
     background: rgba(10, 12, 16, 0.92);
     backdrop-filter: blur(20px);
     border-top: 1px solid var(--border-color);
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
 }
+.bottom-nav::-webkit-scrollbar { display: none; }
 
 .bottom-nav-link {
     display: flex;
@@ -747,15 +760,16 @@ tbody tr:hover { background: var(--bg-card-hover); }
     align-items: center;
     justify-content: center;
     gap: 3px;
-    flex: 1;
-    min-width: 0;
+    flex: 0 0 auto;
+    min-width: 58px;
     background: none;
     border: none;
     color: var(--text-muted);
-    padding: 6px 4px;
+    padding: 6px 6px;
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: var(--transition-fast);
+    white-space: nowrap;
 }
 .bottom-nav-link:active { background: var(--bg-card); }
 .bottom-nav-link.active { color: var(--primary); }
@@ -795,24 +809,27 @@ tbody tr:hover { background: var(--bg-card-hover); }
 }
 
 /* Tableaux admin -> cards empilées sur mobile (un <table> classique ne
-   peut pas accueillir la cellule Actions, trop dense, sur un petit écran). */
+   peut pas accueillir la cellule Actions, trop dense, sur un petit écran).
+   .table-wrapper-scroll (ex: classement) en est exclu : une ligne = un
+   utilisateur reste une seule ligne, quitte à scroller horizontalement,
+   plutôt que d'éclater chaque colonne sur sa propre ligne. */
 @media (max-width: 640px) {
-    .table-wrapper { overflow-x: visible; }
-    .table-wrapper table,
-    .table-wrapper tbody,
-    .table-wrapper tr,
-    .table-wrapper td {
+    .table-wrapper:not(.table-wrapper-scroll) { overflow-x: visible; }
+    .table-wrapper:not(.table-wrapper-scroll) table,
+    .table-wrapper:not(.table-wrapper-scroll) tbody,
+    .table-wrapper:not(.table-wrapper-scroll) tr,
+    .table-wrapper:not(.table-wrapper-scroll) td {
         display: block;
         width: 100%;
     }
-    .table-wrapper thead { display: none; }
-    .table-wrapper tbody tr {
+    .table-wrapper:not(.table-wrapper-scroll) thead { display: none; }
+    .table-wrapper:not(.table-wrapper-scroll) tbody tr {
         padding: 14px 16px;
         border-bottom: 1px solid var(--border-color);
     }
-    .table-wrapper tbody tr:last-child { border-bottom: none; }
-    .table-wrapper td { padding: 5px 0; border-bottom: none; }
-    .table-wrapper td[data-label]::before {
+    .table-wrapper:not(.table-wrapper-scroll) tbody tr:last-child { border-bottom: none; }
+    .table-wrapper:not(.table-wrapper-scroll) td { padding: 5px 0; border-bottom: none; }
+    .table-wrapper:not(.table-wrapper-scroll) td[data-label]::before {
         content: attr(data-label);
         display: block;
         font-size: 10px;
@@ -823,6 +840,20 @@ tbody tr:hover { background: var(--bg-card-hover); }
         margin-bottom: 3px;
     }
     .admin-actions { margin-top: 4px; }
+
+    /* Table à scroll horizontal : chaque ligne reste une seule ligne
+       compacte, on scrolle latéralement si toutes les colonnes ne
+       tiennent pas plutôt que de les empiler verticalement. */
+    .table-wrapper-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .table-wrapper-scroll table { width: max-content; min-width: 100%; }
+    .table-wrapper-scroll th, .table-wrapper-scroll td {
+        padding: 8px 10px;
+        font-size: 12px;
+        white-space: nowrap;
+    }
 
     /* Cards utilisateur repliées par défaut : résumé (pseudo/statut/score)
        toujours visible, détail (email/mails/avertissements/actions) et
