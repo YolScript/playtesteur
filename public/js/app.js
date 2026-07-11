@@ -1864,36 +1864,15 @@ async function chargerMesTickets() {
 /* ==========================================================================
    ADMIN
    ========================================================================== */
-const ADMIN_STAT_ICONS = {
-  utilisateurs: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>',
-  applications: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zM4 13h7v7H4v-7z"/></svg>',
-  auth: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1.2 14.2L7.4 11.8l1.4-1.4 1.99 2 5.4-5.4 1.4 1.4-6.8 6.8z"/></svg>',
-  groups: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z"/></svg>',
-  reviews: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
-};
-
-function statCardAdmin({ label, value, sub, icon, accent }) {
-  return `
-    <div class="stat-card accent-${accent}">
-      <div class="stat-card-icon-row">
-        <div class="stat-card-icon">${icon}</div>
-      </div>
-      <div class="stat-label">${label}</div>
-      <div class="stat-value" style="${typeof value === 'string' && value.length > 8 ? 'font-size:16px;' : ''}">${value}</div>
-      ${sub ? `<div class="stat-sub">${sub}</div>` : ''}
-    </div>`;
-}
-
 async function viewAdmin() {
   viewRoot.innerHTML = `<p class="page-subtitle">Chargement...</p>`;
 
-  const [{ utilisateurs, applications: appStats, api_google }, { users }, { applications }] = await Promise.all([
+  const [{ api_google }, { users }, { applications }] = await Promise.all([
     Api.get('/api/admin/stats'),
     Api.get('/api/admin/users'),
     Api.get('/api/admin/apps'),
   ]);
 
-  const modeAccent = (m) => (m.includes('DEV') ? 'warning' : 'success');
   const unModeDev = [api_google.auth_mode, api_google.groups_mode, api_google.reviews_mode].some((m) => m.includes('DEV'));
 
   viewRoot.innerHTML = `
@@ -1906,14 +1885,6 @@ async function viewAdmin() {
         <span class="admin-mode-dot"></span>
         ${unModeDev ? 'Intégrations en mode DEV' : 'Toutes intégrations en production'}
       </div>
-    </div>
-
-    <div class="stats-grid">
-      ${statCardAdmin({ label: 'Utilisateurs', value: utilisateurs.total, sub: `${utilisateurs.valides} validés · ${utilisateurs.suspendus} suspendus`, icon: ADMIN_STAT_ICONS.utilisateurs, accent: 'info' })}
-      ${statCardAdmin({ label: 'Applications', value: appStats.total, sub: `${appStats.en_cours} en cours · ${appStats.completes} complètes · ${appStats.terminees} terminées`, icon: ADMIN_STAT_ICONS.applications, accent: 'success' })}
-      ${statCardAdmin({ label: 'Connexion Google', value: api_google.auth_mode, icon: ADMIN_STAT_ICONS.auth, accent: modeAccent(api_google.auth_mode) })}
-      ${statCardAdmin({ label: 'API Google Groups', value: api_google.groups_mode, icon: ADMIN_STAT_ICONS.groups, accent: modeAccent(api_google.groups_mode) })}
-      ${statCardAdmin({ label: 'API Play Reviews', value: api_google.reviews_mode, icon: ADMIN_STAT_ICONS.reviews, accent: modeAccent(api_google.reviews_mode) })}
     </div>
 
     <div class="admin-tabs" role="tablist">
