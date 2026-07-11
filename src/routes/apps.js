@@ -263,10 +263,11 @@ router.post('/:id/valider', requireAuth, async (req, res) => {
       if (result.raison === 'pseudo_manquant') {
         return res.status(400).json({ erreur: "Renseignez d'abord votre pseudo Play Store dans votre profil." });
       }
-      return res.status(404).json({
-        erreur:
-          "Aucun avis correspondant à votre pseudo Play Store n'a été détecté pour le moment. Si vous venez de le publier, réessayez dans 24-48h : Google met du temps à indexer les avis récents côté API, même s'ils sont déjà visibles publiquement.",
-      });
+      const erreur =
+        result.totalVus > 0
+          ? `Google nous a renvoyé ${result.totalVus} avis récent(s) pour cette application, mais aucun n'est associé au pseudo "${user.pseudo_play_store}". Vérifiez l'orthographe exacte (majuscules incluses) de votre pseudo Play Store dans votre profil : il doit correspondre au nom affiché publiquement sur votre avis.`
+          : "Google n'a renvoyé aucun avis pour cette application pour le moment. Si vous venez de le publier, réessayez dans 24-48h : Google met du temps à indexer les avis récents côté API, même s'ils sont déjà visibles publiquement.";
+      return res.status(404).json({ erreur });
     }
     res.json({ ok: true, reviewId: result.reviewId, user: publicUser(result.user) });
   } catch (err) {

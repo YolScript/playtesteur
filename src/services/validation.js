@@ -33,9 +33,9 @@ async function tenterValiderTest(historique, app, user) {
     return { valide: false, raison: 'pseudo_manquant' };
   }
 
-  const reviewId = await playReviews.trouverAvisDuTesteur(app.package_name, user.pseudo_play_store);
+  const { reviewId, totalVus } = await playReviews.trouverAvisDuTesteur(app.package_name, user.pseudo_play_store);
   if (!reviewId) {
-    return { valide: false, raison: 'avis_non_trouve' };
+    return { valide: false, raison: 'avis_non_trouve', totalVus };
   }
 
   completerHistorique.run(historique.id);

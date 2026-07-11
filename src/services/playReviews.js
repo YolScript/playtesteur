@@ -48,19 +48,25 @@ function resoudreConfig() {
 }
 
 // Cherche, parmi les avis publics de l'application, un commentaire dont
-// l'auteur correspond au pseudo Play Store du testeur. Retourne le review_id
-// trouvé, ou null si aucun avis correspondant n'est détecté.
+// l'auteur correspond au pseudo Play Store du testeur. Retourne
+// { reviewId, totalVus } — reviewId est null si aucun avis correspondant
+// n'est détecté. totalVus (nombre d'avis renvoyés par l'API, tous auteurs
+// confondus) permet de distinguer « Google n'a renvoyé aucun avis pour
+// cette app » (délai d'indexation, app trop récente) de « des avis existent
+// mais aucun ne correspond au pseudo » (pseudo mal renseigné) — les deux
+// cas produisaient le même message opaque "avis non trouvé".
 async function trouverAvisDuTesteur(packageName, pseudoPlayStore) {
-  if (!pseudoPlayStore) return null;
+  if (!pseudoPlayStore) return { reviewId: null, totalVus: 0 };
 
   const { devMode, androidpublisher } = resoudreConfig();
   if (devMode) {
     // Simulation : on considère l'avis trouvé instantanément.
-    return `dev-review-${Date.now()}`;
+    return { reviewId: `dev-review-${Date.now()}`, totalVus: 1 };
   }
 
   const pseudoNormalise = pseudoPlayStore.trim().toLowerCase();
   let pageToken;
+  let totalVus = 0;
   do {
     const res = await androidpublisher.reviews.list({
       packageName,
@@ -68,14 +74,15 @@ async function trouverAvisDuTesteur(packageName, pseudoPlayStore) {
       token: pageToken,
     });
     const reviews = res.data.reviews || [];
+    totalVus += reviews.length;
     const match = reviews.find(
       (r) => (r.authorName || '').trim().toLowerCase() === pseudoNormalise
     );
-    if (match) return match.reviewId;
+    if (match) return { reviewId: match.reviewId, totalVus };
     pageToken = res.data.tokenPagination?.nextPageToken;
   } while (pageToken);
 
-  return null;
+  return { reviewId: null, totalVus };
 }
 
 const LOCALES_PREFEREES = ['fr-FR', 'en-US'];
