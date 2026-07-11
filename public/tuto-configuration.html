@@ -82,11 +82,18 @@
     <p><strong>Aucune configuration serveur nécessaire.</strong> La tuile « API Google Groups » restera sur DEV (simulé) : c'est normal et sans conséquence.</p>
     <ol>
       <li>Créez un groupe sur <a href="https://groups.google.com/creategroup" target="_blank" rel="noopener">groups.google.com/creategroup</a> avec votre compte Gmail habituel.</li>
-      <li>Réglage <strong>« Qui peut rejoindre le groupe »</strong> → <strong>« Tout utilisateur du Web peut rejoindre »</strong> (adhésion en un clic) ou « …peut demander à rejoindre » (vous validez chaque testeur).</li>
-      <li>Lors de la soumission de votre application sur PlayTesteur, collez l'adresse du groupe (<code>xxx@googlegroups.com</code>) dans le champ « Groupe Google de testeurs ».</li>
+      <li>Dans les réglages du groupe, <strong>seuls deux réglages comptent</strong> — tout le reste (boîte de réception collaborative, libellés partagés, qui peut publier/voir les membres/modérer, mode conversation, traitement des spams...) est sans effet : ce groupe ne sert qu'à donner l'accès Play Store, personne n'y écrit jamais de message.
+        <ul>
+          <li><strong>« Qui peut voir le groupe »</strong> → <strong>« Tous les internautes »</strong></li>
+          <li><strong>« Qui peut rejoindre le groupe »</strong> → <strong>« Tous les internautes peuvent rejoindre le groupe »</strong> (adhésion en un clic) ou « …peuvent demander à rejoindre » (vous validez chaque testeur manuellement)</li>
+        </ul>
+        Laissez tous les autres écrans sur leurs valeurs par défaut et validez.
+      </li>
+      <li>Lors de la soumission de votre application sur PlayTesteur, collez l'adresse du groupe (<code>xxx@googlegroups.com</code>) dans le champ « Groupe Google de testeurs ». <strong>Attention :</strong> collez bien l'adresse du groupe, pas votre propre adresse email personnelle.</li>
       <li>Dans Play Console → votre app → <strong>Tests → Test fermé → Testeurs</strong> : cochez <strong>Groupes</strong> et collez la même adresse.</li>
       <li>C'est tout : chaque testeur PlayTesteur reçoit automatiquement un bouton « Rejoindre le groupe Google » qui active son accès.</li>
     </ol>
+    <div class="card warn">Le bouton « Retirer un testeur » de PlayTesteur révoque son accès côté site, mais ne peut pas le retirer automatiquement d'un groupe gratuit (l'API Google ne gère pas ces groupes, voir Option B) : retirez-le aussi manuellement depuis groups.google.com si besoin.</div>
 
     <h3>Option B — Gestion automatique par API (Workspace / Cloud Identity)</h3>
     <p class="muted">Nécessite un nom de domaine (~10 €/an). Cloud Identity Free est gratuit jusqu'à 50 utilisateurs ; Google Workspace Business Starter coûte ~6-7 €/mois.</p>

@@ -1184,13 +1184,8 @@ async function viewMesApps() {
         <div class="form-group">
           <label>Groupe Google de testeurs (gratuit, recommandé)</label>
           <input type="text" name="google_group_email" placeholder="mon-app-testeurs@googlegroups.com" />
-          <p class="form-hint" style="margin-top:6px;">
-            Créez gratuitement un groupe sur <a href="https://groups.google.com/creategroup" target="_blank" rel="noopener">groups.google.com</a> (aucun abonnement ni domaine requis) :
-            1) Nom du groupe, puis dans "Qui peut rejoindre le groupe" choisissez <strong>« Tout utilisateur du Web peut demander à rejoindre »</strong> (ou « peut rejoindre » pour un accès immédiat).
-            2) Collez ici l'adresse du groupe (xxx@googlegroups.com).
-            3) Dans Play Console → Tests fermés → Testeurs, cochez "Groupes" et collez la même adresse.
-            Chaque testeur PlayTesteur recevra alors un bouton "Rejoindre le groupe" qui active son accès en un clic.
-          </p>
+          <p class="form-hint" style="margin-top:6px;">Adresse suggérée automatiquement à partir du nom du package (modifiable). <strong>Ne collez jamais votre propre adresse email ici</strong> : ce champ doit contenir l'adresse du groupe, pas la vôtre.</p>
+          <div id="guide-groupe"></div>
         </div>
         <div style="display:flex; gap:10px;">
           <button type="submit" class="btn-primary" id="submit-form-btn">Créer le groupe de test</button>
@@ -1302,6 +1297,12 @@ async function viewMesApps() {
     if (val && val !== dernierPackageImporte) {
       lancerImportPlayConsole(val);
     }
+    // Suggère une adresse de groupe basée sur le nom du package (uniquement si
+    // le champ est encore vide, pour ne jamais écraser une vraie adresse déjà
+    // saisie) : évite de coller par erreur une adresse email personnelle.
+    if (val && !submitForm.google_group_email.value.trim()) {
+      submitForm.google_group_email.value = `${val}@googlegroups.com`;
+    }
   });
 
   submitForm.addEventListener('submit', async (e) => {
@@ -1334,6 +1335,7 @@ async function viewMesApps() {
 
   chargerMesApps(ouvrirFormulaireEdition);
   afficherEmailCompteService();
+  afficherGuideGroupe();
 }
 
 async function afficherEmailCompteService() {
@@ -1416,6 +1418,44 @@ async function afficherEmailCompteService() {
       }
     });
   }
+}
+
+function afficherGuideGroupe() {
+  const hint = document.getElementById('guide-groupe');
+  if (!hint) return;
+
+  hint.innerHTML = `
+    <div class="tuto-import-container" style="margin-top: 10px; margin-bottom: 10px;">
+      <div class="tuto-import-header" id="tuto-groupe-toggle" style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--primary); font-size: 13px; font-weight: 600; user-select: none;">
+        <span class="tuto-chevron" style="display: inline-block; transition: transform var(--transition-fast); transform: rotate(0deg); font-size: 10px;">▶</span>
+        <span>Guide : Créer le groupe Google de testeurs</span>
+      </div>
+      <div class="tuto-import-body hidden" id="tuto-groupe-content" style="margin-top: 10px; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 13px; line-height: 1.5; color: var(--text-muted); backdrop-filter: blur(var(--glass-blur));">
+        <p style="margin-bottom: 12px; color: var(--text-white);">Ce groupe sert uniquement de liste blanche pour Play Console : personne n'y écrit jamais de message.</p>
+        <ol style="margin-left: 20px; display: flex; flex-direction: column; gap: 10px; padding-left: 0; list-style-position: inside;">
+          <li>Créez un groupe sur <a href="https://groups.google.com/creategroup" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 600;">groups.google.com/creategroup</a> (aucun abonnement ni domaine requis) avec le nom suggéré ci-dessus.</li>
+          <li>Seuls <strong style="color: var(--text-white);">deux réglages comptent</strong>, le reste (boîte de réception collaborative, libellés, qui peut publier/voir les membres/modérer, mode conversation...) est sans effet :
+            <div style="margin-top: 8px; padding: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 8px;">
+              <div><strong style="color: var(--text-white);">Qui peut voir le groupe</strong> → <span style="color: var(--primary);">Tous les internautes</span></div>
+              <div><strong style="color: var(--text-white);">Qui peut rejoindre le groupe</strong> → <span style="color: var(--primary);">Tous les internautes peuvent rejoindre le groupe</span> (accès immédiat), ou « ...peuvent demander à rejoindre » pour valider chaque testeur vous-même.</div>
+            </div>
+          </li>
+          <li>Une fois créé, vérifiez que l'adresse générée correspond à celle suggérée dans le champ ci-dessus (sinon copiez-la depuis Google Groups et collez-la ici).</li>
+          <li>Dans <a href="https://play.google.com/console/" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 600;">Play Console</a> → votre app → <strong style="color: var(--text-white);">Tests → Test fermé → Testeurs</strong> : cochez "Groupes" et collez la même adresse.</li>
+        </ol>
+      </div>
+    </div>
+  `;
+
+  const toggle = document.getElementById('tuto-groupe-toggle');
+  const content = document.getElementById('tuto-groupe-content');
+  const chevron = toggle.querySelector('.tuto-chevron');
+
+  toggle.addEventListener('click', () => {
+    const isHidden = content.classList.contains('hidden');
+    content.classList.toggle('hidden', !isHidden);
+    chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+  });
 }
 
 async function chargerMesApps(onEdit) {

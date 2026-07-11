@@ -135,12 +135,21 @@ router.post('/import', requireAuth, async (req, res) => {
 });
 
 // Valide une adresse de groupe fournie par le développeur (groupe Google
-// grand public gratuit, ou groupe Workspace s'il en a un).
+// grand public gratuit @googlegroups.com, ou groupe Workspace sur le domaine
+// configuré). Rejette explicitement les autres domaines (ex : une adresse
+// email personnelle collée par erreur à la place de l'adresse du groupe).
 function validerGroupeFourni(email) {
   const e = (email || '').trim().toLowerCase();
   if (!e) return null;
   if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(e)) {
     throw new Error("L'adresse du groupe Google n'est pas une adresse email valide.");
+  }
+  const domaine = e.split('@')[1];
+  const domaineWorkspace = (process.env.GOOGLE_GROUPS_DOMAIN || '').trim().toLowerCase();
+  if (domaine !== 'googlegroups.com' && domaine !== domaineWorkspace) {
+    throw new Error(
+      "Cette adresse n'est pas une adresse de groupe Google valide : elle doit se terminer par @googlegroups.com (groupe gratuit) — ce champ attend l'adresse du GROUPE, pas votre propre adresse email."
+    );
   }
   return e;
 }
