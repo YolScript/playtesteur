@@ -28,13 +28,15 @@ const findAvisApp = db.prepare(`
   WHERE h.application_id = ? AND h.statut = 'Complété' AND h.avis_texte IS NOT NULL
   ORDER BY h.date_action DESC
 `);
+// Les testeurs retirés/suspendus n'apparaissent plus dans la liste : leur
+// accès est déjà révoqué, les y laisser n'apporte rien au propriétaire.
 const findTesteursApp = db.prepare(`
   SELECT h.id AS historique_id, h.testeur_id, h.statut, h.date_rejoint, h.date_action,
          u.pseudo, u.email,
          (SELECT COUNT(*) FROM historique_tests h2 WHERE h2.testeur_id = u.id AND h2.statut = 'Complété') AS tests_completes
   FROM historique_tests h
   JOIN users u ON u.id = h.testeur_id
-  WHERE h.application_id = ?
+  WHERE h.application_id = ? AND h.statut != 'Suspendu'
   ORDER BY h.date_rejoint DESC
 `);
 const suspendreHistoriqueApp = db.prepare(`UPDATE historique_tests SET statut = 'Suspendu' WHERE id = ?`);
