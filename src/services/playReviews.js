@@ -7,23 +7,44 @@
 // pour permettre de tester tout le parcours de gamification sans Play Console.
 const { resoudreCredentials } = require('./googleCredentials');
 
-const credentials = resoudreCredentials(
-  'GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_PATH',
-  'GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_JSON'
-);
-const devMode = !credentials;
+// Configuration résolue À CHAQUE APPEL (avec cache invalidé quand elle
+// change) plutôt que figée au chargement : la page de configuration admin
+// peut coller la clé du compte de service (via siteConfig → process.env)
+// et activer l'API Play Console sans redémarrer le serveur.
+let cacheConfig = null;
+let avertissementDevAffiche = false;
 
-let androidpublisher = null;
-if (!devMode) {
-  const { google } = require('googleapis');
-  const authClient = new google.auth.JWT({
-    email: credentials.client_email,
-    key: credentials.private_key,
-    scopes: ['https://www.googleapis.com/auth/androidpublisher'],
-  });
-  androidpublisher = google.androidpublisher({ version: 'v3', auth: authClient });
-} else {
-  console.warn('[playReviews] MODE DEV actif : clé Play Console absente, validation des avis simulée.');
+function resoudreConfig() {
+  const credentials = resoudreCredentials(
+    'GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_PATH',
+    'GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_JSON'
+  );
+  const empreinte = credentials?.client_email || '';
+  if (cacheConfig && cacheConfig.empreinte === empreinte) return cacheConfig;
+
+  const devMode = !credentials;
+  let androidpublisher = null;
+  if (!devMode) {
+    const { google } = require('googleapis');
+    const authClient = new google.auth.JWT({
+      email: credentials.client_email,
+      key: credentials.private_key,
+      scopes: ['https://www.googleapis.com/auth/androidpublisher'],
+    });
+    androidpublisher = google.androidpublisher({ version: 'v3', auth: authClient });
+    avertissementDevAffiche = false;
+  } else if (!avertissementDevAffiche) {
+    console.warn('[playReviews] MODE DEV actif : clé Play Console absente, validation des avis simulée.');
+    avertissementDevAffiche = true;
+  }
+
+  cacheConfig = {
+    empreinte,
+    devMode,
+    androidpublisher,
+    serviceAccountEmail: credentials?.client_email || null,
+  };
+  return cacheConfig;
 }
 
 // Cherche, parmi les avis publics de l'application, un commentaire dont
@@ -32,6 +53,7 @@ if (!devMode) {
 async function trouverAvisDuTesteur(packageName, pseudoPlayStore) {
   if (!pseudoPlayStore) return null;
 
+  const { devMode, androidpublisher } = resoudreConfig();
   if (devMode) {
     // Simulation : on considère l'avis trouvé instantanément.
     return `dev-review-${Date.now()}`;
@@ -66,6 +88,7 @@ async function importerFicheApp(packageName) {
     throw new Error('Le nom du package est requis pour importer depuis Play Console.');
   }
 
+  const { devMode, androidpublisher } = resoudreConfig();
   if (devMode) {
     return {
       nom_application: packageName,
@@ -152,6 +175,7 @@ const AVIS_SIMULES = [
 async function listerAvis(packageName, maxResults = 10) {
   if (!packageName) return [];
 
+  const { devMode, androidpublisher } = resoudreConfig();
   if (devMode) {
     return AVIS_SIMULES;
   }
@@ -170,6 +194,16 @@ async function listerAvis(packageName, maxResults = 10) {
   });
 }
 
-const serviceAccountEmail = credentials?.client_email || null;
-
-module.exports = { devMode, trouverAvisDuTesteur, importerFicheApp, listerAvis, serviceAccountEmail };
+module.exports = {
+  // Getters : reflètent l'état réel à chaque lecture (la config peut
+  // changer en cours de route via la page admin, sans redémarrage).
+  get devMode() {
+    return resoudreConfig().devMode;
+  },
+  get serviceAccountEmail() {
+    return resoudreConfig().serviceAccountEmail;
+  },
+  trouverAvisDuTesteur,
+  importerFicheApp,
+  listerAvis,
+};

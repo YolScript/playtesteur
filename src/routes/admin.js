@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db/init');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAdmin, requireSuperAdmin } = require('../middleware/auth');
 const { publicUser, publicApplication } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
 const googleAuth = require('../services/googleAuth');
@@ -53,18 +53,26 @@ router.get('/stats', (req, res) => {
 });
 
 /* --------------------------------------------------------------------
-   Configuration du site (page Compte, admin uniquement) : renseigne les
-   intégrations Google sans toucher au .env ni redémarrer le serveur.
+   Configuration du site (page Compte) : renseigne TOUTES les intégrations
+   sans toucher au .env ni redémarrer le serveur. Réservé au propriétaire
+   du site (requireSuperAdmin, email vérifié en base) — les autres
+   administrateurs n'y ont pas accès.
    -------------------------------------------------------------------- */
 function etatConfig() {
-  const valeurs = {};
-  for (const cle of siteConfig.CLES_ENV) {
-    valeurs[cle] = siteConfig.CLES_SECRETES.includes(cle)
-      ? { secrete: true, presente: !!(siteConfig.lire(cle) || process.env[cle]) }
-      : { secrete: false, valeur: siteConfig.lire(cle) || process.env[cle] || '' };
-  }
+  const reglages = siteConfig.DEFINITIONS.map((d) => ({
+    cle: d.cle,
+    label: d.label,
+    aide: d.aide,
+    secrete: d.secrete,
+    type: d.type,
+    effet: d.effet,
+    groupe: d.groupe,
+    ...(d.secrete
+      ? { presente: !!(siteConfig.lire(d.cle) || process.env[d.cle]) }
+      : { valeur: siteConfig.lire(d.cle) || process.env[d.cle] || '' }),
+  }));
   return {
-    valeurs,
+    reglages,
     modes: {
       auth_mode: googleAuth.devMode ? 'DEV (simulé)' : 'PRODUCTION',
       groups_mode: googleGroups.devMode ? 'DEV (simulé)' : 'PRODUCTION',
@@ -74,21 +82,24 @@ function etatConfig() {
   };
 }
 
-router.get('/config', (req, res) => {
+router.get('/config', requireSuperAdmin, (req, res) => {
   res.json(etatConfig());
 });
 
-router.post('/config', (req, res) => {
+router.post('/config', requireSuperAdmin, (req, res) => {
   const entrees = req.body || {};
   try {
-    for (const cle of siteConfig.CLES_ENV) {
+    for (const definition of siteConfig.DEFINITIONS) {
+      const { cle } = definition;
       if (entrees[cle] === undefined) continue; // champ absent = inchangé
       const valeur = String(entrees[cle] || '').trim();
-      if (cle === 'GOOGLE_SERVICE_ACCOUNT_KEY_JSON' && valeur) {
+      if (definition.type === 'json' && valeur) {
         try {
           JSON.parse(valeur);
         } catch (_) {
-          return res.status(400).json({ erreur: 'La clé du compte de service doit être le contenu JSON complet du fichier téléchargé depuis Google Cloud.' });
+          return res.status(400).json({
+            erreur: `"${definition.label}" doit être le contenu JSON complet du fichier téléchargé depuis Google Cloud.`,
+          });
         }
       }
       siteConfig.definir(cle, valeur);

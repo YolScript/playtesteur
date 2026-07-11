@@ -9,22 +9,37 @@
 // Sans configuration OAuth dans .env, bascule en MODE DEV : la route
 // /api/auth/dev-login permet de simuler une connexion Google (email + nom
 // saisis librement) pour développer sans créer de credentials OAuth réels.
-const CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
-const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-const REDIRECT_URI = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+// Configuration résolue À CHAQUE APPEL (avec cache invalidé quand elle
+// change) plutôt que figée au chargement : la page de configuration admin
+// peut renseigner les identifiants OAuth (via siteConfig → process.env) et
+// activer la vraie connexion Google sans redémarrer le serveur.
+let cacheConfig = null;
+let avertissementDevAffiche = false;
 
-const devMode = !CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI;
+function resoudreConfig() {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+  const empreinte = [clientId || '', clientSecret || '', redirectUri || ''].join('|');
+  if (cacheConfig && cacheConfig.empreinte === empreinte) return cacheConfig;
 
-let oauth2Client = null;
-if (!devMode) {
-  const { google } = require('googleapis');
-  oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-} else {
-  console.warn('[googleAuth] MODE DEV actif : OAuth Google absent, connexion simulée via /api/auth/dev-login.');
+  const devMode = !clientId || !clientSecret || !redirectUri;
+  let oauth2Client = null;
+  if (!devMode) {
+    const { google } = require('googleapis');
+    oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+    avertissementDevAffiche = false;
+  } else if (!avertissementDevAffiche) {
+    console.warn('[googleAuth] MODE DEV actif : OAuth Google absent, connexion simulée via /api/auth/dev-login.');
+    avertissementDevAffiche = true;
+  }
+
+  cacheConfig = { empreinte, devMode, oauth2Client, clientId };
+  return cacheConfig;
 }
 
 function getAuthUrl() {
-  return oauth2Client.generateAuthUrl({
+  return resoudreConfig().oauth2Client.generateAuthUrl({
     access_type: 'online',
     prompt: 'select_account',
     scope: ['openid', 'email', 'profile'],
@@ -33,8 +48,9 @@ function getAuthUrl() {
 
 // Échange le code OAuth contre le profil Google vérifié de l'utilisateur.
 async function handleCallback(code) {
+  const { oauth2Client, clientId } = resoudreConfig();
   const { tokens } = await oauth2Client.getToken(code);
-  const ticket = await oauth2Client.verifyIdToken({ idToken: tokens.id_token, audience: CLIENT_ID });
+  const ticket = await oauth2Client.verifyIdToken({ idToken: tokens.id_token, audience: clientId });
   const payload = ticket.getPayload();
 
   if (!payload.email_verified) {
@@ -49,4 +65,10 @@ async function handleCallback(code) {
   };
 }
 
-module.exports = { devMode, getAuthUrl, handleCallback };
+module.exports = {
+  get devMode() {
+    return resoudreConfig().devMode;
+  },
+  getAuthUrl,
+  handleCallback,
+};

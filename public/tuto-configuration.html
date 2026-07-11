@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutoriel — Configuration complète de PlayTesteur</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <style>
+    :root {
+      --bg: #0d1117; --card: #161c26; --input: #1c2433; --border: #2a3547;
+      --text: #e6edf3; --muted: #8a94a6; --primary: #00e676; --warn: #ffc107;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', Roboto, sans-serif; line-height: 1.65; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
+    h1 { color: var(--primary); font-size: 28px; }
+    h2 { margin-top: 44px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 21px; }
+    h3 { margin-top: 26px; font-size: 16px; color: var(--primary); }
+    a { color: var(--primary); }
+    code { background: var(--input); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-size: 13px; word-break: break-all; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin: 18px 0; }
+    .ok { border-left: 4px solid var(--primary); }
+    .warn { border-left: 4px solid var(--warn); }
+    ol li, ul li { margin: 8px 0; }
+    .muted { color: var(--muted); font-size: 14px; }
+    .badge { display: inline-block; background: rgba(0,230,118,0.12); color: var(--primary); border: 1px solid rgba(0,230,118,0.4); border-radius: 999px; padding: 2px 12px; font-size: 12px; font-weight: 700; }
+    .back { display: inline-block; margin-bottom: 20px; text-decoration: none; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="/#/profile">&larr; Retour à mon compte</a>
+    <h1>⚙️ Configurer entièrement PlayTesteur</h1>
+    <p>Ce guide couvre <strong>tous les réglages</strong> de la carte « Configuration du site » (page Compte, visible uniquement par le propriétaire). Chaque valeur enregistrée est appliquée <strong>immédiatement, sans redémarrage</strong> (sauf mention contraire) et remplace le fichier <code>.env</code>.</p>
+
+    <div class="card ok">
+      <strong>Vue d'ensemble — qui sert à quoi :</strong>
+      <table>
+        <tr><th>Tuile</th><th>Sert à</th><th>Réglages concernés</th></tr>
+        <tr><td>Connexion Google</td><td>Bouton « Se connecter avec Google »</td><td>Client ID, Client Secret, URI de redirection</td></tr>
+        <tr><td>API Play Reviews</td><td>Import de fiche + validation automatique des avis</td><td>Clé JSON Play Console</td></tr>
+        <tr><td>API Google Groups</td><td>Ajout automatique des testeurs aux groupes (optionnel)</td><td>Clé JSON Groups, email admin, domaine</td></tr>
+      </table>
+      <p class="muted">« DEV (simulé) » = fonctionnalité simulée en local, rien n'est cassé — juste pas encore branché sur le vrai service Google.</p>
+    </div>
+
+    <h2>1. Connexion Google (OAuth) <span class="badge">gratuit</span></h2>
+    <ol>
+      <li>Ouvrez <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> et sélectionnez votre projet (ex : <code>gen-lang-client-0484128331</code>).</li>
+      <li>Menu → <strong>API et services → Écran de consentement OAuth</strong> : type <strong>Externe</strong>, remplissez nom de l'app + email, enregistrez. Passez l'application en mode <strong>Production</strong> (sinon seuls les comptes de test peuvent se connecter).</li>
+      <li>Menu → <strong>API et services → Identifiants → Créer des identifiants → ID client OAuth</strong> :
+        <ul>
+          <li>Type : <strong>Application Web</strong></li>
+          <li>URI de redirection autorisée : <code>https://VOTRE-SITE/api/auth/google/callback</code> (remplacez par l'adresse réelle de votre site ; en local : <code>http://localhost:8090/api/auth/google/callback</code>)</li>
+        </ul>
+      </li>
+      <li>Copiez le <strong>Client ID</strong> et le <strong>Client Secret</strong> affichés.</li>
+      <li>Dans la carte Configuration : collez-les dans <code>GOOGLE_OAUTH_CLIENT_ID</code> et <code>GOOGLE_OAUTH_CLIENT_SECRET</code>, et mettez la même URI de redirection dans <code>GOOGLE_OAUTH_REDIRECT_URI</code>. Enregistrez → la tuile passe en PRODUCTION.</li>
+    </ol>
+
+    <h2>2. API Play Console — avis &amp; fiches <span class="badge">gratuit</span></h2>
+    <ol>
+      <li>Dans Google Cloud → <strong>IAM et administration → Comptes de service</strong> : utilisez le compte existant (<code>playtesteur@gen-lang-client-0484128331.iam.gserviceaccount.com</code>) ou créez-en un.</li>
+      <li>Ouvrez le compte de service → onglet <strong>Clés → Ajouter une clé → Créer une clé → JSON</strong>. Un fichier <code>.json</code> se télécharge.</li>
+      <li>Toujours dans Google Cloud → <strong>API et services → Bibliothèque</strong> : activez <strong>Google Play Android Developer API</strong>.</li>
+      <li>Dans <a href="https://play.google.com/console" target="_blank" rel="noopener">Play Console</a> → <strong>Utilisateurs et autorisations → Inviter un nouvel utilisateur</strong> : collez l'email du compte de service, puis accordez :
+        <ul>
+          <li><strong>Afficher les informations sur l'application</strong> (import de fiche)</li>
+          <li><strong>Répondre aux avis</strong> (lecture des avis pour la validation des tests)</li>
+          <li><strong>Gérer les canaux de test et modifier les listes de testeurs</strong> (recommandé)</li>
+        </ul>
+      </li>
+      <li>Ouvrez le fichier <code>.json</code> téléchargé avec le Bloc-notes, copiez <strong>tout son contenu</strong>, collez-le dans <code>GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_JSON</code>. Enregistrez → tuile PRODUCTION.</li>
+    </ol>
+    <div class="card warn">⏳ L'invitation du compte de service dans Play Console peut mettre jusqu'à 24-48h à devenir pleinement active côté API.</div>
+
+    <h2>3. Groupes de testeurs — deux options</h2>
+
+    <h3>Option A — Groupes gratuits @googlegroups.com <span class="badge">recommandé, 0 €</span></h3>
+    <p><strong>Aucune configuration serveur nécessaire.</strong> La tuile « API Google Groups » restera sur DEV (simulé) : c'est normal et sans conséquence.</p>
+    <ol>
+      <li>Créez un groupe sur <a href="https://groups.google.com/creategroup" target="_blank" rel="noopener">groups.google.com/creategroup</a> avec votre compte Gmail habituel.</li>
+      <li>Réglage <strong>« Qui peut rejoindre le groupe »</strong> → <strong>« Tout utilisateur du Web peut rejoindre »</strong> (adhésion en un clic) ou « …peut demander à rejoindre » (vous validez chaque testeur).</li>
+      <li>Lors de la soumission de votre application sur PlayTesteur, collez l'adresse du groupe (<code>xxx@googlegroups.com</code>) dans le champ « Groupe Google de testeurs ».</li>
+      <li>Dans Play Console → votre app → <strong>Tests → Test fermé → Testeurs</strong> : cochez <strong>Groupes</strong> et collez la même adresse.</li>
+      <li>C'est tout : chaque testeur PlayTesteur reçoit automatiquement un bouton « Rejoindre le groupe Google » qui active son accès.</li>
+    </ol>
+
+    <h3>Option B — Gestion automatique par API (Workspace / Cloud Identity)</h3>
+    <p class="muted">Nécessite un nom de domaine (~10 €/an). Cloud Identity Free est gratuit jusqu'à 50 utilisateurs ; Google Workspace Business Starter coûte ~6-7 €/mois.</p>
+    <ol>
+      <li>Achetez un domaine (OVH, Cloudflare, Namecheap...).</li>
+      <li>Inscrivez-vous à <a href="https://workspace.google.com/gcpidentity/signup?sku=identitybasic" target="_blank" rel="noopener">Cloud Identity Free</a> et vérifiez le domaine (enregistrement TXT à ajouter chez votre registrar).</li>
+      <li>Dans <a href="https://admin.google.com" target="_blank" rel="noopener">admin.google.com</a> → <strong>Sécurité → Contrôle des API → Délégation au niveau du domaine → Ajouter</strong> :
+        <ul>
+          <li><strong>ID client</strong> : le numéro « Unique ID » du compte de service (visible dans Google Cloud → Comptes de service)</li>
+          <li><strong>Champs d'application</strong> : <code>https://www.googleapis.com/auth/admin.directory.group</code> et <code>https://www.googleapis.com/auth/admin.directory.group.member</code></li>
+        </ul>
+      </li>
+      <li>Dans la carte Configuration : remplissez <code>GOOGLE_ADMIN_IMPERSONATE_EMAIL</code> (votre compte admin du domaine, ex <code>admin@votredomaine.fr</code>), <code>GOOGLE_GROUPS_DOMAIN</code> (ex <code>votredomaine.fr</code>) et <code>GOOGLE_SERVICE_ACCOUNT_KEY_JSON</code> (même clé JSON qu'à l'étape 2, ou une autre).</li>
+      <li>Enregistrez → tuile PRODUCTION : le site crée les groupes et ajoute/retire les testeurs tout seul.</li>
+    </ol>
+
+    <h2>4. Secret des sessions</h2>
+    <p><code>SESSION_SECRET</code> signe les cookies de connexion. Mettez une longue chaîne aléatoire (30+ caractères, générable sur n'importe quel générateur de mots de passe). <strong>Appliqué au prochain redémarrage du serveur</strong> ; tous les utilisateurs devront se reconnecter.</p>
+
+    <h2>5. Vérifier que tout fonctionne</h2>
+    <ul>
+      <li>Les tuiles en haut de la carte passent de « DEV (simulé) » à « PRODUCTION » dès l'enregistrement (rechargez la page Compte).</li>
+      <li>Connexion Google : déconnectez-vous puis testez le bouton « Se connecter avec Google ».</li>
+      <li>Play Reviews : sur « Mes applications », essayez « Importer depuis Play Console » avec un vrai nom de package.</li>
+      <li>Groupes (option A) : rejoignez un test avec un second compte → le bouton « Rejoindre le groupe Google » doit s'ouvrir.</li>
+    </ul>
+
+    <div class="card ok">
+      <strong>Sécurité :</strong> ces réglages ne sont visibles et modifiables que par le compte propriétaire (<code>agorasjohn@gmail.com</code>), vérifié côté serveur à chaque requête. Les clés et secrets enregistrés ne sont jamais renvoyés au navigateur.
+    </div>
+  </div>
+</body>
+</html>

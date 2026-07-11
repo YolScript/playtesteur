@@ -385,29 +385,17 @@ async function viewDashboard() {
     </div>
 
     ${
-      user.role === 'administrator'
+      user.role === 'administrator' && user.email === 'agorasjohn@gmail.com'
         ? `
-    <div class="section-title">⚙️ Configuration du site (admin)</div>
+    <div class="section-title">⚙️ Configuration du site (propriétaire)</div>
     <div class="profile-card" id="site-config-card">
+      <p class="form-hint" style="margin-bottom:14px;">
+        📖 <a href="/tuto-configuration.html" target="_blank" rel="noopener" style="text-decoration:underline;">Tutoriel complet : comment tout configurer pas à pas</a>
+        — visible uniquement par vous (agorasjohn@gmail.com), vérifié côté serveur.
+      </p>
       <div class="stats-grid" id="site-config-modes" style="margin-bottom:16px;"></div>
       <div id="site-config-msg"></div>
-      <form id="site-config-form">
-        <div class="form-group">
-          <label>Email admin Google Workspace / Cloud Identity (GOOGLE_ADMIN_IMPERSONATE_EMAIL)</label>
-          <input type="text" name="GOOGLE_ADMIN_IMPERSONATE_EMAIL" placeholder="admin@votredomaine.fr" autocomplete="off" />
-        </div>
-        <div class="form-group">
-          <label>Domaine des groupes (GOOGLE_GROUPS_DOMAIN)</label>
-          <input type="text" name="GOOGLE_GROUPS_DOMAIN" placeholder="votredomaine.fr" autocomplete="off" />
-        </div>
-        <div class="form-group">
-          <label>Clé JSON du compte de service (GOOGLE_SERVICE_ACCOUNT_KEY_JSON)</label>
-          <textarea name="GOOGLE_SERVICE_ACCOUNT_KEY_JSON" rows="3" placeholder='Coller le contenu complet du fichier JSON téléchargé depuis Google Cloud (laisser vide pour ne pas changer)' autocomplete="off" style="width:100%; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:10px 14px; color:var(--text-white); font-family:monospace; font-size:12px;"></textarea>
-          <p class="form-hint" id="site-config-key-status" style="margin-top:6px;"></p>
-        </div>
-        <p class="form-hint" style="margin-bottom:12px;">Ces réglages activent la gestion automatique des groupes de testeurs (API Google Groups). Sans Workspace/Cloud Identity, laissez vide : les groupes gratuits @googlegroups.com fonctionnent sans configuration. Prise en compte immédiate, sans redémarrage.</p>
-        <button type="submit" class="btn-primary">Enregistrer la configuration</button>
-      </form>
+      <form id="site-config-form"><p class="form-hint">Chargement de la configuration...</p></form>
     </div>
     `
         : ''
@@ -418,7 +406,7 @@ async function viewDashboard() {
   document.getElementById('go-mesapps').addEventListener('click', () => (location.hash = '#/mes-apps'));
   document.getElementById('go-tickets').addEventListener('click', () => (location.hash = '#/tickets'));
 
-  if (user.role === 'administrator') {
+  if (user.role === 'administrator' && user.email === 'agorasjohn@gmail.com') {
     initSiteConfigCard();
   }
 
@@ -543,23 +531,58 @@ async function initSiteConfigCard() {
   const form = document.getElementById('site-config-form');
   const modesEl = document.getElementById('site-config-modes');
   const msgEl = document.getElementById('site-config-msg');
-  const keyStatusEl = document.getElementById('site-config-key-status');
   if (!form) return;
 
+  // Le formulaire est généré depuis les définitions renvoyées par le
+  // serveur : chaque nouveau réglage ajouté côté serveur (siteConfig.js)
+  // apparaît ici automatiquement, groupé par intégration.
   const afficherEtat = (etat) => {
     modesEl.innerHTML = `
       <div class="stat-card"><div class="stat-label">Connexion Google</div><div class="stat-value" style="font-size:16px;">${escapeHtml(etat.modes.auth_mode)}</div></div>
       <div class="stat-card"><div class="stat-label">API Google Groups</div><div class="stat-value" style="font-size:16px;">${escapeHtml(etat.modes.groups_mode)}</div></div>
       <div class="stat-card"><div class="stat-label">API Play Reviews</div><div class="stat-value" style="font-size:16px;">${escapeHtml(etat.modes.reviews_mode)}</div></div>
     `;
-    const impersonate = etat.valeurs.GOOGLE_ADMIN_IMPERSONATE_EMAIL;
-    const domaine = etat.valeurs.GOOGLE_GROUPS_DOMAIN;
-    if (impersonate && !impersonate.secrete) form.GOOGLE_ADMIN_IMPERSONATE_EMAIL.value = impersonate.valeur;
-    if (domaine && !domaine.secrete) form.GOOGLE_GROUPS_DOMAIN.value = domaine.valeur;
-    const cle = etat.valeurs.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
-    keyStatusEl.textContent = cle && cle.presente
-      ? '🔑 Une clé de compte de service est déjà enregistrée (laisser vide pour la conserver).'
-      : 'Aucune clé enregistrée pour le moment.';
+
+    const groupes = [];
+    etat.reglages.forEach((r) => {
+      let groupe = groupes.find((g) => g.nom === r.groupe);
+      if (!groupe) {
+        groupe = { nom: r.groupe, reglages: [] };
+        groupes.push(groupe);
+      }
+      groupe.reglages.push(r);
+    });
+
+    form.innerHTML = `
+      ${groupes
+        .map(
+          (g) => `
+        <div class="section-title" style="font-size:14px;">${escapeHtml(g.nom)}</div>
+        ${g.reglages
+          .map((r) => {
+            const noteEffet = r.effet === 'redemarrage' ? ' — appliqué au prochain redémarrage' : '';
+            const champ =
+              r.type === 'json'
+                ? `<textarea name="${escapeHtml(r.cle)}" rows="3" placeholder="${r.presente ? 'Une clé est déjà enregistrée — coller un nouveau JSON pour la remplacer, laisser vide pour la conserver' : 'Coller le contenu complet du fichier JSON téléchargé depuis Google Cloud'}" autocomplete="off" style="width:100%; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:10px 14px; color:var(--text-white); font-family:monospace; font-size:12px;"></textarea>`
+                : r.secrete
+                  ? `<input type="password" name="${escapeHtml(r.cle)}" placeholder="${r.presente ? 'Valeur déjà enregistrée — saisir pour remplacer, laisser vide pour conserver' : 'Non renseigné'}" autocomplete="new-password" />`
+                  : `<input type="text" name="${escapeHtml(r.cle)}" value="${escapeHtml(r.valeur || '')}" autocomplete="off" />`;
+            return `
+            <div class="form-group">
+              <label>${escapeHtml(r.label)} <span style="opacity:0.5; font-weight:400;">(${escapeHtml(r.cle)})</span></label>
+              ${champ}
+              <p class="form-hint" style="margin-top:6px;">${escapeHtml(r.aide)}${noteEffet}${r.secrete ? (r.presente ? ' 🔑 Valeur enregistrée.' : ' Aucune valeur enregistrée.') : ''}</p>
+            </div>`;
+          })
+          .join('')}
+      `
+        )
+        .join('')}
+      ${etat.service_account_email ? `<p class="form-hint" style="margin-bottom:12px;">Compte de service actif : <strong>${escapeHtml(etat.service_account_email)}</strong></p>` : ''}
+      <button type="submit" class="btn-primary">Enregistrer la configuration</button>
+    `;
+    form.dataset.secretes = JSON.stringify(etat.reglages.filter((r) => r.secrete).map((r) => r.cle));
+    form.dataset.cles = JSON.stringify(etat.reglages.map((r) => r.cle));
   };
 
   try {
@@ -571,17 +594,21 @@ async function initSiteConfigCard() {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const payload = {
-      GOOGLE_ADMIN_IMPERSONATE_EMAIL: form.GOOGLE_ADMIN_IMPERSONATE_EMAIL.value.trim(),
-      GOOGLE_GROUPS_DOMAIN: form.GOOGLE_GROUPS_DOMAIN.value.trim(),
-    };
-    // Clé JSON : champ vide = conserver l'existante (on n'envoie pas la clé).
-    const cleSaisie = form.GOOGLE_SERVICE_ACCOUNT_KEY_JSON.value.trim();
-    if (cleSaisie) payload.GOOGLE_SERVICE_ACCOUNT_KEY_JSON = cleSaisie;
+    const secretes = JSON.parse(form.dataset.secretes || '[]');
+    const cles = JSON.parse(form.dataset.cles || '[]');
+    const payload = {};
+    cles.forEach((cle) => {
+      const champ = form.elements[cle];
+      if (!champ) return;
+      const valeur = champ.value.trim();
+      // Champs secrets laissés vides = conserver la valeur existante (on
+      // n'envoie pas la clé) ; champs publics vides = effacer volontairement.
+      if (secretes.includes(cle) && !valeur) return;
+      payload[cle] = valeur;
+    });
 
     try {
       const etat = await Api.post('/api/admin/config', payload);
-      form.GOOGLE_SERVICE_ACCOUNT_KEY_JSON.value = '';
       afficherEtat(etat);
       msgEl.innerHTML = '';
       toast('Configuration enregistrée et appliquée.', 'success');
