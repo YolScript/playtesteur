@@ -170,6 +170,13 @@ if (schemaUsersActuel.includes('score_global BETWEEN 0 AND 100')) {
   db.exec('PRAGMA foreign_keys = ON;');
 }
 
+// Boost catalogue (boutique à points) : une app boostée passe en tête du
+// catalogue jusqu'à expiration.
+const colonnesApplicationsBoost = db.prepare('PRAGMA table_info(applications)').all().map((c) => c.name);
+if (!colonnesApplicationsBoost.includes('boost_expire_at')) {
+  db.exec('ALTER TABLE applications ADD COLUMN boost_expire_at TEXT');
+}
+
 // Avis saisi directement sur le site (remplace la vérification via l'API
 // Google Play Reviews, trop peu fiable : voir historique du projet).
 const colonnesHistorique = db.prepare('PRAGMA table_info(historique_tests)').all().map((c) => c.name);

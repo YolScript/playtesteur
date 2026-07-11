@@ -52,11 +52,12 @@ const suspendreHistoriqueApp = db.prepare(`UPDATE historique_tests SET statut = 
 router.get('/', requireAuth, (req, res) => {
   const isAdmin = req.session.role === 'administrator';
   let rows;
+  const boostActif = `(a.boost_expire_at IS NOT NULL AND a.boost_expire_at > datetime('now'))`;
   if (isAdmin) {
     rows = db
       .prepare(
         `SELECT a.* FROM applications a
-         ORDER BY a.mails_recrutes ASC, a.created_at ASC`
+         ORDER BY ${boostActif} DESC, a.mails_recrutes ASC, a.created_at ASC`
       )
       .all();
   } else {
@@ -72,7 +73,7 @@ router.get('/', requireAuth, (req, res) => {
                 WHERE h.application_id = a.id AND h.testeur_id = ? AND h.statut != 'En_Cours'
               )
             )
-         ORDER BY (a.developpeur_id = ?) DESC, a.mails_recrutes ASC, a.created_at ASC`
+         ORDER BY (a.developpeur_id = ?) DESC, ${boostActif} DESC, a.mails_recrutes ASC, a.created_at ASC`
       )
       .all(req.session.userId, req.session.userId, req.session.userId, req.session.userId);
   }
@@ -287,6 +288,34 @@ router.delete('/:id', requireAuth, (req, res) => {
   db.prepare('DELETE FROM applications WHERE id = ?').run(app.id);
   logActivity(req.session.userId, 'A supprimé une application', app.nom_application);
   res.json({ ok: true });
+});
+
+// Boutique : dépense des points pour faire passer son app en tête du
+// catalogue pendant 24h (priorité au-dessus des applis non boostées, avant
+// le tri habituel par nombre de testeurs recrutés).
+const COUT_BOOST = 15;
+const DUREE_BOOST_HEURES = 24;
+
+router.post('/:id/booster', requireAuth, (req, res) => {
+  const app = findAppById.get(req.params.id);
+  if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
+  if (app.developpeur_id !== req.session.userId) {
+    return res.status(403).json({ erreur: "Vous n'êtes pas le créateur de cette application." });
+  }
+
+  const user = findUserById.get(req.session.userId);
+  if (user.score_global < COUT_BOOST) {
+    return res.status(400).json({
+      erreur: `Pas assez de points : ${COUT_BOOST} requis, vous avez ${user.score_global}.`,
+    });
+  }
+
+  db.prepare('UPDATE users SET score_global = score_global - ? WHERE id = ?').run(COUT_BOOST, user.id);
+  db.prepare(`UPDATE applications SET boost_expire_at = datetime('now', '+${DUREE_BOOST_HEURES} hours') WHERE id = ?`).run(
+    app.id
+  );
+  logActivity(req.session.userId, 'A boosté une application', `${app.nom_application} — ${COUT_BOOST} points`);
+  res.json({ application: publicApplication(findAppById.get(app.id)) });
 });
 
 // Rejoindre le test d'une application. Deux cas :

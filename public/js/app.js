@@ -86,6 +86,8 @@ async function router() {
         return viewClassement();
       case 'mes-apps':
         return viewMesApps();
+      case 'boutique':
+        return viewBoutique();
       case 'app':
         return viewAppDetail(param);
       case 'editeur':
@@ -116,6 +118,7 @@ const NAV_ICONS = {
   editeur: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
   admin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3.5v6c0 5-3.4 8.9-8 10.5-4.6-1.6-8-5.5-8-10.5v-6L12 2z"/></svg>',
   tickets: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12zm-3-5H7v2h10v-2zm0-4H7v2h10V7z"/></svg>',
+  boutique: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6h-2c0-2.8-2.2-5-5-5S7 3.2 7 6H5c-1.1 0-2 .9-2 2l1.2 12.1c.1 1 1 1.9 2 1.9h11.6c1 0 1.9-.9 2-1.9L21 8c0-1.1-.9-2-2-2zm-7-3c1.7 0 3 1.3 3 3H9c0-1.7 1.3-3 3-3z"/></svg>',
 };
 
 function renderHeader() {
@@ -135,6 +138,7 @@ function renderHeader() {
     { route: 'catalogue', label: 'Catalogue' },
     { route: 'classement', label: 'Classement' },
     { route: 'mes-apps', label: 'Mes apps' },
+    { route: 'boutique', label: 'Boutique' },
     { route: 'dashboard', label: 'Compte' },
     { route: 'editeur', label: 'Éditeur' },
     { route: 'tickets', label: 'Support' },
@@ -1131,6 +1135,66 @@ function demarrerChat(appId) {
 /* ==========================================================================
    MES APPLICATIONS
    ========================================================================== */
+const COUT_BOOST_CATALOGUE = 15;
+
+async function viewBoutique() {
+  viewRoot.innerHTML = `<p class="page-subtitle">Chargement...</p>`;
+  const [{ user }, { applications }] = await Promise.all([Api.get('/api/profile'), Api.get('/api/apps/mine')]);
+
+  viewRoot.innerHTML = `
+    <h1 class="page-title">Boutique</h1>
+    <p class="page-subtitle">Échangez vos points contre de la visibilité : boostez une de vos applications en tête du catalogue pendant 24h.</p>
+    <div class="profile-card" style="padding:16px 20px; margin-bottom:20px;">
+      <div class="gauge-row"><span class="gauge-label">Vos points</span><span class="gauge-value">${user.score_global}</span></div>
+    </div>
+    <div class="section-title" style="margin-top:0;">Booster une application (${COUT_BOOST_CATALOGUE} points, 24h)</div>
+    <div id="boutique-grid" class="card-grid"></div>
+  `;
+
+  const grid = document.getElementById('boutique-grid');
+  if (applications.length === 0) {
+    grid.outerHTML = `<div class="empty-state"><div class="empty-icon">🛍️</div><p>Soumettez d'abord une application dans "Mes apps" pour pouvoir la booster.</p></div>`;
+    return;
+  }
+
+  grid.innerHTML = applications
+    .map((app) => {
+      const boostActif = app.boost_actif;
+      return `
+      <div class="app-card">
+        <div class="app-card-top">
+          <div class="app-logo">${app.logo_url ? `<img src="${escapeHtml(app.logo_url)}" alt="" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;">` : '📱'}</div>
+          <div>
+            <div class="app-card-title">${escapeHtml(app.nom_application)}</div>
+            ${boostActif ? '<span class="badge badge-valide">🚀 Boost actif</span>' : ''}
+          </div>
+        </div>
+        <p class="app-card-desc">${boostActif ? `En tête du catalogue jusqu'à ${escapeHtml(app.boost_expire_at)}.` : "Pas de boost actif : classée selon l'ordre normal du catalogue."}</p>
+        <div class="app-card-actions">
+          <button class="btn-primary btn-block" data-booster="${app.id}" ${boostActif || user.score_global < COUT_BOOST_CATALOGUE ? 'disabled' : ''}>
+            ${boostActif ? 'Déjà boostée' : `Booster (${COUT_BOOST_CATALOGUE} points)`}
+          </button>
+        </div>
+      </div>
+    `;
+    })
+    .join('');
+
+  grid.querySelectorAll('[data-booster]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await Api.post(`/api/apps/${btn.dataset.booster}/booster`);
+        toast('Application boostée pour 24h !', 'success');
+        viewBoutique();
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 async function viewMesApps() {
   viewRoot.innerHTML = `
     <h1 class="page-title">Mes applications</h1>

@@ -55,6 +55,8 @@ function publicApplication(app) {
     group_join_url: googleGroups.estGroupeGere(app.google_group_email)
       ? null
       : googleGroups.urlAdhesion(app.google_group_email),
+    boost_expire_at: app.boost_expire_at,
+    boost_actif: !!app.boost_expire_at && app.boost_expire_at > new Date().toISOString().slice(0, 19).replace('T', ' '),
     created_at: app.created_at,
   };
 }
