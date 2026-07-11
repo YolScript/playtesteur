@@ -313,6 +313,7 @@ async function viewDashboard() {
                 <span id="profile-pseudo-text">${escapeHtml(user.pseudo)}</span>
                 <button id="edit-pseudo-btn" style="background: none; border: none; cursor: pointer; padding: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.6; transition: opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Modifier le pseudo">✏️</button>
               </h2>
+              <span class="titre ${classeTitre(user.titre)}">${escapeHtml(user.titre.nom)}</span>
             </div>
             <div class="profile-email" id="profile-email-value">${user.masquer_infos ? '••••••••@••••••.•••' : escapeHtml(user.email)}</div>
           </div>
@@ -654,6 +655,11 @@ async function viewCatalogue() {
   });
 }
 
+// tier numérique (1-10) -> .titre-tier-N ; tier texte ('top1'/'admin'...) -> .titre-<tier>
+function classeTitre(titre) {
+  return typeof titre.tier === 'number' ? `titre-tier-${titre.tier}` : `titre-${titre.tier}`;
+}
+
 /* ==========================================================================
    CLASSEMENT DES TESTEURS
    ========================================================================== */
@@ -677,7 +683,7 @@ async function viewClassement() {
   container.innerHTML = `
     <div class="table-wrapper">
       <table>
-        <thead><tr><th>Rang</th><th>Testeur</th><th>Points</th><th>Applications testées</th><th>Jours consécutifs</th></tr></thead>
+        <thead><tr><th>Rang</th><th>Testeur</th><th>Titre</th><th>Points</th><th>Applications testées</th><th>Jours consécutifs</th></tr></thead>
         <tbody>
           ${classement
             .map(
@@ -685,6 +691,7 @@ async function viewClassement() {
             <tr>
               <td data-label="Rang" style="font-size:18px; font-weight:700;">${medailles[i] || `#${i + 1}`}</td>
               <td data-label="Testeur">${escapeHtml(u.pseudo)}</td>
+              <td data-label="Titre"><span class="titre ${classeTitre(u.titre)}">${escapeHtml(u.titre.nom)}</span></td>
               <td data-label="Points">${u.points}</td>
               <td data-label="Applications testées">${u.apps_testees}</td>
               <td data-label="Jours consécutifs">${u.jours_consecutifs > 0 ? `🔥 ${u.jours_consecutifs}` : '—'}</td>

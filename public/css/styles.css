@@ -480,6 +480,58 @@ button.mail-slot:hover { transform: scale(1.12); box-shadow: var(--shadow-md); }
 .badge-suspendu { background: rgba(255, 23, 68, 0.1); color: var(--color-danger); border: 1px solid rgba(255, 23, 68, 0.15); }
 
 /* ==========================================================================
+   TITRES (score, podium, admin) — effet visuel de plus en plus épique
+   ========================================================================== */
+.titre { font-weight: 700; font-size: 12px; letter-spacing: 0.3px; white-space: nowrap; }
+
+.titre-tier-1 { color: var(--text-muted); }
+.titre-tier-2 { color: var(--text-white); }
+.titre-tier-3 { color: var(--color-info); }
+.titre-tier-4 { color: var(--color-success); }
+.titre-tier-5 { color: #ffd60a; text-shadow: 0 0 6px rgba(255, 214, 10, 0.5); }
+.titre-tier-6 { color: #ff9100; text-shadow: 0 0 8px rgba(255, 145, 0, 0.6); }
+.titre-tier-7 { color: #d500f9; text-shadow: 0 0 8px rgba(213, 0, 249, 0.6); animation: titre-pulse 2.4s ease-in-out infinite; }
+.titre-tier-8 { color: #ff1744; text-shadow: 0 0 10px rgba(255, 23, 68, 0.7); animation: titre-pulse 1.8s ease-in-out infinite; }
+.titre-tier-9 {
+    background: linear-gradient(90deg, #00e676, #2979ff, #d500f9, #ff9100, #00e676);
+    background-size: 300% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: titre-gradient 5s linear infinite;
+}
+.titre-tier-10 {
+    background: linear-gradient(90deg, #ffd60a, #ff1744, #d500f9, #2979ff, #00e676, #ffd60a);
+    background-size: 300% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: titre-gradient 3s linear infinite, titre-pulse 1.6s ease-in-out infinite;
+    filter: drop-shadow(0 0 6px rgba(255, 214, 10, 0.5));
+}
+
+.titre-top3 { color: #cd7f32; text-shadow: 0 0 8px rgba(205, 127, 50, 0.6); font-size: 13px; }
+.titre-top2 { color: #c0c0c0; text-shadow: 0 0 10px rgba(192, 192, 192, 0.7); font-size: 13px; }
+.titre-top1 {
+    background: linear-gradient(90deg, #ffd60a, #fff3b0, #ffd60a);
+    background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: titre-gradient 2.5s linear infinite, titre-pulse 1.4s ease-in-out infinite;
+    filter: drop-shadow(0 0 8px rgba(255, 214, 10, 0.8));
+    font-size: 14px;
+}
+
+.titre-admin {
+    color: #18ffff;
+    text-shadow: 0 0 8px rgba(24, 255, 255, 0.7);
+    font-size: 13px;
+}
+
+@keyframes titre-gradient {
+    to { background-position: 300% 0; }
+}
+@keyframes titre-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.75; transform: scale(1.04); }
+}
+
+/* ==========================================================================
    CARDS D'APPLICATIONS
    ========================================================================== */
 .card-grid {

@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db/init');
 const { requireAuth } = require('../middleware/auth');
+const { calculerTitre } = require('../services/titres');
 
 const router = express.Router();
 
@@ -34,7 +35,7 @@ function calculerStreak(joursTries) {
 // Classement général des testeurs : apps testées + streak de jours
 // consécutifs, dérivés de l'historique des tests validés.
 router.get('/', requireAuth, (req, res) => {
-  const users = db.prepare('SELECT id, pseudo, avatar_url, score_global FROM users WHERE suspendu = 0').all();
+  const users = db.prepare('SELECT id, pseudo, avatar_url, score_global, role FROM users WHERE suspendu = 0').all();
 
   const joursParUser = db
     .prepare(
@@ -66,9 +67,16 @@ router.get('/', requireAuth, (req, res) => {
       apps_testees: nbMap[u.id] || 0,
       jours_consecutifs: calculerStreak(joursMap[u.id] || []),
       points: u.score_global,
+      role: u.role,
     }))
     .filter((u) => u.apps_testees > 0)
-    .sort((a, b) => b.apps_testees - a.apps_testees || b.jours_consecutifs - a.jours_consecutifs);
+    .sort((a, b) => b.apps_testees - a.apps_testees || b.jours_consecutifs - a.jours_consecutifs)
+    // Titre calculé après le tri : seuls les 3 premiers du classement
+    // (podium par tests réussis, pas par points) reçoivent le titre unique.
+    .map((u, i) => ({
+      ...u,
+      titre: calculerTitre({ score: u.points, role: u.role, rangClassement: i + 1 }),
+    }));
 
   res.json({ classement });
 });
