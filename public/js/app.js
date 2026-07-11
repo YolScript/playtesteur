@@ -138,7 +138,9 @@ function renderHeader() {
     { route: 'catalogue', label: 'Catalogue' },
     { route: 'classement', label: 'Classement' },
     { route: 'mes-apps', label: 'Mes apps' },
-    { route: 'boutique', label: 'Boutique' },
+    // Boutique = booster une application dans le catalogue : n'a de sens
+    // que pour un développeur qui en a déjà soumis au moins une.
+    ...(state.user.has_apps ? [{ route: 'boutique', label: 'Boutique' }] : []),
     { route: 'dashboard', label: 'Compte' },
     { route: 'editeur', label: 'Éditeur' },
     { route: 'tickets', label: 'Support' },
@@ -1444,6 +1446,11 @@ async function viewMesApps() {
       } else {
         await Api.post('/api/apps', payload);
         toast('Application créée, groupe de test généré.', 'success');
+        // Première app soumise -> fait apparaître le lien "Boutique" sans
+        // attendre un rechargement complet de la page.
+        const { user: refreshedUser } = await Api.get('/api/auth/me');
+        state.user = refreshedUser;
+        renderHeader();
       }
       submitCard.classList.add('hidden');
       chargerMesApps(ouvrirFormulaireEdition);

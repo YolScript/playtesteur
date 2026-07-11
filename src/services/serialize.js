@@ -1,6 +1,9 @@
+const db = require('../db/init');
 const { MAX_MAILS, scoreMinPour } = require('./scoring');
 const googleGroups = require('./googleGroups');
 const { calculerTitre } = require('./titres');
+
+const compterApplications = db.prepare('SELECT COUNT(*) AS n FROM applications WHERE developpeur_id = ?');
 
 // Version sûre d'un utilisateur enrichie des infos de palier utiles à
 // l'affichage de la jauge côté client.
@@ -27,6 +30,9 @@ function publicUser(user) {
     created_at: user.created_at,
     // Titre de score (podium non applicable hors contexte classement).
     titre: calculerTitre({ score: user.score_global, role: user.role }),
+    // Utilisé pour n'afficher la Boutique (boost catalogue) qu'aux
+    // développeurs ayant au moins une application soumise.
+    has_apps: compterApplications.get(user.id).n > 0,
   };
 }
 
