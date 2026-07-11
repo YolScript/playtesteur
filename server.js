@@ -7,7 +7,6 @@ const cron = require('node-cron');
 
 require('./src/db/init'); // initialise le schéma au démarrage
 const { runMidnightJob } = require('./src/jobs/midnightJob');
-const { runValidationJob } = require('./src/jobs/validationJob');
 
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
@@ -48,12 +47,6 @@ app.use((req, res) => {
 // Job de minuit : sanction d'inactivité + clôture des apps réciproques mortes.
 cron.schedule('0 0 * * *', () => {
   runMidnightJob();
-});
-
-// Vérifie automatiquement toutes les 15 minutes si des avis Play Store sont
-// apparus pour les tests en cours, sans que le testeur ait à cliquer.
-cron.schedule('*/15 * * * *', () => {
-  runValidationJob();
 });
 
 app.listen(PORT, () => {

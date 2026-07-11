@@ -712,7 +712,7 @@ async function viewClassement() {
    ========================================================================== */
 async function viewAppDetail(id) {
   viewRoot.innerHTML = `<p class="page-subtitle">Chargement...</p>`;
-  const { application: app, mon_historique } = await Api.get(`/api/apps/${id}`);
+  const { application: app, mon_historique, avis: avisTesteurs } = await Api.get(`/api/apps/${id}`);
 
   const estMonApp = state.user.id === app.developpeur_id;
   const dejaRejoint = !!mon_historique;
@@ -741,8 +741,17 @@ async function viewAppDetail(id) {
 
       ${estMonApp ? renderProprietaireBloc() : renderTesteurBloc(app, dejaRejoint, dejaValide)}
 
+      ${
+        estMonApp
+          ? `
+      <div class="section-title">Avis des testeurs</div>
+      <div id="app-avis">${renderAvisTesteurs(avisTesteurs)}</div>
+      `
+          : `
       <div class="section-title">Avis Play Store</div>
       <div id="app-avis"><p class="form-hint">Chargement des avis...</p></div>
+      `
+      }
 
       ${
         estMonApp || dejaRejoint
@@ -760,7 +769,7 @@ async function viewAppDetail(id) {
   `;
 
   document.getElementById('btn-back').addEventListener('click', () => history.back());
-  chargerAvisApp(app.id);
+  if (!estMonApp) chargerAvisApp(app.id);
 
   if (estMonApp || dejaRejoint) {
     demarrerChat(app.id);
@@ -784,20 +793,47 @@ async function viewAppDetail(id) {
         }
       });
     }
-    const validerBtn = document.getElementById('btn-valider');
-    if (validerBtn) {
-      validerBtn.addEventListener('click', async () => {
-        validerBtn.disabled = true;
-        validerBtn.textContent = 'Vérification de votre avis...';
+    const starsContainer = document.getElementById('avis-etoiles');
+    if (starsContainer) {
+      const noteInput = document.getElementById('avis-note-input');
+      const stars = Array.from(starsContainer.querySelectorAll('.avis-etoile'));
+      const setNote = (n) => stars.forEach((s, i) => (s.style.opacity = i < n ? '1' : '0.35'));
+      stars.forEach((s) => {
+        s.addEventListener('click', () => {
+          noteInput.value = s.dataset.note;
+          setNote(Number(s.dataset.note));
+        });
+        s.addEventListener('mouseenter', () => setNote(Number(s.dataset.note)));
+      });
+      starsContainer.addEventListener('mouseleave', () => setNote(Number(noteInput.value)));
+    }
+
+    const formAvis = document.getElementById('form-avis');
+    if (formAvis) {
+      formAvis.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const texte = formAvis.querySelector('[name="texte"]').value.trim();
+        const note = Number(formAvis.querySelector('[name="note"]').value);
+        if (texte.length < MIN_AVIS_LENGTH) {
+          document.getElementById('detail-msg').innerHTML = `<div class="form-error">Votre avis doit faire au moins ${MIN_AVIS_LENGTH} caractères.</div>`;
+          return;
+        }
+        if (!note) {
+          document.getElementById('detail-msg').innerHTML = `<div class="form-error">Merci de donner une note en cliquant sur les étoiles.</div>`;
+          return;
+        }
+        const submitBtn = formAvis.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Publication...';
         try {
-          const r = await Api.post(`/api/apps/${app.id}/valider`);
+          const r = await Api.post(`/api/apps/${app.id}/avis`, { texte, note });
           state.user = r.user;
-          toast('Test validé ! Mail actif mis à jour.', 'success');
+          toast('Avis publié ! Mail actif mis à jour.', 'success');
           viewAppDetail(id);
         } catch (err) {
           document.getElementById('detail-msg').innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
-          validerBtn.disabled = false;
-          validerBtn.textContent = 'Vérifier mon avis Play Store';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Publier mon avis';
         }
       });
     }
@@ -814,13 +850,15 @@ function urlInstallationApp(packageName) {
   return isAndroid ? `market://details?id=${id}` : `https://play.google.com/store/apps/details?id=${id}`;
 }
 
+const MIN_AVIS_LENGTH = 20;
+
 function renderTesteurBloc(app, dejaRejoint, dejaValide) {
   return `
     <div class="detail-steps">
       <div class="detail-step ${dejaRejoint ? 'done' : ''}"><span class="step-num">1</span>Rejoindre le groupe de test (accès Play Store débloqué)</div>
       <div class="detail-step ${dejaRejoint ? 'done' : ''}"><span class="step-num">2</span>Installer l'application depuis le Play Store</div>
-      <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">3</span>Laisser un avis avec votre pseudo Play Store</div>
-      <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">4</span>Vérification automatique &amp; gain du mail actif</div>
+      <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">3</span>Rédiger un avis constructif sur l'application</div>
+      <div class="detail-step ${dejaValide ? 'done' : ''}"><span class="step-num">4</span>Publication de l'avis &amp; gain du mail actif</div>
     </div>
     ${
       dejaRejoint && app.group_join_url
@@ -836,7 +874,25 @@ function renderTesteurBloc(app, dejaRejoint, dejaValide) {
       dejaValide
         ? `<p class="form-success">Test validé pour cette application. Elle ne réapparaîtra plus dans votre catalogue.</p>`
         : dejaRejoint
-        ? `<button class="btn-primary btn-block" id="btn-valider">Vérifier mon avis Play Store</button>`
+        ? `
+      <form id="form-avis">
+        <div class="form-group">
+          <label>Votre note</label>
+          <div id="avis-etoiles" style="font-size:28px; letter-spacing:6px; cursor:pointer; line-height:1;">
+            ${[1, 2, 3, 4, 5]
+              .map((n) => `<span class="avis-etoile" data-note="${n}" style="opacity:0.35;">★</span>`)
+              .join('')}
+          </div>
+          <input type="hidden" name="note" id="avis-note-input" value="0" />
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+          <label>Votre avis</label>
+          <textarea name="texte" rows="4" required placeholder="Rédigez un avis détaillé et constructif : ce qui fonctionne, ce qui bloque, vos suggestions..." style="width:100%; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:10px 14px; color:var(--text-white); font-family:var(--font-sans); resize:vertical;"></textarea>
+          <p class="form-hint">${MIN_AVIS_LENGTH} caractères minimum. Un avis constructif est attendu : les avis non constructifs, hors-sujet ou copiés-collés exposent à un avertissement.</p>
+        </div>
+        <button type="submit" class="btn-primary btn-block" style="margin-top:10px;">Publier mon avis</button>
+      </form>
+    `
         : `<button class="btn-primary btn-block" id="btn-join">Rejoindre le test</button>`
     }
   `;
@@ -844,6 +900,26 @@ function renderTesteurBloc(app, dejaRejoint, dejaValide) {
 
 function renderProprietaireBloc() {
   return `<p class="form-hint">C'est votre application. Rendez-vous sur "Mes applications" pour suivre son recrutement.</p>`;
+}
+
+// Avis saisis sur le site par les testeurs (remplace l'aperçu Play Store,
+// non fiable, pour le propriétaire de l'application).
+function renderAvisTesteurs(avis) {
+  if (!avis || avis.length === 0) {
+    return `<p class="form-hint">Aucun avis pour le moment.</p>`;
+  }
+  return avis
+    .map(
+      (a) => `
+        <div style="padding:12px 0; border-bottom:1px solid var(--border-color);">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <strong style="font-size:13px;">${escapeHtml(a.pseudo)}</strong>
+            <span style="color:var(--color-warning); font-size:13px;">${etoiles(a.note)}</span>
+          </div>
+          <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">${escapeHtml(a.texte)}</p>
+        </div>`
+    )
+    .join('');
 }
 
 function youtubeEmbedUrl(url) {

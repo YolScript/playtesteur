@@ -1,10 +1,13 @@
-// Service de validation des tests via l'API Google Play Developer Reporting
-// (Android Publisher API v3 - reviews.list).
+// Intégration Play Console (Android Publisher API v3) pour l'import de
+// fiche d'application et l'aperçu des avis publics existants — pas pour la
+// validation des tests, qui se fait désormais via un avis saisi directement
+// sur le site (voir services/validation.js : Google filtre silencieusement
+// les avis liés à un programme de récompense, la détection automatique via
+// reviews.list n'était pas fiable).
 //
-// Nécessite que le package soit publié (piste de test fermé) et que le compte
-// de service ait accès dans Play Console. Sans configuration, bascule en
-// MODE DEV : la validation d'un avis est simulée (acceptée immédiatement)
-// pour permettre de tester tout le parcours de gamification sans Play Console.
+// Nécessite que le package soit publié et que le compte de service ait
+// accès dans Play Console. Sans configuration, bascule en MODE DEV (import
+// de fiche simulé) pour permettre de tester sans Play Console.
 const { resoudreCredentials } = require('./googleCredentials');
 
 // Configuration résolue À CHAQUE APPEL (avec cache invalidé quand elle
@@ -34,7 +37,7 @@ function resoudreConfig() {
     androidpublisher = google.androidpublisher({ version: 'v3', auth: authClient });
     avertissementDevAffiche = false;
   } else if (!avertissementDevAffiche) {
-    console.warn('[playReviews] MODE DEV actif : clé Play Console absente, validation des avis simulée.');
+    console.warn('[playReviews] MODE DEV actif : clé Play Console absente, import de fiche simulé.');
     avertissementDevAffiche = true;
   }
 
@@ -45,44 +48,6 @@ function resoudreConfig() {
     serviceAccountEmail: credentials?.client_email || null,
   };
   return cacheConfig;
-}
-
-// Cherche, parmi les avis publics de l'application, un commentaire dont
-// l'auteur correspond au pseudo Play Store du testeur. Retourne
-// { reviewId, totalVus } — reviewId est null si aucun avis correspondant
-// n'est détecté. totalVus (nombre d'avis renvoyés par l'API, tous auteurs
-// confondus) permet de distinguer « Google n'a renvoyé aucun avis pour
-// cette app » (délai d'indexation, app trop récente) de « des avis existent
-// mais aucun ne correspond au pseudo » (pseudo mal renseigné) — les deux
-// cas produisaient le même message opaque "avis non trouvé".
-async function trouverAvisDuTesteur(packageName, pseudoPlayStore) {
-  if (!pseudoPlayStore) return { reviewId: null, totalVus: 0 };
-
-  const { devMode, androidpublisher } = resoudreConfig();
-  if (devMode) {
-    // Simulation : on considère l'avis trouvé instantanément.
-    return { reviewId: `dev-review-${Date.now()}`, totalVus: 1 };
-  }
-
-  const pseudoNormalise = pseudoPlayStore.trim().toLowerCase();
-  let pageToken;
-  let totalVus = 0;
-  do {
-    const res = await androidpublisher.reviews.list({
-      packageName,
-      maxResults: 100,
-      token: pageToken,
-    });
-    const reviews = res.data.reviews || [];
-    totalVus += reviews.length;
-    const match = reviews.find(
-      (r) => (r.authorName || '').trim().toLowerCase() === pseudoNormalise
-    );
-    if (match) return { reviewId: match.reviewId, totalVus };
-    pageToken = res.data.tokenPagination?.nextPageToken;
-  } while (pageToken);
-
-  return { reviewId: null, totalVus };
 }
 
 const LOCALES_PREFEREES = ['fr-FR', 'en-US'];
@@ -210,7 +175,6 @@ module.exports = {
   get serviceAccountEmail() {
     return resoudreConfig().serviceAccountEmail;
   },
-  trouverAvisDuTesteur,
   importerFicheApp,
   listerAvis,
 };

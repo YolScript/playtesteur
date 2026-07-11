@@ -1,13 +1,19 @@
-// Logique de validation d'un test (partagée entre la route manuelle
-// "Vérifier mon avis Play Store" et le job de vérification automatique).
+// Logique de validation d'un test : l'avis est saisi directement sur le
+// site (et non vérifié via l'API Google Play Reviews — abandonné après
+// investigation : Google filtre silencieusement les avis liés à un
+// programme de récompense, l'avis testeur n'apparaissait même pas côté
+// Play Console après plusieurs jours). La qualité de l'avis (constructif,
+// pas de spam) est contrôlée a posteriori par les administrateurs via le
+// système d'avertissement existant, pas bloquée à la soumission.
 const db = require('../db/init');
-const playReviews = require('./playReviews');
 const { applyDailyTestGain } = require('./scoring');
 const { logActivity } = require('./activityLog');
 
+const MIN_AVIS_LENGTH = 20;
+
 const findUserById = db.prepare('SELECT * FROM users WHERE id = ?');
 const completerHistorique = db.prepare(
-  `UPDATE historique_tests SET statut = 'Complété', date_action = datetime('now') WHERE id = ?`
+  `UPDATE historique_tests SET statut = 'Complété', date_action = datetime('now'), avis_texte = ?, avis_note = ? WHERE id = ?`
 );
 const incrementerMailsApp = db.prepare(
   'UPDATE applications SET mails_recrutes = mails_recrutes + 1 WHERE id = ?'
@@ -26,19 +32,20 @@ const appliquerGainQuotidien = db.prepare(
 );
 const marquerDateTestSansGain = db.prepare("UPDATE users SET derniere_date_test = datetime('now') WHERE id = ?");
 
-// Tente de valider un test en cours en interrogeant l'API Play Reviews.
-// Retourne { valide: false, raison } ou { valide: true, reviewId, user }.
-async function tenterValiderTest(historique, app, user) {
-  if (!user.pseudo_play_store) {
-    return { valide: false, raison: 'pseudo_manquant' };
+// Valide un test en cours à partir d'un avis saisi sur le site.
+// Retourne { valide: false, raison } ou { valide: true, user }.
+async function validerAvis(historique, app, user, texte, note) {
+  const texteNormalise = (texte || '').trim();
+  if (texteNormalise.length < MIN_AVIS_LENGTH) {
+    return { valide: false, raison: 'avis_trop_court' };
   }
 
-  const { reviewId, totalVus } = await playReviews.trouverAvisDuTesteur(app.package_name, user.pseudo_play_store);
-  if (!reviewId) {
-    return { valide: false, raison: 'avis_non_trouve', totalVus };
+  const noteNum = Number(note);
+  if (!Number.isInteger(noteNum) || noteNum < 1 || noteNum > 5) {
+    return { valide: false, raison: 'note_invalide' };
   }
 
-  completerHistorique.run(historique.id);
+  completerHistorique.run(texteNormalise, noteNum, historique.id);
   incrementerMailsApp.run(app.id);
   marquerAppComplete.run(app.id);
 
@@ -55,9 +62,12 @@ async function tenterValiderTest(historique, app, user) {
     appliquerGainQuotidien.run(gain.score_global, gain.mails_debloques, user.id);
   }
 
-  logActivity(user.id, 'Test validé (avis Play Store détecté)', app.nom_application);
+  console.log(
+    `[avis] "${app.nom_application}" note ${noteNum}/5 par ${user.pseudo} (user #${user.id}) — ${texteNormalise.length} caractères.`
+  );
+  logActivity(user.id, 'Avis publié sur PlayTesteur', `${app.nom_application} — ${noteNum}/5`);
 
-  return { valide: true, reviewId, user: findUserById.get(user.id) };
+  return { valide: true, user: findUserById.get(user.id) };
 }
 
-module.exports = { tenterValiderTest };
+module.exports = { validerAvis, MIN_AVIS_LENGTH };

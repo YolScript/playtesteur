@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { publicApplication, publicUser } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
 const playReviews = require('../services/playReviews');
-const { tenterValiderTest } = require('../services/validation');
+const { validerAvis, MIN_AVIS_LENGTH } = require('../services/validation');
 const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
@@ -21,6 +21,13 @@ const findHistorique = db.prepare(
 const insertHistorique = db.prepare(
   `INSERT INTO historique_tests (testeur_id, application_id, statut) VALUES (?, ?, 'En_Cours')`
 );
+const findAvisApp = db.prepare(`
+  SELECT h.avis_texte AS texte, h.avis_note AS note, h.date_action, u.pseudo
+  FROM historique_tests h
+  JOIN users u ON u.id = h.testeur_id
+  WHERE h.application_id = ? AND h.statut = 'Complété' AND h.avis_texte IS NOT NULL
+  ORDER BY h.date_action DESC
+`);
 
 // Catalogue public : toutes les apps en recrutement, hors mes propres apps et
 // hors apps déjà testées avec succès ou définitivement rejetées (anti-doublon).
@@ -67,9 +74,12 @@ router.get('/:id', requireAuth, (req, res) => {
   if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
 
   const historique = findHistorique.get(req.session.userId, app.id);
+  const estMonApp = app.developpeur_id === req.session.userId;
   res.json({
     application: publicApplication(app),
     mon_historique: historique ? { statut: historique.statut, date_action: historique.date_action } : null,
+    // Avis des testeurs saisis sur le site, visibles par le propriétaire de l'app uniquement.
+    avis: estMonApp ? findAvisApp.all(app.id) : undefined,
   });
 });
 
@@ -244,9 +254,13 @@ router.post('/:id/join', requireAuth, async (req, res) => {
   }
 });
 
-// Valide le test quotidien : interroge l'API Google Play Reviews à la
-// recherche d'un avis laissé par le pseudo Play Store du testeur.
-router.post('/:id/valider', requireAuth, async (req, res) => {
+// Valide le test quotidien à partir d'un avis saisi directement sur le site
+// (texte + note). Remplace l'ancienne vérification via l'API Google Play
+// Reviews : Google filtre silencieusement les avis liés à un programme de
+// récompense, ce qui rendait la détection automatique non fiable. La
+// qualité de l'avis (constructif, pas de spam) est contrôlée a posteriori
+// par les administrateurs, pas bloquée ici au-delà d'une longueur minimale.
+router.post('/:id/avis', requireAuth, async (req, res) => {
   const app = findAppById.get(req.params.id);
   if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
 
@@ -255,24 +269,22 @@ router.post('/:id/valider', requireAuth, async (req, res) => {
     return res.status(400).json({ erreur: "Vous n'avez pas de test en cours pour cette application." });
   }
 
+  const { texte, note } = req.body || {};
   const user = findUserById.get(req.session.userId);
 
   try {
-    const result = await tenterValiderTest(historique, app, user);
+    const result = await validerAvis(historique, app, user, texte, note);
     if (!result.valide) {
-      if (result.raison === 'pseudo_manquant') {
-        return res.status(400).json({ erreur: "Renseignez d'abord votre pseudo Play Store dans votre profil." });
-      }
       const erreur =
-        result.totalVus > 0
-          ? `Google nous a renvoyé ${result.totalVus} avis récent(s) pour cette application, mais aucun n'est associé au pseudo "${user.pseudo_play_store}". Vérifiez l'orthographe exacte (majuscules incluses) de votre pseudo Play Store dans votre profil : il doit correspondre au nom affiché publiquement sur votre avis.`
-          : "Google n'a renvoyé aucun avis pour cette application pour le moment. Si vous venez de le publier, réessayez dans 24-48h : Google met du temps à indexer les avis récents côté API, même s'ils sont déjà visibles publiquement.";
-      return res.status(404).json({ erreur });
+        result.raison === 'note_invalide'
+          ? 'Merci de donner une note de 1 à 5 étoiles.'
+          : `Votre avis doit être plus détaillé (${MIN_AVIS_LENGTH} caractères minimum) pour être constructif.`;
+      return res.status(400).json({ erreur });
     }
-    res.json({ ok: true, reviewId: result.reviewId, user: publicUser(result.user) });
+    res.json({ ok: true, user: publicUser(result.user) });
   } catch (err) {
-    console.error('[apps.valider]', err);
-    res.status(500).json({ erreur: "Impossible de vérifier l'avis pour le moment." });
+    console.error('[apps.avis]', err);
+    res.status(500).json({ erreur: "Impossible d'enregistrer votre avis pour le moment." });
   }
 });
 

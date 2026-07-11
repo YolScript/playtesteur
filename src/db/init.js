@@ -119,6 +119,16 @@ if (!colonnesUsers.includes('masquer_infos')) {
   db.exec('ALTER TABLE users ADD COLUMN masquer_infos INTEGER NOT NULL DEFAULT 0');
 }
 
+// Avis saisi directement sur le site (remplace la vérification via l'API
+// Google Play Reviews, trop peu fiable : voir historique du projet).
+const colonnesHistorique = db.prepare('PRAGMA table_info(historique_tests)').all().map((c) => c.name);
+if (!colonnesHistorique.includes('avis_texte')) {
+  db.exec('ALTER TABLE historique_tests ADD COLUMN avis_texte TEXT');
+}
+if (!colonnesHistorique.includes('avis_note')) {
+  db.exec('ALTER TABLE historique_tests ADD COLUMN avis_note INTEGER CHECK (avis_note BETWEEN 1 AND 5)');
+}
+
 // Table des messages de discussion des tickets
 db.exec(`
 CREATE TABLE IF NOT EXISTS ticket_messages (
