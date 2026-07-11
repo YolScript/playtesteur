@@ -6,6 +6,7 @@ const googleGroups = require('../services/googleGroups');
 const playReviews = require('../services/playReviews');
 const { validerAvis, MIN_AVIS_LENGTH } = require('../services/validation');
 const { logActivity } = require('../services/activityLog');
+const push = require('../services/pushNotifications');
 
 const router = express.Router();
 
@@ -224,6 +225,7 @@ router.post('/', requireAuth, async (req, res) => {
 
     const app = findAppById.get(appId);
     logActivity(req.session.userId, 'A soumis une application', nom_application.trim());
+    push.notifierNouvelleApplication(nom_application.trim()).catch((err) => console.error('[push]', err.message));
     res.status(201).json({ application: publicApplication(app) });
   } catch (err) {
     console.error('[apps.create]', err);

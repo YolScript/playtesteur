@@ -262,6 +262,60 @@ function showFormError(message) {
 }
 
 /* ==========================================================================
+   NOTIFICATIONS PUSH (Web Push : nouvelle app pour tous, nouvel
+   utilisateur pour les admins uniquement)
+   ========================================================================== */
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+async function afficherStatutNotifications() {
+  const container = document.getElementById('push-notif-row');
+  if (!container) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    container.innerHTML = `<p class="form-hint">Notifications push non supportées par ce navigateur.</p>`;
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    container.innerHTML = `<p class="form-hint">Notifications bloquées — autorisez-les dans les réglages de votre navigateur pour ce site si vous les voulez.</p>`;
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) {
+      container.innerHTML = `<p class="form-hint">🔔 Notifications activées sur cet appareil.</p>`;
+      return;
+    }
+    container.innerHTML = `<button type="button" class="btn-secondary" id="btn-activer-notifs">🔔 Activer les notifications</button>`;
+    document.getElementById('btn-activer-notifs').addEventListener('click', async () => {
+      try {
+        const { publicKey } = await Api.get('/api/push/vapid-public-key');
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          toast('Notifications refusées.', 'error');
+          return;
+        }
+        const sub = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+        await Api.post('/api/push/subscribe', { subscription: sub.toJSON() });
+        toast('Notifications activées !', 'success');
+        afficherStatutNotifications();
+      } catch (err) {
+        toast("Impossible d'activer les notifications.", 'error');
+      }
+    });
+  } catch (err) {
+    container.innerHTML = '';
+  }
+}
+
+/* ==========================================================================
    DASHBOARD
    ========================================================================== */
 async function viewDashboard() {
@@ -327,6 +381,8 @@ async function viewDashboard() {
         <input type="checkbox" id="masquer-infos-toggle" ${user.masquer_infos ? 'checked' : ''}>
         <span>Masquer mes informations personnelles (visuel uniquement, aussi masqué pour l'admin)</span>
       </label>
+
+      <div id="push-notif-row" style="margin-top:10px;"></div>
 
       <div class="gauges-grid">
         <div>
@@ -425,6 +481,8 @@ async function viewDashboard() {
       }
     });
   });
+
+  afficherStatutNotifications();
 
   document.getElementById('masquer-infos-toggle').addEventListener('change', async (e) => {
     const masquer = e.target.checked;

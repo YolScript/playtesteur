@@ -3,6 +3,7 @@ const db = require('../db/init');
 const { publicUser } = require('../services/serialize');
 const googleAuth = require('../services/googleAuth');
 const { logActivity } = require('../services/activityLog');
+const push = require('../services/pushNotifications');
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ function connecterOuCreer(profile) {
     return findById.get(existant.id);
   }
   const info = insertUser.run(profile.pseudo, profile.email, profile.googleId, profile.avatarUrl, profile.pseudo);
+  push.notifierNouvelUtilisateur(profile.pseudo).catch((err) => console.error('[push]', err.message));
   return findById.get(info.lastInsertRowid);
 }
 
