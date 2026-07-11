@@ -99,6 +99,32 @@ router.post('/masquer-infos', requireAuth, (req, res) => {
   res.json({ user: enrichirUser(findById.get(req.session.userId)) });
 });
 
+// Coût en points des exports de l'éditeur (photo/GIF/vidéo). Le serveur
+// décide du coût à partir du type déclaré (jamais du montant fourni par le
+// client) et débite le score avant que l'export local (canvas/ffmpeg.wasm)
+// ne démarre.
+const COUTS_EXPORT_EDITEUR = { photo: 2, gif: 5, video: 10 };
+const depenserPoints = db.prepare('UPDATE users SET score_global = score_global - ? WHERE id = ?');
+
+router.post('/depenser-points-export', requireAuth, (req, res) => {
+  const { type } = req.body || {};
+  const cout = COUTS_EXPORT_EDITEUR[type];
+  if (!cout) {
+    return res.status(400).json({ erreur: "Type d'export invalide." });
+  }
+
+  const user = findById.get(req.session.userId);
+  if (user.score_global < cout) {
+    return res.status(400).json({
+      erreur: `Pas assez de points pour cet export : ${cout} requis, vous avez ${user.score_global}.`,
+    });
+  }
+
+  depenserPoints.run(cout, user.id);
+  logActivity(req.session.userId, 'A exporté un média (éditeur)', `${type} — ${cout} points dépensés`);
+  res.json({ user: enrichirUser(findById.get(req.session.userId)) });
+});
+
 // Modification visuelle du pseudo par l'utilisateur
 router.post('/pseudo', requireAuth, (req, res) => {
   const pseudo = req.body?.pseudo?.trim();

@@ -3458,9 +3458,23 @@ function bindEditorInputs() {
     cropOverlayToggle.addEventListener('change', mettreAJourOverlayZoneCapture);
   }
 
-  exportPngBtn.addEventListener('click', exportEditeurPng);
-  exportMp4Btn.addEventListener('click', exportEditeurMp4);
-  if (exportGifBtn) exportGifBtn.addEventListener('click', exportEditeurGif);
+  exportPngBtn.addEventListener('click', () => tenterExportPaye('photo', exportEditeurPng));
+  exportMp4Btn.addEventListener('click', () => tenterExportPaye('video', exportEditeurMp4));
+  if (exportGifBtn) exportGifBtn.addEventListener('click', () => tenterExportPaye('gif', exportEditeurGif));
+}
+
+// Coût en points (2 photo / 5 GIF / 10 vidéo) débité côté serveur avant de
+// lancer le rendu local (canvas / ffmpeg.wasm) — le serveur décide du coût,
+// jamais le client, pour ne pas pouvoir être contourné.
+async function tenterExportPaye(type, fonctionExport) {
+  try {
+    const { user } = await Api.post('/api/profile/depenser-points-export', { type });
+    if (typeof state !== 'undefined') state.user = user;
+    toast(`Export lancé (${{ photo: 2, gif: 5, video: 10 }[type]} points dépensés).`, 'success');
+    await fonctionExport();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 // Superpose sur l'aperçu 16:9 un cadre indiquant la zone gardée par

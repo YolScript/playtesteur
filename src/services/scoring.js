@@ -42,6 +42,10 @@ function isSameCalendarDay(isoA, isoB) {
 
 // Applique le gain d'un test quotidien validé (installation + avis détecté).
 // Retourne le nouvel état { score_global, mails_debloques, mailGagne }.
+// score_global n'est PLUS plafonné à MAX_SCORE une fois ce seuil dépassé :
+// les 12 mails sont déjà acquis à ce stade (palierMaxMails plafonne à
+// MAX_MAILS de toute façon), le score continue de grimper sans limite pour
+// le classement et pour financer les dépenses de points (éditeur, boutique).
 function applyDailyTestGain(user, nowIso) {
   const dejaFaitAujourdhui = isSameCalendarDay(user.derniere_date_test, nowIso);
   if (dejaFaitAujourdhui) {
@@ -51,7 +55,7 @@ function applyDailyTestGain(user, nowIso) {
       mailGagne: false,
     };
   }
-  const score_global = clamp(Math.round(user.score_global + POINTS_PER_DAILY_TEST), 0, MAX_SCORE);
+  const score_global = Math.max(0, Math.round(user.score_global + POINTS_PER_DAILY_TEST));
   const mails_debloques = clamp(user.mails_debloques + 1, 0, MAX_MAILS);
   return { score_global, mails_debloques, mailGagne: true };
 }
