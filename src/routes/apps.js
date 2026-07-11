@@ -38,9 +38,6 @@ const findTesteursApp = db.prepare(`
   ORDER BY h.date_rejoint DESC
 `);
 const suspendreHistoriqueApp = db.prepare(`UPDATE historique_tests SET statut = 'Suspendu' WHERE id = ?`);
-const decrementerMailsAppRetrait = db.prepare(
-  'UPDATE applications SET mails_recrutes = MAX(0, mails_recrutes - 1) WHERE id = ?'
-);
 
 // Catalogue public : toutes les apps en recrutement, hors apps déjà testées
 // avec succès ou définitivement rejetées (anti-doublon). Une app avec un
@@ -374,8 +371,10 @@ router.get('/:id/testeurs', requireAuth, (req, res) => {
   res.json({ testeurs });
 });
 
-// Retire un testeur du test (accès Google Group révoqué, slot libéré si le
-// test était complété). Réservé au propriétaire de l'application.
+// Retire un testeur dont le test n'est pas encore validé (accès Google
+// Group révoqué). Réservé au propriétaire de l'application. Un test déjà
+// validé ne peut plus être retiré : le testeur a rempli sa part, la
+// récompense obtenue reste acquise.
 router.post('/:id/testeurs/:testeurId/retirer', requireAuth, async (req, res) => {
   const app = findAppById.get(req.params.id);
   if (!app) return res.status(404).json({ erreur: 'Application introuvable.' });
@@ -387,14 +386,14 @@ router.post('/:id/testeurs/:testeurId/retirer', requireAuth, async (req, res) =>
   if (!historique || historique.statut === 'Suspendu') {
     return res.status(400).json({ erreur: 'Ce testeur ne fait déjà plus partie du test.' });
   }
+  if (historique.statut === 'Complété') {
+    return res.status(400).json({ erreur: 'Ce test est déjà validé : le testeur ne peut plus être retiré.' });
+  }
 
   const testeur = findUserById.get(req.params.testeurId);
 
   try {
     suspendreHistoriqueApp.run(historique.id);
-    if (historique.statut === 'Complété') {
-      decrementerMailsAppRetrait.run(app.id);
-    }
     if (app.google_group_email && testeur) {
       try {
         await googleGroups.retirerMembre(app.google_group_email, testeur.email);

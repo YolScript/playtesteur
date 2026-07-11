@@ -1041,7 +1041,7 @@ async function chargerTesteursApp(appId) {
                 <td data-label="Dernière action">${tempsRelatif(t.derniere_action)}</td>
                 <td data-label="Statut">${BADGE_HISTORIQUE[t.statut] || t.statut}</td>
                 <td data-label="">${
-                  t.statut !== 'Suspendu'
+                  t.statut === 'En_Cours'
                     ? `<button class="btn-secondary" data-retirer="${t.testeur_id}">Retirer</button>`
                     : ''
                 }</td>
