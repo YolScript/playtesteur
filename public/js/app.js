@@ -332,32 +332,6 @@ async function viewDashboard() {
       </div>
     </div>
 
-    <div class="section-title">Détail des mails débloqués</div>
-    ${
-      mails.length === 0
-        ? `<div class="empty-state" style="padding:30px 20px;"><div class="empty-icon">📭</div><p>Aucun mail débloqué pour le moment. Testez une application pour en obtenir un !</p></div>`
-        : `<div class="mails-detail-list">
-            ${mails.map((m, i) => {
-              const statusIcon = m.statut_visuel === 'vert' ? '🟢' : m.statut_visuel === 'orange' ? '🟠' : '🔴';
-              const statusText = m.statut_visuel === 'vert' ? 'Actif' : m.statut_visuel === 'orange' ? 'À risque' : 'Retiré';
-              const emailDisplay = user.masquer_infos ? '••••••••@••••••.•••' : escapeHtml(m.google_group_email || '—');
-              return `
-                <div class="mail-detail-row ${m.statut_visuel}">
-                  <div class="mail-detail-num">${i + 1}</div>
-                  <div class="mail-detail-info">
-                    <div class="mail-detail-app">
-                      <span class="mail-detail-app-name">${escapeHtml(m.nom_application)}</span>
-                      <span class="mail-detail-status">${statusIcon} ${statusText}</span>
-                    </div>
-                    <div class="mail-detail-email" ${!user.masquer_infos && m.google_group_email ? `data-copy-detail-mail="${escapeHtml(m.google_group_email)}" title="Cliquer pour copier"` : ''}>${emailDisplay}</div>
-                    ${m.group_join_url ? `<a href="${escapeHtml(m.group_join_url)}" target="_blank" rel="noopener" class="form-hint" style="text-decoration:underline;">👥 Rejoindre le groupe Google (si pas encore fait)</a>` : ''}
-                    <div class="mail-detail-date">Rejoint ${tempsRelatif(m.date_rejoint)}</div>
-                  </div>
-                </div>`;
-            }).join('')}
-          </div>`
-    }
-
     <div class="section-title">Pseudo Google Play Store</div>
     <div class="profile-card" style="padding:20px;">
       <div class="form-group" style="margin-bottom:0;">
@@ -423,20 +397,6 @@ async function viewDashboard() {
         toast('Adresse indisponible pour ce mail.', 'error');
         return;
       }
-      try {
-        await navigator.clipboard.writeText(email);
-        toast('Adresse copiée dans le presse-papier.', 'success');
-      } catch (err) {
-        toast("Impossible de copier l'adresse.", 'error');
-      }
-    });
-  });
-
-  document.querySelectorAll('[data-copy-detail-mail]').forEach((el) => {
-    el.style.cursor = 'pointer';
-    el.addEventListener('click', async () => {
-      const email = el.dataset.copyDetailMail;
-      if (!email) return;
       try {
         await navigator.clipboard.writeText(email);
         toast('Adresse copiée dans le presse-papier.', 'success');
