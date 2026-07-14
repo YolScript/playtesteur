@@ -1261,6 +1261,41 @@ function allerAuSegment(predicate) {
   }
 }
 
+// Recale audioEl/voiceEl sur l'horloge visuelle de la timeline. audioEl
+// boucle (loop=true) : on ramène `temps` dans sa propre durée avec un
+// modulo pour retomber sur le bon point du cycle. voiceEl ne boucle pas :
+// une fois sa durée dépassée on le met en pause plutôt que de le laisser
+// dériver. Le seuil de 0.15s évite de re-seeker à chaque frame (ce qui
+// saccaderait la lecture) tout en corrigant toute dérive perceptible.
+function synchroniserAudioSurTimeline(temps) {
+  const audio = EditorState.audioEl;
+  if (audio) {
+    const base = EditorState.audioTrimStart || 0;
+    const duree = audio.duration;
+    const cible = isFinite(duree) && duree > 0 ? base + (temps % duree) : base + temps;
+    if (Math.abs(audio.currentTime - cible) > 0.15) audio.currentTime = cible;
+  }
+  const voice = EditorState.voiceEl;
+  if (voice) {
+    const duree = voice.duration;
+    if (isFinite(duree) && duree > 0 && temps >= duree) {
+      if (!voice.paused) voice.pause();
+    } else if (Math.abs(voice.currentTime - temps) > 0.15) {
+      voice.currentTime = temps;
+    }
+  }
+}
+
+// Le bouton pause et la fin de timeline ne coupaient jamais audioEl ni
+// voiceEl : ils continuaient de jouer (et audioEl, en boucle) en arrière-
+// plan, indépendamment de l'horloge visuelle — d'où le décalage constaté
+// et le son qui tournait en boucle après la fin de la lecture.
+function mettreEnPauseMediaEditeur() {
+  if (EditorState.audioEl) EditorState.audioEl.pause();
+  if (EditorState.voiceEl) EditorState.voiceEl.pause();
+  if (EditorState.bgVideoEl) EditorState.bgVideoEl.pause();
+}
+
 function avancerPlayback(dureeTotale) {
   const now = performance.now();
   if (EditorState.playback.playing) {
@@ -1270,9 +1305,11 @@ function avancerPlayback(dureeTotale) {
       if (EditorState.playback.currentTime >= dureeTotale) {
         EditorState.playback.currentTime = dureeTotale > 0 ? dureeTotale - 0.001 : 0;
         EditorState.playback.playing = false;
+        mettreEnPauseMediaEditeur();
       }
     }
     EditorState.playback.lastFrameTs = now;
+    if (EditorState.playback.playing) synchroniserAudioSurTimeline(EditorState.playback.currentTime);
   } else {
     EditorState.playback.lastFrameTs = null;
   }
@@ -1303,19 +1340,24 @@ function bindTimelineControls() {
       if (EditorState.audioCtx && EditorState.audioCtx.state === 'suspended') {
         await EditorState.audioCtx.resume().catch(() => {});
       }
+      synchroniserAudioSurTimeline(EditorState.playback.currentTime);
       if (EditorState.audioEl) EditorState.audioEl.play().catch(() => {});
       if (EditorState.voiceEl) EditorState.voiceEl.play().catch(() => {});
       if (EditorState.bgVideoEl) EditorState.bgVideoEl.play().catch(() => {});
+    } else {
+      mettreEnPauseMediaEditeur();
     }
   });
 
   scrubber.addEventListener('pointerdown', () => {
     EditorState._scrubbing = true;
     EditorState.playback.playing = false;
+    mettreEnPauseMediaEditeur();
   });
   scrubber.addEventListener('input', (e) => {
     const { dureeTotale } = calculerTimeline();
     EditorState.playback.currentTime = (Number(e.target.value) / 100) * dureeTotale;
+    synchroniserAudioSurTimeline(EditorState.playback.currentTime);
   });
   ['pointerup', 'pointercancel'].forEach((evtName) => {
     scrubber.addEventListener(evtName, () => {
@@ -1411,6 +1453,7 @@ async function initMoteur3D(canvas) {
     width,
     height,
     distance,
+    bgDepth,
     bgMesh,
     bgTexture: null,
     bgSourceEl: null,
@@ -2159,6 +2202,38 @@ function mettreAJourMediasSuperposes(segmentActif, tGlobal) {
     if (key.startsWith('photo-extra-particles-') && !actifs.some((sm) => `photo-extra-particles-${sm.id}` === key)) {
       EditorState.three.particleSystems[key].points.visible = false;
     }
+  });
+}
+
+// Tous les calques vidéo (média principal + médias superposés de chaque
+// photo), toutes photos confondues — sert de base à gererSonVideosCalques().
+function tousLesCalquesVideo() {
+  const liste = [];
+  EditorState.photos.forEach((p) => {
+    if (p.img && p.img.tagName === 'VIDEO') liste.push(p);
+    (p.sousMedias || []).forEach((sm) => {
+      if (sm.img && sm.img.tagName === 'VIDEO') liste.push(sm);
+    });
+  });
+  return liste;
+}
+
+// Chaque calque vidéo tourne en continu en arrière-plan dès son chargement
+// (muet par défaut), quel que soit le segment affiché à l'écran — sinon son
+// aperçu resterait figé au premier chargement. On ne rend donc audible que
+// la vidéo d'un calque actif dans le segment courant, avec "Activer le son"
+// coché, et seulement pendant que l'aperçu est réellement en lecture :
+// sinon le son de calques hors-écran ou en pause fuiterait en permanence.
+function gererSonVideosCalques(segmentActif) {
+  const actifs = new Set();
+  if (segmentActif && segmentActif.type === 'photo') {
+    actifs.add(segmentActif.data);
+    (segmentActif.data.sousMedias || []).forEach((sm) => actifs.add(sm));
+  }
+  tousLesCalquesVideo().forEach((p) => {
+    const doitJouer = EditorState.playback.playing && !EditorState.exporting && p.videoSonActif && actifs.has(p);
+    p.img.muted = !doitJouer;
+    if (doitJouer) p.img.volume = Math.min(1, Math.max(0, Number(p.videoVolume) ?? 1));
   });
 }
 
@@ -3127,6 +3202,7 @@ function renderEditorFrame() {
   }
 
   mettreAJourMediasSuperposes(segmentActif, tGlobal);
+  gererSonVideosCalques(segmentActif);
 
   EditorState._textBoxes = mettreAJourBlocsTexte(EditorState.playback.currentTime, tGlobal);
   mettreAJourFormes(EditorState.playback.currentTime);
@@ -3192,6 +3268,18 @@ async function chargerImage(file) {
 // Comme chargerImage, mais accepte aussi une vidéo (calques photo) : les
 // deux s'utilisent ensuite de façon interchangeable avec ctx.drawImage et
 // mediaW()/mediaH().
+// Attend que la durée d'une vidéo soit connue (readyState peut ne pas
+// encore avoir atteint HAVE_METADATA juste après .play()). Timeout de secours
+// pour ne jamais bloquer indéfiniment sur un fichier au format inhabituel.
+function attendreDureeVideo(video) {
+  if (isFinite(video.duration) && video.duration > 0) return Promise.resolve(video.duration);
+  return new Promise((resolve) => {
+    const fini = () => resolve(isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
+    video.addEventListener('loadedmetadata', fini, { once: true });
+    setTimeout(fini, 3000);
+  });
+}
+
 async function chargerMediaPhoto(file) {
   if (file.type.startsWith('video/')) {
     const video = document.createElement('video');
@@ -3458,13 +3546,32 @@ function bindEditorInputs() {
   document.querySelectorAll('input[name="editor-img-format"]').forEach((radio) => {
     radio.addEventListener('change', (e) => {
       if (e.target.checked) EditorState.imageExportFormat = e.target.value;
+      EditorState._zoneCaptureSource = 'image';
       mettreAJourOverlayZoneCapture();
     });
   });
 
   const cropOverlayToggle = document.getElementById('editor-crop-overlay-toggle');
   if (cropOverlayToggle) {
-    cropOverlayToggle.addEventListener('change', mettreAJourOverlayZoneCapture);
+    cropOverlayToggle.addEventListener('change', () => {
+      EditorState._zoneCaptureSource = 'image';
+      mettreAJourOverlayZoneCapture();
+    });
+  }
+
+  const exportResolutionSelect = document.getElementById('editor-export-resolution');
+  if (exportResolutionSelect) {
+    exportResolutionSelect.addEventListener('change', () => {
+      EditorState._zoneCaptureSource = 'video';
+      mettreAJourOverlayZoneCapture();
+    });
+  }
+  const videoCropOverlayToggle = document.getElementById('editor-video-crop-overlay-toggle');
+  if (videoCropOverlayToggle) {
+    videoCropOverlayToggle.addEventListener('change', () => {
+      EditorState._zoneCaptureSource = 'video';
+      mettreAJourOverlayZoneCapture();
+    });
   }
 
   exportPngBtn.addEventListener('click', () => tenterExportPaye('photo', exportEditeurPng));
@@ -3486,29 +3593,43 @@ async function tenterExportPaye(type, fonctionExport) {
   }
 }
 
-// Superpose sur l'aperçu 16:9 un cadre indiquant la zone gardée par
-// l'export PNG (le PNG recalcule un cadrage à un autre ratio — 9:16 ou
-// 1:1 — plutôt que de simplement rogner le 16:9 actuel, ce cadre reste
-// donc une approximation centrée, mais elle indique fidèlement quelle
-// portion centrale rester "en sécurité" quel que soit le format choisi).
-// Le GIF garde le cadre plein (même ratio que la vidéo), donc rien à
-// superposer pour lui — seul un rappel textuel est affiché.
+// Superpose sur l'aperçu 16:9 un cadre indiquant la zone réellement gardée
+// par l'export choisi (le PNG/vidéo recalcule un cadrage à un autre ratio
+// plutôt que de simplement rogner le 16:9 actuel, ce cadre reste donc une
+// approximation centrée, mais elle indique fidèlement quelle portion
+// centrale rester "en sécurité" quel que soit le format choisi). Le GIF
+// garde le cadre plein (même ratio que la vidéo), donc rien à superposer
+// pour lui — seul un rappel textuel est affiché. Les deux cases à cocher
+// (image / vidéo) partagent le même cadre visuel : si les deux sont
+// cochées, celle dont le contrôle a été touché en dernier (EditorState.
+// _zoneCaptureSource) l'emporte.
 function mettreAJourOverlayZoneCapture() {
-  const toggle = document.getElementById('editor-crop-overlay-toggle');
+  const toggleImg = document.getElementById('editor-crop-overlay-toggle');
+  const toggleVideo = document.getElementById('editor-video-crop-overlay-toggle');
   const overlay = document.getElementById('editor-crop-overlay');
   const frame = document.getElementById('editor-crop-overlay-frame');
   const label = document.getElementById('editor-crop-overlay-label');
-  if (!toggle || !overlay || !frame || !label) return;
+  if (!overlay || !frame || !label) return;
 
-  const actif = toggle.checked;
+  const imgActif = !!(toggleImg && toggleImg.checked);
+  const videoActif = !!(toggleVideo && toggleVideo.checked);
+  const actif = imgActif || videoActif;
   overlay.classList.toggle('hidden', !actif);
   if (!actif) return;
 
+  const montrerVideo = imgActif && videoActif ? EditorState._zoneCaptureSource === 'video' : videoActif;
   const ratioCadre = 16 / 9;
+
+  if (montrerVideo) {
+    const dims = lireResolutionExportChoisie();
+    frame.style.width = `${Math.min(100, (dims.w / dims.h / ratioCadre) * 100)}%`;
+    label.textContent = `Zone vidéo — ${dims.label}`;
+    return;
+  }
+
   const estCarre = EditorState.imageExportFormat === 'square';
   const ratioCible = estCarre ? 1 : 9 / 16;
-  const largeurPct = Math.min(100, (ratioCible / ratioCadre) * 100);
-  frame.style.width = `${largeurPct}%`;
+  frame.style.width = `${Math.min(100, (ratioCible / ratioCadre) * 100)}%`;
   label.textContent = estCarre
     ? 'Zone PNG carré (1080×1080) — GIF = cadre plein'
     : 'Zone PNG vertical (1080×1920) — GIF = cadre plein';
@@ -3807,6 +3928,19 @@ function renderReglagesAvancesPhotoHtml(p) {
             <label class="editor-mini-label">Tolérance<input type="range" data-chromakeytolerance-for="${p.id}" min="5" max="80" value="${Math.round((p.chromaKeyTolerance ?? 0.35) * 100)}"></label>
           </div>
           <span class="form-hint">Rend transparente la couleur choisie (fond vert/bleu) sur cette photo ou vidéo.</span>
+        </div>
+      </details>
+
+      <details class="editor-accordion-nested">
+        <summary>Son de la vidéo</summary>
+        <div class="editor-accordion-nested-body">
+          <div class="editor-row">
+            <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-videoson-for="${p.id}" ${p.videoSonActif ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Activer le son de cette vidéo</span></label>
+          </div>
+          <div class="editor-row">
+            <label class="editor-mini-label">Volume<input type="range" data-videovolume-for="${p.id}" min="0" max="100" value="${Math.round((p.videoVolume ?? 1) * 100)}"></label>
+          </div>
+          <span class="form-hint">Uniquement pour un calque vidéo (sans effet sur une image). Audible seulement pendant que ce calque est affiché et que la lecture de l'aperçu tourne.</span>
         </div>
       </details>
 
@@ -4241,6 +4375,20 @@ function bindReglagesAvancesPhotoEvents(p, jump) {
     chromaKeyToleranceInput.addEventListener('input', (e) => (p.chromaKeyTolerance = Number(e.target.value) / 100));
   }
 
+  const videoSonInput = document.querySelector(`[data-videoson-for="${p.id}"]`);
+  if (videoSonInput) {
+    videoSonInput.addEventListener('change', (e) => {
+      if (e.target.checked && (!p.img || p.img.tagName !== 'VIDEO')) {
+        toast('Ce calque ne contient pas de vidéo.', 'error');
+        e.target.checked = false;
+        return;
+      }
+      p.videoSonActif = e.target.checked;
+    });
+  }
+  const videoVolumeInput = document.querySelector(`[data-videovolume-for="${p.id}"]`);
+  if (videoVolumeInput) videoVolumeInput.addEventListener('input', (e) => (p.videoVolume = Number(e.target.value) / 100));
+
   const cropXInput = document.querySelector(`[data-cropx-for="${p.id}"]`);
   if (cropXInput) cropXInput.addEventListener('input', (e) => (p.cropX = Number(e.target.value) / 100));
   const cropYInput = document.querySelector(`[data-cropy-for="${p.id}"]`);
@@ -4314,7 +4462,16 @@ function bindPhotoLayerEvents() {
         const [premier, ...autres] = fichiers;
         afficherNomFichier(`editor-photo-filename-${p.id}`, premier);
         p.img = await chargerMediaPhoto(premier);
+        if (p.img.tagName === 'VIDEO') {
+          const duree = await attendreDureeVideo(p.img);
+          if (duree > 0) {
+            p.duree = Math.min(30, Math.max(0.5, Math.round(duree * 2) / 2));
+            const dureeInput = document.querySelector(`[data-duree-for="${p.id}"]`);
+            if (dureeInput) dureeInput.value = p.duree;
+          }
+        }
         jump();
+        pousserHistorique();
 
         // Sélection multiple : le premier fichier remplace le média
         // principal, chaque fichier supplémentaire devient un média
@@ -4504,6 +4661,8 @@ function creerPhotoParDefaut(id) {
     scale: 0.3,
     texte: '',
     duree: 3,
+    videoSonActif: false,
+    videoVolume: 1,
     texteX: 0.5,
     texteY: 0.72,
     saberActive: false,
@@ -5435,12 +5594,16 @@ function calquePhotoActif() {
 // Rend une image PNG au format d'export choisi (Play Store vertical ou
 // carré) et retourne une Promise<Blob> — séparé du déclenchement du
 // download pour être réutilisable tel quel par PlayTesteurAPI.
-function rendreImagePng() {
-  const dims = EditorState.imageExportFormat === 'square' ? { w: 1080, h: 1080 } : { w: 1080, h: 1920 };
+// Redimensionne temporairement le rendu three.js (renderer + caméra + fond)
+// à `dims`, en réajustant la distance caméra pour que le plan z=0 continue
+// de correspondre exactement au cadre en pixels. Utilisé par l'export PNG
+// (une frame) et l'export vidéo (toute la capture). bgScale compense le
+// recul en profondeur du fond (bgDepth, voir initMoteur3D) : sans lui, le
+// fond réapparaît plus petit que le cadre visible à toute dims différente
+// des dims natives, laissant des bandes vides sur les bords.
+function redimensionnerScenePourExport(dims) {
   const ts = EditorState.three;
-  const canvas = ts.renderer.domElement;
   const tailleOriginale = { w: ts.width, h: ts.height };
-
   ts.renderer.setSize(dims.w, dims.h, false);
   ts.camera.aspect = dims.w / dims.h;
   const distance = dims.h / 2 / Math.tan((ts.camera.fov * Math.PI) / 360);
@@ -5448,20 +5611,34 @@ function rendreImagePng() {
   ts.camera.updateProjectionMatrix();
   ts.width = dims.w;
   ts.height = dims.h;
-  ts.bgMesh.scale.set(dims.w, dims.h, 1);
+  const bgScale = (distance + ts.bgDepth) / distance;
+  ts.bgMesh.scale.set(dims.w * bgScale, dims.h * bgScale, 1);
+  return tailleOriginale;
+}
+
+function restaurerScenePourExport(tailleOriginale) {
+  const ts = EditorState.three;
+  ts.renderer.setSize(tailleOriginale.w, tailleOriginale.h, false);
+  ts.camera.aspect = tailleOriginale.w / tailleOriginale.h;
+  ts.camera.position.z = ts.distance;
+  ts.camera.updateProjectionMatrix();
+  ts.width = tailleOriginale.w;
+  ts.height = tailleOriginale.h;
+  const bgScale = (ts.distance + ts.bgDepth) / ts.distance;
+  ts.bgMesh.scale.set(tailleOriginale.w * bgScale, tailleOriginale.h * bgScale, 1);
+}
+
+function rendreImagePng() {
+  const dims = EditorState.imageExportFormat === 'square' ? { w: 1080, h: 1080 } : { w: 1080, h: 1920 };
+  const ts = EditorState.three;
+  const canvas = ts.renderer.domElement;
+  const tailleOriginale = redimensionnerScenePourExport(dims);
 
   renderEditorFrame();
 
   return new Promise((resolve) => {
     canvas.toBlob((blob) => {
-      // Restaure la taille d'aperçu normale.
-      ts.renderer.setSize(tailleOriginale.w, tailleOriginale.h, false);
-      ts.camera.aspect = tailleOriginale.w / tailleOriginale.h;
-      ts.camera.position.z = ts.distance;
-      ts.camera.updateProjectionMatrix();
-      ts.width = tailleOriginale.w;
-      ts.height = tailleOriginale.h;
-      ts.bgMesh.scale.set(tailleOriginale.w, tailleOriginale.h, 1);
+      restaurerScenePourExport(tailleOriginale);
       resolve(blob);
     }, 'image/png');
   });
@@ -5665,6 +5842,22 @@ function lireFpsExportChoisi() {
   return (select && Number(select.value)) || 30;
 }
 
+const RESOLUTIONS_EXPORT_VIDEO = {
+  '1920x1080': { w: 1920, h: 1080, label: '1920×1080 — Paysage (16:9)' },
+  '1080x1920': { w: 1080, h: 1920, label: '1080×1920 — Vertical (9:16)' },
+  '1080x1080': { w: 1080, h: 1080, label: '1080×1080 — Carré (1:1)' },
+};
+
+function lireResolutionExportChoisie() {
+  const select = document.getElementById('editor-export-resolution');
+  return RESOLUTIONS_EXPORT_VIDEO[select && select.value] || RESOLUTIONS_EXPORT_VIDEO['1920x1080'];
+}
+
+function lireFormatVideoExportChoisi() {
+  const select = document.getElementById('editor-export-videoformat');
+  return select && select.value === 'webm' ? 'webm' : 'mp4';
+}
+
 function basculerBoutonsExport(actifs) {
   ['editor-export-mp4', 'editor-export-png', 'editor-export-gif'].forEach((id) => {
     const btn = document.getElementById(id);
@@ -5679,84 +5872,112 @@ function basculerBoutonsExport(actifs) {
 // jamais de perte de durée ni de désynchronisation audio, tout au plus une
 // image répétée sur une scène très chargée. Réutilisé par les exports MP4 et
 // GIF.
-async function capturerFluxWebm({ fps, setProgress }) {
+async function capturerFluxWebm({ fps, setProgress, dims }) {
   const { dureeTotale } = calculerTimeline();
-  let audioCtx = null;
+  const ts = EditorState.three;
   const canvas = document.getElementById('editor-canvas');
-  const canvasStream = canvas.captureStream(fps);
-  const tracks = [...canvasStream.getVideoTracks()];
-
-  if (EditorState.audioEl || EditorState.bgVideoEl || EditorState.voiceEl) {
-    audioCtx = getSharedAudioCtx();
-    const dest = audioCtx.createMediaStreamDestination();
-    // Se brancher sur le GainNode (volume/fade) déjà en place plutôt que
-    // sur la source brute, sinon l'export ignore ces réglages.
-    if (EditorState.audioGainNode) EditorState.audioGainNode.connect(dest);
-    else if (EditorState.audioEl) getOrCreateSourceNode(audioCtx, EditorState.audioEl).connect(dest);
-    if (EditorState.voiceGainNode) EditorState.voiceGainNode.connect(dest);
-    else if (EditorState.voiceEl) getOrCreateSourceNode(audioCtx, EditorState.voiceEl).connect(dest);
-    if (EditorState.bgVideoEl) getOrCreateSourceNode(audioCtx, EditorState.bgVideoEl).connect(dest);
-    tracks.push(...dest.stream.getAudioTracks());
-    if (audioCtx.state === 'suspended') await audioCtx.resume();
+  const cible = dims || { w: ts.width, h: ts.height };
+  const redimensionne = cible.w !== ts.width || cible.h !== ts.height;
+  let tailleOriginale = null;
+  let styleOriginal = null;
+  if (redimensionne) {
+    tailleOriginale = redimensionnerScenePourExport(cible);
+    styleOriginal = { width: canvas.style.width, height: canvas.style.height, aspectRatio: canvas.style.aspectRatio };
+    // Le canvas d'aperçu est verrouillé en CSS sur du 16:9 (cf. #editor-canvas) :
+    // sans ce forçage, il apparaîtrait étiré/écrasé pendant toute la capture à
+    // une autre résolution. On force ici un aspect-ratio inline (prioritaire
+    // sur la feuille de style) qui reflète exactement la zone réellement
+    // capturée — l'aperçu devient donc lui-même l'affichage de la zone de
+    // capture pendant l'export.
+    canvas.style.width = '100%';
+    canvas.style.height = 'auto';
+    canvas.style.aspectRatio = `${cible.w} / ${cible.h}`;
+    renderEditorFrame();
   }
 
-  const finalStream = new MediaStream(tracks);
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-    ? 'video/webm;codecs=vp9,opus'
-    : 'video/webm';
-  const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: 12_000_000 });
-  const chunks = [];
-  recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size) chunks.push(e.data);
-  };
+  try {
+    let audioCtx = null;
+    const canvasStream = canvas.captureStream(fps);
+    const tracks = [...canvasStream.getVideoTracks()];
 
-  if (EditorState.bgVideoEl) {
-    EditorState.bgVideoEl.currentTime = 0;
-    await EditorState.bgVideoEl.play().catch(() => {});
-  }
-  if (EditorState.audioEl) {
-    EditorState.audioEl.currentTime = EditorState.audioTrimStart;
-    await EditorState.audioEl.play().catch(() => {});
-  }
-  if (EditorState.voiceEl) {
-    EditorState.voiceEl.currentTime = 0;
-    await EditorState.voiceEl.play().catch(() => {});
-  }
+    if (EditorState.audioEl || EditorState.bgVideoEl || EditorState.voiceEl) {
+      audioCtx = getSharedAudioCtx();
+      const dest = audioCtx.createMediaStreamDestination();
+      // Se brancher sur le GainNode (volume/fade) déjà en place plutôt que
+      // sur la source brute, sinon l'export ignore ces réglages.
+      if (EditorState.audioGainNode) EditorState.audioGainNode.connect(dest);
+      else if (EditorState.audioEl) getOrCreateSourceNode(audioCtx, EditorState.audioEl).connect(dest);
+      if (EditorState.voiceGainNode) EditorState.voiceGainNode.connect(dest);
+      else if (EditorState.voiceEl) getOrCreateSourceNode(audioCtx, EditorState.voiceEl).connect(dest);
+      if (EditorState.bgVideoEl) getOrCreateSourceNode(audioCtx, EditorState.bgVideoEl).connect(dest);
+      tracks.push(...dest.stream.getAudioTracks());
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+    }
 
-  EditorState.exporting = true;
-  EditorState.exportFps = fps;
-  EditorState.playback.currentTime = 0;
-  EditorState.playback.lastFrameTs = null;
-  EditorState.playback.playing = true;
-
-  const finEnregistrement = new Promise((resolve) => {
-    recorder.onstop = resolve;
-  });
-  recorder.start();
-
-  const tick = setInterval(() => {
-    const frac = dureeTotale > 0 ? EditorState.playback.currentTime / dureeTotale : 0;
-    setProgress(Math.min(0.5, frac * 0.5));
-  }, 100);
-
-  await new Promise((resolve) => {
-    const attendreFin = () => {
-      if (!EditorState.playback.playing) {
-        resolve();
-        return;
-      }
-      requestAnimationFrame(attendreFin);
+    const finalStream = new MediaStream(tracks);
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+      ? 'video/webm;codecs=vp9,opus'
+      : 'video/webm';
+    const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: 12_000_000 });
+    const chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) chunks.push(e.data);
     };
-    requestAnimationFrame(attendreFin);
-  });
-  clearInterval(tick);
-  recorder.stop();
-  if (EditorState.audioEl) EditorState.audioEl.pause();
-  if (EditorState.voiceEl) EditorState.voiceEl.pause();
-  EditorState.exporting = false;
-  await finEnregistrement;
 
-  return new Blob(chunks, { type: 'video/webm' });
+    if (EditorState.bgVideoEl) {
+      EditorState.bgVideoEl.currentTime = 0;
+      await EditorState.bgVideoEl.play().catch(() => {});
+    }
+    if (EditorState.audioEl) {
+      EditorState.audioEl.currentTime = EditorState.audioTrimStart;
+      await EditorState.audioEl.play().catch(() => {});
+    }
+    if (EditorState.voiceEl) {
+      EditorState.voiceEl.currentTime = 0;
+      await EditorState.voiceEl.play().catch(() => {});
+    }
+
+    EditorState.exporting = true;
+    EditorState.exportFps = fps;
+    EditorState.playback.currentTime = 0;
+    EditorState.playback.lastFrameTs = null;
+    EditorState.playback.playing = true;
+
+    const finEnregistrement = new Promise((resolve) => {
+      recorder.onstop = resolve;
+    });
+    recorder.start();
+
+    const tick = setInterval(() => {
+      const frac = dureeTotale > 0 ? EditorState.playback.currentTime / dureeTotale : 0;
+      setProgress(Math.min(0.5, frac * 0.5));
+    }, 100);
+
+    await new Promise((resolve) => {
+      const attendreFin = () => {
+        if (!EditorState.playback.playing) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(attendreFin);
+      };
+      requestAnimationFrame(attendreFin);
+    });
+    clearInterval(tick);
+    recorder.stop();
+    mettreEnPauseMediaEditeur();
+    EditorState.exporting = false;
+    await finEnregistrement;
+
+    return new Blob(chunks, { type: 'video/webm' });
+  } finally {
+    if (redimensionne) {
+      restaurerScenePourExport(tailleOriginale);
+      canvas.style.width = styleOriginal.width;
+      canvas.style.height = styleOriginal.height;
+      canvas.style.aspectRatio = styleOriginal.aspectRatio;
+    }
+  }
 }
 
 async function exportEditeurMp4() {
@@ -5782,18 +6003,27 @@ async function exportEditeurMp4() {
 
   try {
     const fps = lireFpsExportChoisi();
-    const webmBlob = await capturerFluxWebm({ fps, setProgress });
+    const dims = lireResolutionExportChoisie();
+    const format = lireFormatVideoExportChoisi();
+    const webmBlob = await capturerFluxWebm({ fps, setProgress, dims });
 
-    setProgress(0.5, 'Conversion en MP4 (qualité haute, encodage lent)…');
-    const mp4Blob = await transcoderEnMp4(webmBlob, fps, (p) =>
-      setProgress(0.5 + p * 0.5, `Conversion en MP4… ${Math.round(p * 100)}%`)
-    );
-
-    setProgress(1, 'Terminé !');
-    downloadBlob(mp4Blob, `${obtenirNomExport('playtesteur-promo')}.mp4`);
+    if (format === 'webm') {
+      // Le flux capturé est déjà du WebM (vp9/opus) : aucune conversion à
+      // faire, contrairement au MP4 qui doit repasser par ffmpeg.wasm
+      // (encodage H.264 plus lent mais plus largement compatible).
+      setProgress(1, 'Terminé !');
+      downloadBlob(webmBlob, `${obtenirNomExport('playtesteur-promo')}.webm`);
+    } else {
+      setProgress(0.5, 'Conversion en MP4 (qualité haute, encodage lent)…');
+      const mp4Blob = await transcoderEnMp4(webmBlob, fps, (p) =>
+        setProgress(0.5 + p * 0.5, `Conversion en MP4… ${Math.round(p * 100)}%`)
+      );
+      setProgress(1, 'Terminé !');
+      downloadBlob(mp4Blob, `${obtenirNomExport('playtesteur-promo')}.mp4`);
+    }
   } catch (err) {
-    console.error('[editeur] export MP4 échoué', err);
-    toast("Échec de l'export MP4 : " + err.message, 'error');
+    console.error('[editeur] export vidéo échoué', err);
+    toast("Échec de l'export vidéo : " + err.message, 'error');
   } finally {
     setTimeout(() => progressWrap.classList.add('hidden'), 1200);
     basculerBoutonsExport(true);

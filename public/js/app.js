@@ -2748,13 +2748,29 @@ function viewEditeur() {
               </select>
               <span class="form-hint">La vidéo exportée dure toujours exactement la durée de votre montage (intro + photos + outro), quel que soit le temps que prend le rendu. Sur une scène très chargée (beaucoup d'effets), certaines images peuvent être répétées à l'écran, mais la durée et l'audio restent corrects.</span>
             </div>
+            <div class="editor-section">
+              <label class="editor-label">Résolution vidéo</label>
+              <select id="editor-export-resolution">
+                <option value="1920x1080" selected>1920×1080 — Paysage (16:9)</option>
+                <option value="1080x1920">1080×1920 — Vertical (9:16, Stories/Reels)</option>
+                <option value="1080x1080">1080×1080 — Carré (1:1)</option>
+              </select>
+              <label class="editor-toggle-row" style="margin-top:6px;"><input type="checkbox" id="editor-video-crop-overlay-toggle"><span class="editor-toggle-switch"></span><span>Afficher la zone de capture vidéo sur l'aperçu</span></label>
+            </div>
+            <div class="editor-section">
+              <label class="editor-label">Format vidéo</label>
+              <select id="editor-export-videoformat">
+                <option value="mp4" selected>MP4 (H.264, compatible partout)</option>
+                <option value="webm">WebM (VP9, export plus rapide, fichier plus léger)</option>
+              </select>
+            </div>
           </div>
         </details>
 
         <div class="editor-actions">
           <button id="editor-export-png" class="btn-secondary" type="button">Exporter en PNG <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.photo} pts</span></button>
           <button id="editor-export-gif" class="btn-secondary" type="button">Exporter en GIF <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.gif} pts</span></button>
-          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter en MP4 (1920×1080) <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.video} pts</span></button>
+          <button id="editor-export-mp4" class="btn-primary" type="button">Exporter la vidéo <span class="editor-cost-badge">${COUTS_EXPORT_POINTS.video} pts</span></button>
         </div>
       </div>
     </div>
