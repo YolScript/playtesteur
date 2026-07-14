@@ -7,15 +7,27 @@ const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
 
+// Allowlist stricte : l'extension du fichier écrit sur disque ne doit
+// jamais dépendre directement du mimetype fourni par le client (sinon un
+// data:text/html;base64,... ou data:image/svg+xml;base64,... écrirait un
+// .html/.svg exécutable, servi tel quel par express.static -> XSS stockée).
+const MIME_VERS_EXTENSION = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+};
+
 // Helper to save base64 image
 function saveBase64Image(base64Str) {
   if (!base64Str) return null;
-  const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  const matches = base64Str.match(/^data:([A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+);base64,(.+)$/);
   if (!matches || matches.length !== 3) {
     throw new Error("Format d'image invalide. Seuls PNG, JPG, JPEG et WEBP sont acceptés.");
   }
-  const mimeType = matches[1];
-  const ext = mimeType.split('/')[1] || 'png';
+  const ext = MIME_VERS_EXTENSION[matches[1].toLowerCase()];
+  if (!ext) {
+    throw new Error("Format d'image invalide. Seuls PNG, JPG, JPEG et WEBP sont acceptés.");
+  }
   const buffer = Buffer.from(matches[2], 'base64');
   
   if (buffer.length > 5 * 1024 * 1024) {

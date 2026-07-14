@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { publicUser } = require('../services/serialize');
 const googleGroups = require('../services/googleGroups');
 const { seuilOnboardingEffectif } = require('../services/validation');
+const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
 
