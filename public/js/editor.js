@@ -3827,11 +3827,12 @@ function renderReglagesAvancesPhotoHtml(p) {
           <div class="editor-crop-editor hidden" id="editor-crop-editor-${p.id}">
             <div class="editor-crop-editor-stage" id="editor-crop-editor-stage-${p.id}">
               <img class="editor-crop-editor-img" id="editor-crop-editor-img-${p.id}" alt="" draggable="false">
+              <video class="editor-crop-editor-img hidden" id="editor-crop-editor-video-${p.id}" muted playsinline></video>
               <div class="editor-crop-rect" data-cropvisuel-rect-for="${p.id}">
                 <div class="editor-crop-handle" data-handle="se"></div>
               </div>
             </div>
-            <span class="form-hint">Glissez le cadre pour déplacer le recadrage, son coin bas-droit pour le redimensionner. Disponible pour les images (pas les vidéos).</span>
+            <span class="form-hint">Glissez le cadre pour déplacer le recadrage, son coin bas-droit pour le redimensionner. Pour les vidéos, l'aperçu affiche l'image à la position de lecture actuelle.</span>
           </div>
           <div class="editor-row">
             <label class="editor-toggle-row" style="margin:0;"><input type="checkbox" data-cropratiolock-for="${p.id}" ${p.cropRatioVerrouille ? 'checked' : ''}><span class="editor-toggle-switch"></span><span>Verrouiller le ratio largeur/hauteur</span></label>
@@ -4273,15 +4274,26 @@ function bindReglagesAvancesPhotoEvents(p, jump) {
   const cropEditor = document.getElementById(`editor-crop-editor-${p.id}`);
   if (cropVisuelToggle && cropEditor) {
     cropVisuelToggle.addEventListener('click', () => {
-      if (!p.img || p.img.tagName === 'VIDEO') {
-        toast('Le recadrage visuel est disponible pour les images (pas les vidéos).', 'error');
+      if (!p.img) {
+        toast('Ajoutez une image ou une vidéo avant de recadrer.', 'error');
         return;
       }
       const seraOuvert = cropEditor.classList.contains('hidden');
       cropEditor.classList.toggle('hidden', !seraOuvert);
       if (seraOuvert) {
+        const estVideo = p.img.tagName === 'VIDEO';
         const imgEl = document.getElementById(`editor-crop-editor-img-${p.id}`);
-        if (imgEl) imgEl.src = p.img.src;
+        const videoEl = document.getElementById(`editor-crop-editor-video-${p.id}`);
+        if (imgEl) imgEl.classList.toggle('hidden', estVideo);
+        if (videoEl) videoEl.classList.toggle('hidden', !estVideo);
+        if (estVideo && videoEl) {
+          if (videoEl.src !== p.img.currentSrc) videoEl.src = p.img.currentSrc || p.img.src;
+          const poser = () => { videoEl.currentTime = p.img.currentTime || 0; };
+          if (videoEl.readyState >= 1) poser();
+          else videoEl.addEventListener('loadedmetadata', poser, { once: true });
+        } else if (imgEl) {
+          imgEl.src = p.img.src;
+        }
         positionnerRectCrop(p);
       }
     });
